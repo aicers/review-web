@@ -26,6 +26,8 @@ mod engine_config;
 mod engine_document;
 mod engine_instance;
 mod event;
+#[cfg(test)]
+pub(crate) mod event_test_support;
 mod filter;
 pub(crate) mod indicator;
 mod install_state;

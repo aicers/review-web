@@ -4246,10 +4246,12 @@ mod tests {
                 1,
                 1,
                 vec![review_database::NetworkListEntry {
+                    id: 1,
                     name: "office".to_string(),
                     group: allowlist.clone(),
                 }],
                 vec![review_database::NetworkListEntry {
+                    id: 1,
                     name: "scanner".to_string(),
                     group: blocklist.clone(),
                 }],
@@ -4377,10 +4379,12 @@ mod tests {
                 NEXT,
                 1,
                 vec![review_database::NetworkListEntry {
+                    id: 1,
                     name: "partner".to_string(),
                     group: next_allowlist.clone(),
                 }],
                 vec![review_database::NetworkListEntry {
+                    id: 1,
                     name: "botnet".to_string(),
                     group: next_blocklist.clone(),
                 }],
@@ -4409,8 +4413,8 @@ mod tests {
 
         let replace = format!(
             r#"mutation {{ replaceNetworkLists(customerId: "{PREVIOUS}", revision: "1",
-                allowlist: [{{ name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
-                blocklist: [{{ name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+                allowlist: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                blocklist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
         );
         let apply = format!(
             r#"mutation {{
@@ -4504,6 +4508,7 @@ mod tests {
         const THIRD: u32 = 4347;
         let (schema, pushes, pause) = paused_schema(PushKind::Internal).await;
         let entry = |name: &str, group| review_database::NetworkListEntry {
+            id: 1,
             name: name.to_string(),
             group,
         };
@@ -4643,6 +4648,7 @@ mod tests {
         const THIRD: u32 = 4350;
         let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
         let entry = |name: &str, group| review_database::NetworkListEntry {
+            id: 1,
             name: name.to_string(),
             group,
         };
@@ -4688,8 +4694,8 @@ mod tests {
 
         let replace_first = format!(
             r#"mutation {{ replaceNetworkLists(customerId: "{FIRST}", revision: "1",
-                allowlist: [{{ name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
-                blocklist: [{{ name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+                allowlist: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                blocklist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
         );
         let agents = r#"agents: [{
             key: "001.hog",

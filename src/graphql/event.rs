@@ -1,103 +1,49 @@
-mod bootp;
-mod conn;
-mod dcerpc;
-mod dhcp;
-mod dns;
-mod ftp;
+mod body;
+mod detail;
+mod detection;
 mod group;
-mod http;
-mod kerberos;
-mod ldap;
-mod log;
-mod malformed_dns;
-mod mqtt;
-mod network;
-mod nfs;
-mod ntlm;
-mod radius;
-mod rdp;
-mod smb;
-mod smtp;
-mod ssh;
-mod sysmon;
-mod tls;
-mod unusual_destination_pattern;
+#[cfg(test)]
+// The tests hold the store's read guard while running queries that only read
+// it too, so the guard cannot block them.
+#[allow(clippy::await_holding_lock)]
+mod tests;
 
-use std::{cmp, net::IpAddr, sync::Arc};
+use std::{cmp, collections::HashMap, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
-    Context, Enum, ID, InputObject, Interface, Object, Result, StringNumber, Subscription,
+    Context, ID, InputObject, Object, Result, StringNumber, Subscription,
     connection::{Connection, Edge, EmptyFields},
+    resolver_utils::EnumType,
 };
-use database::ThreatLevel as DatabaseThreatLevel;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
-    TriagePolicyInput as DbTriagePolicyInput,
-    event::{Direction, EventFilter, EventIterator, InternalNetworks, InvalidEvent, RecordType},
+    self as database, ExclusionReason, IndexedTable, MAX_RAW_EVENT_KEYS, RawEventKey, Store,
+    StoredDetectionEvent, TriageExclusion, TriagePolicyInput as DbTriagePolicyInput,
+    event::{Direction, EventDb, EventFilter, EventIterator, InternalNetworks, InvalidEvent},
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
+use review_protocol::types as protocol;
 use tokio::time;
 use tracing::{error, warn};
 
+use self::detection::DetectionEvent;
 pub(super) use self::group::EventGroupQuery;
-use self::{
-    bootp::BlocklistBootp,
-    conn::{BlocklistConn, ExternalDdos, MultiHostPortScan, PortScan, TorConnectionConn},
-    dcerpc::BlocklistDceRpc,
-    dhcp::BlocklistDhcp,
-    dns::{BlocklistDns, CryptocurrencyMiningPool, DnsCovertChannel, LockyRansomware},
-    ftp::{BlocklistFtp, FtpBruteForce, FtpPlainText},
-    http::{
-        BlocklistHttp, DomainGenerationAlgorithm, HttpThreat, NonBrowser, RepeatedHttpSessions,
-        TorConnection,
-    },
-    kerberos::BlocklistKerberos,
-    ldap::{BlocklistLdap, LdapBruteForce, LdapPlainText},
-    log::ExtraThreat,
-    malformed_dns::BlocklistMalformedDns,
-    mqtt::BlocklistMqtt,
-    network::NetworkThreat,
-    nfs::BlocklistNfs,
-    ntlm::BlocklistNtlm,
-    radius::BlocklistRadius,
-    rdp::{BlocklistRdp, RdpBruteForce},
-    smb::BlocklistSmb,
-    smtp::BlocklistSmtp,
-    ssh::BlocklistSsh,
-    sysmon::WindowsThreat,
-    tls::{BlocklistTls, SuspiciousTlsTraffic},
-    unusual_destination_pattern::UnusualDestinationPattern,
-};
 use super::{
     Role, RoleGuard,
     customer::HostNetworkGroupInput,
-    filter::{EventKind as EventKindInput, FlowKind, LearningMethod, TrafficDirection},
-    network::Network,
+    filter::{DetectionModel, FlowKind, LearningMethod, RawEventKind, TrafficDirection},
     timestamp::Timestamp,
-    triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
+    triage::{PacketAttrInput, ResponseInput, ScoreConditionInput},
 };
 use crate::{error_with_caller, graphql::query, warn_with_caller};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_INTERVAL_SECS: u64 = 20;
+const DEFAULT_EVENT_STUCK_CHECK_INTERVAL_SECS: u64 = 300;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
-
-type DateTime = Timestamp;
-
-/// Threat level.
-#[derive(Clone, Copy, Enum, Eq, PartialEq)]
-#[graphql(remote = "DatabaseThreatLevel")]
-pub(super) enum ThreatLevel {
-    VeryLow,
-    Low,
-    Medium,
-    High,
-    VeryHigh,
-}
 
 #[derive(Default)]
 pub(super) struct EventStream;
@@ -107,7 +53,12 @@ pub(super) struct EventQuery;
 
 #[Subscription]
 impl EventStream {
-    /// A stream of events with timestamp on.
+    /// A stream of detection events with timestamp on or after `start`.
+    ///
+    /// Each detection model is tracked on its own: a poll delivers, in key
+    /// order, every event whose time is at or after its model's next-delivery
+    /// time, and delivering an event moves only that model's time, to just
+    /// past the event's time.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -125,15 +76,11 @@ impl EventStream {
         )]
         fetch_interval: Option<u64>,
         event_stuck_check_interval: Option<u64>,
-    ) -> Result<impl Stream<Item = Event> + use<>> {
+    ) -> Result<impl Stream<Item = DetectionEvent> + use<>> {
         use std::sync::RwLock;
         let start = timestamp_nanos(start.into())?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
-        let fetch_interval_secs = if let Some(fetch_interval_secs) = fetch_interval {
-            fetch_interval_secs
-        } else {
-            DEFAULT_EVENT_FETCH_INTERVAL_SECS
-        };
+        let fetch_interval_secs = fetch_interval.unwrap_or(DEFAULT_EVENT_FETCH_INTERVAL_SECS);
         let caller = crate::auth::Caller(ctx.data_opt::<crate::auth::MtlsIdentity>()).to_string();
         let role = ctx
             .data_opt::<super::RoleGuard>()
@@ -156,488 +103,105 @@ impl EventStream {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+/// How far an event stream has delivered, per detection model.
+struct StreamProgress {
+    /// The time below which no event is scanned for unless some model's
+    /// next-delivery time is still below it; the stuck check raises it.
+    floor: i64,
+    /// The next-delivery time of each detection model, in epoch nanoseconds.
+    next: HashMap<protocol::DetectionModel, i64>,
+}
+
+impl StreamProgress {
+    /// Starts every detection model, and the floor, at `start`.
+    fn new(start: i64) -> Self {
+        let next = DetectionModel::items()
+            .iter()
+            .map(|item| (protocol::DetectionModel::from(item.value), start))
+            .collect();
+        Self { floor: start, next }
+    }
+
+    /// Raises every model stuck at the floor to the smallest next-delivery
+    /// time above it, and the floor with them, if any model is above it.
+    fn advance_stuck(&mut self) {
+        let floor = self.floor;
+        let Some(raised) = self.next.values().copied().filter(|&t| t > floor).min() else {
+            return;
+        };
+        for time in self.next.values_mut() {
+            if *time == floor {
+                *time = raised;
+            }
+        }
+        self.floor = raised;
+    }
+
+    /// Returns the earliest next-delivery time, from which a poll scans.
+    fn scan_start(&self) -> i64 {
+        self.next.values().copied().min().unwrap_or(self.floor)
+    }
+
+    /// Delivers, in key order, every visible record at or after its model's
+    /// next-delivery time, moving that model's time just past each one.
+    fn poll(
+        &mut self,
+        events: &EventDb<'_>,
+        mut deliver: impl FnMut(i128, StoredDetectionEvent) -> Result<()>,
+    ) -> Result<()> {
+        let start_key = i128::from(self.scan_start()) << 64;
+        for item in events.iter_from(start_key, Direction::Forward) {
+            let (key, record) = item.map_err(|e| format!("Failed to read EventDb: {e:?}"))?;
+            let event_time = i64::try_from(key >> 64)?;
+            let Some(next) = self.next.get_mut(&record.event().detection_model) else {
+                continue;
+            };
+            if event_time >= *next {
+                *next = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                deliver(key, record)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 async fn fetch_events(
     store: Arc<std::sync::RwLock<Store>>,
     start_time: i64,
-    tx: UnboundedSender<Event>,
+    tx: UnboundedSender<DetectionEvent>,
     fetch_interval_secs: u64,
     event_stuck_check_interval: Option<u64>,
 ) -> Result<()> {
     let mut itv = time::interval(time::Duration::from_secs(fetch_interval_secs));
-    let mut iter_time_key = start_time;
-    let stuck_check_interval = event_stuck_check_interval.unwrap_or(300); // Default 5 minutes in seconds
+    let stuck_check_interval =
+        event_stuck_check_interval.unwrap_or(DEFAULT_EVENT_STUCK_CHECK_INTERVAL_SECS);
     let mut last_stuck_check = std::time::Instant::now();
-    let mut dns_covert_time = start_time;
-    let mut http_threat_time = start_time;
-    let mut rdp_brute_time = start_time;
-    let mut repeat_http_time = start_time;
-    let mut tor_time = start_time;
-    let mut tor_connection_conn_time = start_time;
-    let mut dga_time = start_time;
-    let mut ftp_brute_time = start_time;
-    let mut ftp_plain_time = start_time;
-    let mut port_scan_time = start_time;
-    let mut multi_host_time = start_time;
-    let mut ldap_brute_time = start_time;
-    let mut ldap_plain_time = start_time;
-    let mut non_browser_time = start_time;
-    let mut external_ddos_time = start_time;
-    let mut cryptocurrency_time = start_time;
-    let mut blocklist_bootp_time = start_time;
-    let mut blocklist_conn_time = start_time;
-    let mut blocklist_dhcp_time = start_time;
-    let mut blocklist_dns_time = start_time;
-    let mut blocklist_dcerpc_time = start_time;
-    let mut blocklist_ftp_time = start_time;
-    let mut blocklist_http_time = start_time;
-    let mut blocklist_kerberos_time = start_time;
-    let mut blocklist_ldap_time = start_time;
-    let mut blocklist_malformed_dns_time = start_time;
-    let mut blocklist_mqtt_time = start_time;
-    let mut blocklist_nfs_time = start_time;
-    let mut blocklist_ntlm_time = start_time;
-    let mut blocklist_radius_time = start_time;
-    let mut blocklist_rdp_time = start_time;
-    let mut blocklist_smb_time = start_time;
-    let mut blocklist_smtp_time = start_time;
-    let mut blocklist_ssh_time = start_time;
-    let mut blocklist_tls_time = start_time;
-    let mut windows_threat_time = start_time;
-    let mut network_threat_time = start_time;
-    let mut extra_threat_time = start_time;
-    let mut locky_ransomware_time = start_time;
-    let mut suspicious_tls_time = start_time;
-    let mut unusual_destination_pattern_time = start_time;
+    let mut progress = StreamProgress::new(start_time);
 
     loop {
         itv.tick().await;
 
-        // Check if we need to advance stuck event time variables
         if last_stuck_check.elapsed().as_secs() >= stuck_check_interval {
-            // Collect all event time variables
-            let event_times = vec![
-                dns_covert_time,
-                http_threat_time,
-                rdp_brute_time,
-                repeat_http_time,
-                tor_time,
-                tor_connection_conn_time,
-                dga_time,
-                ftp_brute_time,
-                ftp_plain_time,
-                port_scan_time,
-                multi_host_time,
-                ldap_brute_time,
-                ldap_plain_time,
-                non_browser_time,
-                external_ddos_time,
-                cryptocurrency_time,
-                blocklist_bootp_time,
-                blocklist_conn_time,
-                blocklist_dhcp_time,
-                blocklist_dns_time,
-                blocklist_dcerpc_time,
-                blocklist_ftp_time,
-                blocklist_http_time,
-                blocklist_kerberos_time,
-                blocklist_ldap_time,
-                blocklist_malformed_dns_time,
-                blocklist_mqtt_time,
-                blocklist_nfs_time,
-                blocklist_ntlm_time,
-                blocklist_radius_time,
-                blocklist_rdp_time,
-                blocklist_smb_time,
-                blocklist_smtp_time,
-                blocklist_ssh_time,
-                blocklist_tls_time,
-                windows_threat_time,
-                network_threat_time,
-                extra_threat_time,
-                locky_ransomware_time,
-                suspicious_tls_time,
-                unusual_destination_pattern_time,
-            ];
-
-            // Find the minimum time greater than iter_time_key
-            if let Some(min_time_key) = event_times
-                .iter()
-                .filter(|&&time| time > iter_time_key)
-                .min()
-                .copied()
-            {
-                // Update any event time variables that are stuck at iter_time_key
-                if dns_covert_time == iter_time_key {
-                    dns_covert_time = min_time_key;
-                }
-                if http_threat_time == iter_time_key {
-                    http_threat_time = min_time_key;
-                }
-                if rdp_brute_time == iter_time_key {
-                    rdp_brute_time = min_time_key;
-                }
-                if repeat_http_time == iter_time_key {
-                    repeat_http_time = min_time_key;
-                }
-                if tor_time == iter_time_key {
-                    tor_time = min_time_key;
-                }
-                if tor_connection_conn_time == iter_time_key {
-                    tor_connection_conn_time = min_time_key;
-                }
-                if dga_time == iter_time_key {
-                    dga_time = min_time_key;
-                }
-                if ftp_brute_time == iter_time_key {
-                    ftp_brute_time = min_time_key;
-                }
-                if ftp_plain_time == iter_time_key {
-                    ftp_plain_time = min_time_key;
-                }
-                if port_scan_time == iter_time_key {
-                    port_scan_time = min_time_key;
-                }
-                if multi_host_time == iter_time_key {
-                    multi_host_time = min_time_key;
-                }
-                if ldap_brute_time == iter_time_key {
-                    ldap_brute_time = min_time_key;
-                }
-                if ldap_plain_time == iter_time_key {
-                    ldap_plain_time = min_time_key;
-                }
-                if non_browser_time == iter_time_key {
-                    non_browser_time = min_time_key;
-                }
-                if external_ddos_time == iter_time_key {
-                    external_ddos_time = min_time_key;
-                }
-                if cryptocurrency_time == iter_time_key {
-                    cryptocurrency_time = min_time_key;
-                }
-                if blocklist_bootp_time == iter_time_key {
-                    blocklist_bootp_time = min_time_key;
-                }
-                if blocklist_conn_time == iter_time_key {
-                    blocklist_conn_time = min_time_key;
-                }
-                if blocklist_dhcp_time == iter_time_key {
-                    blocklist_dhcp_time = min_time_key;
-                }
-                if blocklist_dns_time == iter_time_key {
-                    blocklist_dns_time = min_time_key;
-                }
-                if blocklist_dcerpc_time == iter_time_key {
-                    blocklist_dcerpc_time = min_time_key;
-                }
-                if blocklist_ftp_time == iter_time_key {
-                    blocklist_ftp_time = min_time_key;
-                }
-                if blocklist_http_time == iter_time_key {
-                    blocklist_http_time = min_time_key;
-                }
-                if blocklist_kerberos_time == iter_time_key {
-                    blocklist_kerberos_time = min_time_key;
-                }
-                if blocklist_ldap_time == iter_time_key {
-                    blocklist_ldap_time = min_time_key;
-                }
-                if blocklist_malformed_dns_time == iter_time_key {
-                    blocklist_malformed_dns_time = min_time_key;
-                }
-                if blocklist_mqtt_time == iter_time_key {
-                    blocklist_mqtt_time = min_time_key;
-                }
-                if blocklist_nfs_time == iter_time_key {
-                    blocklist_nfs_time = min_time_key;
-                }
-                if blocklist_ntlm_time == iter_time_key {
-                    blocklist_ntlm_time = min_time_key;
-                }
-                if blocklist_radius_time == iter_time_key {
-                    blocklist_radius_time = min_time_key;
-                }
-                if blocklist_rdp_time == iter_time_key {
-                    blocklist_rdp_time = min_time_key;
-                }
-                if blocklist_smb_time == iter_time_key {
-                    blocklist_smb_time = min_time_key;
-                }
-                if blocklist_smtp_time == iter_time_key {
-                    blocklist_smtp_time = min_time_key;
-                }
-                if blocklist_ssh_time == iter_time_key {
-                    blocklist_ssh_time = min_time_key;
-                }
-                if blocklist_tls_time == iter_time_key {
-                    blocklist_tls_time = min_time_key;
-                }
-                if windows_threat_time == iter_time_key {
-                    windows_threat_time = min_time_key;
-                }
-                if network_threat_time == iter_time_key {
-                    network_threat_time = min_time_key;
-                }
-                if extra_threat_time == iter_time_key {
-                    extra_threat_time = min_time_key;
-                }
-                if locky_ransomware_time == iter_time_key {
-                    locky_ransomware_time = min_time_key;
-                }
-                if suspicious_tls_time == iter_time_key {
-                    suspicious_tls_time = min_time_key;
-                }
-                if unusual_destination_pattern_time == iter_time_key {
-                    unusual_destination_pattern_time = min_time_key;
-                }
-
-                // Update iter_time_key to the new minimum time
-                iter_time_key = min_time_key;
-            }
-
+            progress.advance_stuck();
             last_stuck_check = std::time::Instant::now();
         }
 
-        // Select the minimum time for DB search
-        let start = dns_covert_time
-            .min(http_threat_time)
-            .min(rdp_brute_time)
-            .min(repeat_http_time)
-            .min(tor_time)
-            .min(tor_connection_conn_time)
-            .min(dga_time)
-            .min(ftp_brute_time)
-            .min(ftp_plain_time)
-            .min(port_scan_time)
-            .min(multi_host_time)
-            .min(ldap_brute_time)
-            .min(ldap_plain_time)
-            .min(non_browser_time)
-            .min(external_ddos_time)
-            .min(cryptocurrency_time)
-            .min(blocklist_bootp_time)
-            .min(blocklist_conn_time)
-            .min(blocklist_dhcp_time)
-            .min(blocklist_dns_time)
-            .min(blocklist_dcerpc_time)
-            .min(blocklist_ftp_time)
-            .min(blocklist_http_time)
-            .min(blocklist_kerberos_time)
-            .min(blocklist_ldap_time)
-            .min(blocklist_malformed_dns_time)
-            .min(blocklist_mqtt_time)
-            .min(blocklist_nfs_time)
-            .min(blocklist_ntlm_time)
-            .min(blocklist_radius_time)
-            .min(blocklist_rdp_time)
-            .min(blocklist_smb_time)
-            .min(blocklist_smtp_time)
-            .min(blocklist_ssh_time)
-            .min(blocklist_tls_time)
-            .min(windows_threat_time)
-            .min(network_threat_time)
-            .min(extra_threat_time)
-            .min(locky_ransomware_time)
-            .min(suspicious_tls_time)
-            .min(unusual_destination_pattern_time);
-
-        // Fetch event iterator based on time
-        let start_key = i128::from(start) << 64;
         let db = store
             .read()
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        let events = db.events();
-        let iter = events.iter_from(start_key, Direction::Forward);
-
-        // Check for new data per event and send events that meet the conditions
-        for event in iter {
-            let (key, value) = event.map_err(|e| format!("Failed to read EventDb: {e:?}"))?;
-            let event_time = i64::try_from(key >> 64)?;
-            let kind = (key & 0xffff_ffff_0000_0000) >> 32;
-            let Some(event_kind) = EventKind::from_i128(kind) else {
-                return Err(anyhow!("Failed to convert event_kind: Invalid Event key").into());
-            };
-
-            match event_kind {
-                EventKind::DnsCovertChannel if event_time >= dns_covert_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::HttpThreat if event_time >= http_threat_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::RdpBruteForce if event_time >= rdp_brute_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::RepeatedHttpSessions if event_time >= repeat_http_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::TorConnection if event_time >= tor_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::TorConnectionConn if event_time >= tor_connection_conn_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::DomainGenerationAlgorithm if event_time >= dga_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::FtpBruteForce if event_time >= ftp_brute_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    ftp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::FtpPlainText if event_time >= ftp_plain_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    ftp_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::PortScan if event_time >= port_scan_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    port_scan_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::MultiHostPortScan if event_time >= multi_host_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    multi_host_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::NonBrowser if event_time >= non_browser_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    non_browser_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::LdapBruteForce if event_time >= ldap_brute_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    ldap_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::LdapPlainText if event_time >= ldap_plain_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    ldap_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::ExternalDdos if event_time >= external_ddos_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    external_ddos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::CryptocurrencyMiningPool if event_time >= cryptocurrency_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistBootp if event_time >= blocklist_bootp_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistConn if event_time >= blocklist_conn_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistDhcp if event_time >= blocklist_dhcp_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistDns if event_time >= blocklist_dns_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistDceRpc if event_time >= blocklist_dcerpc_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistFtp if event_time >= blocklist_ftp_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistHttp if event_time >= blocklist_http_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistKerberos if event_time >= blocklist_kerberos_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistLdap if event_time >= blocklist_ldap_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistMalformedDns if event_time >= blocklist_malformed_dns_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistMqtt if event_time >= blocklist_mqtt_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistNfs if event_time >= blocklist_nfs_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistNtlm if event_time >= blocklist_ntlm_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistRadius if event_time >= blocklist_radius_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistRdp if event_time >= blocklist_rdp_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistSmb if event_time >= blocklist_smb_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistSmtp if event_time >= blocklist_smtp_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistSsh if event_time >= blocklist_ssh_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::BlocklistTls if event_time >= blocklist_tls_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::WindowsThreat if event_time >= windows_threat_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::NetworkThreat if event_time >= network_threat_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::ExtraThreat if event_time >= extra_threat_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::LockyRansomware if event_time >= locky_ransomware_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::SuspiciousTlsTraffic if event_time >= suspicious_tls_time => {
-                    tx.unbounded_send((key, value).into())?;
-                    suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                EventKind::UnusualDestinationPattern
-                    if event_time >= unusual_destination_pattern_time =>
-                {
-                    tx.unbounded_send((key, value).into())?;
-                    unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                }
-                _ => {}
-            }
-        }
+        progress.poll(&db.events(), |key, record| {
+            tx.unbounded_send(DetectionEvent::new(key, record))?;
+            Ok(())
+        })?;
     }
 }
 
 #[Object]
 impl EventQuery {
-    /// Looks up a single event by its opaque `id`.
+    /// Looks up a single detection event by its opaque `id`.
     ///
-    /// `id` is the value previously returned from `Event.id`. Decoding the
-    /// `id` is internal; consumers must not parse it.
+    /// `id` is the value previously returned from `DetectionEvent.id`.
+    /// Decoding the `id` is internal; consumers must not parse it.
     ///
     /// Returns `null` when no event with the given `id` exists, or when the
     /// caller's customer/sensor scope does not include the event. The same
@@ -650,11 +214,12 @@ impl EventQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event(&self, ctx: &Context<'_>, id: ID) -> Result<Option<Event>> {
+    async fn event(&self, ctx: &Context<'_>, id: ID) -> Result<Option<DetectionEvent>> {
         load_event(ctx, &id).await
     }
 
-    /// A list of events with timestamp on or after `start` and before `end`.
+    /// A list of detection events with timestamp on or after `start` and
+    /// before `end`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -667,7 +232,7 @@ impl EventQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+    ) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
         query(
             after,
             before,
@@ -680,16 +245,16 @@ impl EventQuery {
         .await
     }
 
-    /// A list of events that pass the standard filter, with optional inline
-    /// triage scoring and exclusions.
+    /// A list of detection events that pass the standard filter, with
+    /// optional inline triage scoring.
     ///
     /// Unlike `eventList`, this resolver returns every event passing the
     /// standard filter regardless of whether any triage policy matched.
     /// When `triage.policies` is supplied, matching policies attach their
     /// scores via `triageScores`; events that score nothing keep
-    /// `triageScores: null` and remain in the connection. When
-    /// `triage.exclusions` is supplied, matching events are removed from
-    /// the connection. The cursor pagination contract matches `eventList`.
+    /// `triageScores: null` and remain in the connection. `triage.exclusions`
+    /// is validated but removes no event, from the connection or from
+    /// `totalCount`. The cursor pagination contract matches `eventList`.
     // Eight parameters mirror the cursor-pagination shape used by other event
     // resolvers; the additional `triage` argument is what brings the count to
     // eight. Splitting it would obscure the GraphQL signature.
@@ -707,40 +272,102 @@ impl EventQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+    ) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
         let policies = triage
             .as_ref()
             .and_then(|t| t.policies.as_deref())
             .map(convert_event_triage_policies)
             .transpose()?
             .unwrap_or_default();
-        let exclusions = triage
+        // The exclusions are still validated, but review-database no longer
+        // matches events against them, so they remove nothing.
+        triage
             .as_ref()
             .and_then(|t| t.exclusions.as_deref())
             .map(convert_event_triage_exclusions)
             .transpose()
-            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))?
-            .unwrap_or_default();
+            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))?;
+        let filter = EventListFilterInput::from(filter);
         query(
             after,
             before,
             first,
             last,
             |after, before, first, last| async move {
-                load_with_triage(
-                    ctx,
-                    &filter,
-                    &policies,
-                    &exclusions,
-                    after,
-                    before,
-                    first,
-                    last,
-                )
-                .await
+                load_with_triage(ctx, &filter, &policies, after, before, first, last).await
             },
         )
         .await
+    }
+
+    /// Returns, for each raw event key and at its position, every detection
+    /// event, of any detection model, whose target is the raw event of that
+    /// kind, sensor and time.
+    ///
+    /// A key with no match, or whose sensor is outside the caller's sensor
+    /// scope, gets an empty list. More than 1000 keys is an error.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn detection_events_by_raw_event_keys(
+        &self,
+        ctx: &Context<'_>,
+        keys: Vec<RawEventKeyInput>,
+    ) -> Result<Vec<Vec<DetectionEvent>>> {
+        if keys.len() > MAX_RAW_EVENT_KEYS {
+            return Err(format!(
+                "{} raw event keys exceed the maximum of {MAX_RAW_EVENT_KEYS}",
+                keys.len()
+            )
+            .into());
+        }
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let store = crate::graphql::get_store(ctx)?;
+        let scope = sensors_for_user(ctx, &store)?;
+        let keys: Vec<RawEventKey> = keys.into_iter().map(Into::into).collect();
+        let found = store.events().find_by_raw_event_keys(&keys).map_err(|e| {
+            error_with_caller!(ctx, "Failed to look up events by raw event keys: {e:#}");
+            async_graphql::Error::new("failed to read events")
+        })?;
+        Ok(keys
+            .iter()
+            .zip(found)
+            .map(|(key, records)| {
+                if scope
+                    .as_ref()
+                    .is_some_and(|sensors| !sensors.contains(&key.sensor))
+                {
+                    return Vec::new();
+                }
+                records
+                    .into_iter()
+                    .map(|(key, record)| DetectionEvent::new(key, record))
+                    .collect()
+            })
+            .collect())
+    }
+}
+
+/// A raw event, named by its kind, the name of its sensor and its time.
+#[derive(InputObject)]
+struct RawEventKeyInput {
+    raw_event_kind: RawEventKind,
+    /// The sensor name, as a detection event's `sensor` holds it.
+    sensor: String,
+    /// The time of the raw event, its Giganto key timestamp.
+    time: Timestamp,
+}
+
+impl From<RawEventKeyInput> for RawEventKey {
+    fn from(input: RawEventKeyInput) -> Self {
+        Self {
+            raw_event_kind: input.raw_event_kind.into(),
+            sensor: input.sensor,
+            time: input.time.into(),
+        }
     }
 }
 
@@ -769,198 +396,24 @@ fn parse_event_id(id: &ID) -> Result<i128> {
         .map_err(|_| "invalid event id".into())
 }
 
-/// Common interface for all event types.
-#[derive(Interface)]
-#[graphql(
-    field(name = "id", ty = "ID"),
-    field(name = "time", ty = "DateTime"),
-    field(name = "sensor", ty = "&str"),
-    field(name = "confidence", ty = "f32"),
-    field(name = "category", ty = "Option<ThreatCategory>"),
-    field(name = "level", ty = "ThreatLevel"),
-    field(name = "triage_scores", ty = "Option<Vec<TriageScore<'_>>>")
-)]
-enum Event {
-    /// DNS requests and responses that convey unusual host names.
-    DnsCovertChannel(DnsCovertChannel),
-
-    /// HTTP-related threats.
-    HttpThreat(HttpThreat),
-
-    /// Brute force attacks against RDP, attempting to guess passwords.
-    RdpBruteForce(RdpBruteForce),
-
-    /// Multiple HTTP sessions with the same source and destination that occur within a short time.
-    /// This is a sign of a possible unauthorized communication channel.
-    RepeatedHttpSessions(RepeatedHttpSessions),
-
-    /// An HTTP connection to a Tor exit node.
-    TorConnection(TorConnection),
-
-    /// A connection-level Tor connection detection.
-    TorConnectionConn(TorConnectionConn),
-
-    /// DGA (Domain Generation Algorithm) generated hostname in HTTP request message
-    DomainGenerationAlgorithm(DomainGenerationAlgorithm),
-
-    /// Brute force attacks against FTP.
-    FtpBruteForce(FtpBruteForce),
-
-    /// Plain text password is used for the FTP connection.
-    FtpPlainText(FtpPlainText),
-
-    /// Large number of connection attempts are made to multiple ports
-    /// on the same destination from the same source.
-    PortScan(PortScan),
-
-    /// Specific host inside attempts to connect to a specific port on multiple host inside.
-    MultiHostPortScan(MultiHostPortScan),
-
-    /// multiple internal host attempt a DDOS attack against a specific external host.
-    ExternalDdos(ExternalDdos),
-
-    /// Non-browser user agent detected in HTTP request message.
-    NonBrowser(NonBrowser),
-
-    /// Brute force attacks against LDAP.
-    LdapBruteForce(LdapBruteForce),
-
-    /// Plain text password is used for the LDAP connection.
-    LdapPlainText(LdapPlainText),
-
-    /// An event that occurs when it is determined that there is a connection to a cryptocurrency mining network
-    CryptocurrencyMiningPool(CryptocurrencyMiningPool),
-
-    BlocklistConn(BlocklistConn),
-
-    BlocklistDns(BlocklistDns),
-
-    BlocklistDceRpc(BlocklistDceRpc),
-
-    BlocklistFtp(BlocklistFtp),
-
-    BlocklistHttp(BlocklistHttp),
-
-    BlocklistKerberos(BlocklistKerberos),
-
-    BlocklistLdap(BlocklistLdap),
-
-    BlocklistMalformedDns(BlocklistMalformedDns),
-
-    BlocklistMqtt(BlocklistMqtt),
-
-    BlocklistNfs(BlocklistNfs),
-
-    BlocklistNtlm(BlocklistNtlm),
-
-    BlocklistRadius(BlocklistRadius),
-
-    BlocklistRdp(BlocklistRdp),
-
-    BlocklistSmb(BlocklistSmb),
-
-    BlocklistSmtp(BlocklistSmtp),
-
-    BlocklistSsh(BlocklistSsh),
-
-    BlocklistTls(BlocklistTls),
-
-    WindowsThreat(WindowsThreat),
-
-    NetworkThreat(NetworkThreat),
-
-    ExtraThreat(ExtraThreat),
-
-    LockyRansomware(LockyRansomware),
-
-    BlocklistBootp(BlocklistBootp),
-
-    BlocklistDhcp(BlocklistDhcp),
-
-    SuspiciousTlsTraffic(SuspiciousTlsTraffic),
-
-    /// An event indicating an unusual pattern of connections to multiple
-    /// destination IP addresses.
-    UnusualDestinationPattern(UnusualDestinationPattern),
-}
-
-impl From<(i128, database::Event)> for Event {
-    fn from((key, event): (i128, database::Event)) -> Self {
-        match event {
-            database::Event::DnsCovertChannel(event) => {
-                Event::DnsCovertChannel((key, event).into())
-            }
-            database::Event::HttpThreat(event) => Event::HttpThreat((key, event).into()),
-            database::Event::RdpBruteForce(event) => Event::RdpBruteForce((key, event).into()),
-            database::Event::RepeatedHttpSessions(event) => {
-                Event::RepeatedHttpSessions((key, event).into())
-            }
-            database::Event::TorConnection(event) => Event::TorConnection((key, event).into()),
-            database::Event::TorConnectionConn(event) => {
-                Event::TorConnectionConn((key, event).into())
-            }
-            database::Event::DomainGenerationAlgorithm(event) => {
-                Event::DomainGenerationAlgorithm((key, event).into())
-            }
-            database::Event::FtpBruteForce(event) => Event::FtpBruteForce((key, event).into()),
-            database::Event::FtpPlainText(event) => Event::FtpPlainText((key, event).into()),
-            database::Event::PortScan(event) => Event::PortScan((key, event).into()),
-            database::Event::MultiHostPortScan(event) => {
-                Event::MultiHostPortScan((key, event).into())
-            }
-            database::Event::ExternalDdos(event) => Event::ExternalDdos((key, event).into()),
-            database::Event::NonBrowser(event) => Event::NonBrowser((key, event).into()),
-            database::Event::LdapBruteForce(event) => Event::LdapBruteForce((key, event).into()),
-            database::Event::LdapPlainText(event) => Event::LdapPlainText((key, event).into()),
-            database::Event::CryptocurrencyMiningPool(event) => {
-                Event::CryptocurrencyMiningPool((key, event).into())
-            }
-            database::Event::Blocklist(record_type) => match record_type {
-                RecordType::Bootp(event) => Event::BlocklistBootp((key, event).into()),
-                RecordType::Conn(event) => Event::BlocklistConn((key, event).into()),
-                RecordType::Dhcp(event) => Event::BlocklistDhcp((key, event).into()),
-                RecordType::Dns(event) => Event::BlocklistDns((key, event).into()),
-                RecordType::DceRpc(event) => Event::BlocklistDceRpc((key, event).into()),
-                RecordType::Ftp(event) => Event::BlocklistFtp((key, event).into()),
-                RecordType::Http(event) => Event::BlocklistHttp((key, event).into()),
-                RecordType::Kerberos(event) => Event::BlocklistKerberos((key, event).into()),
-                RecordType::Ldap(event) => Event::BlocklistLdap((key, event).into()),
-                RecordType::MalformedDns(event) => {
-                    Event::BlocklistMalformedDns((key, event).into())
-                }
-                RecordType::Mqtt(event) => Event::BlocklistMqtt((key, event).into()),
-                RecordType::Nfs(event) => Event::BlocklistNfs((key, event).into()),
-                RecordType::Ntlm(event) => Event::BlocklistNtlm((key, event).into()),
-                RecordType::Radius(event) => Event::BlocklistRadius((key, event).into()),
-                RecordType::Rdp(event) => Event::BlocklistRdp((key, event).into()),
-                RecordType::Smb(event) => Event::BlocklistSmb((key, event).into()),
-                RecordType::Smtp(event) => Event::BlocklistSmtp((key, event).into()),
-                RecordType::Ssh(event) => Event::BlocklistSsh((key, event).into()),
-                RecordType::Tls(event) => Event::BlocklistTls((key, event).into()),
-                RecordType::UnusualDestinationPattern(event) => {
-                    Event::UnusualDestinationPattern((key, event).into())
-                }
-            },
-            database::Event::WindowsThreat(event) => Event::WindowsThreat((key, event).into()),
-            database::Event::NetworkThreat(event) => Event::NetworkThreat((key, event).into()),
-            database::Event::ExtraThreat(event) => Event::ExtraThreat((key, event).into()),
-            database::Event::LockyRansomware(event) => Event::LockyRansomware((key, event).into()),
-            database::Event::SuspiciousTlsTraffic(event) => {
-                Event::SuspiciousTlsTraffic((key, event).into())
-            }
-        }
-    }
-}
-
 #[derive(Default, InputObject)]
 struct EventListFilterInput {
     start: Option<Timestamp>,
     end: Option<Timestamp>,
+    /// Selects an event when some listed endpoint's network contains one of
+    /// its originator-side addresses (`FROM`), responder-side addresses
+    /// (`TO`), or either. The originator side is a raw event body's
+    /// originator address, or a subject's related IPs observed as the
+    /// source; the responder side is the body's responder address, or the
+    /// related IPs observed as the destination. A host subject's IP is on
+    /// both sides, and a body without both addresses has none.
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
     source: Option<String>,
     destination: Option<String>,
     keywords: Option<Vec<String>>,
+    /// Selects only an event whose sensor is set and belongs to one of the
+    /// listed nodes.
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
@@ -972,12 +425,22 @@ struct EventListFilterInput {
     /// selects events whose country could not be determined, and `"XX"`
     /// selects events recorded without country information.
     countries: Option<Vec<String>>,
+    /// Selects an event whose category is listed; a null entry selects an
+    /// event with no category.
     categories: Option<Vec<Option<u8>>>,
-    levels: Option<Vec<ThreatLevel>>,
-    kinds: Option<Vec<EventKindInput>>,
+    /// Selects an event exactly when its detection model is listed, so an
+    /// empty list selects nothing.
+    detection_models: Option<Vec<DetectionModel>>,
+    /// Selects an event exactly when its raw event kind is listed, so an
+    /// empty list selects nothing.
+    raw_event_kinds: Option<Vec<RawEventKind>>,
+    /// Selects an event whose detection model has one of the listed learning
+    /// methods.
     learning_methods: Option<Vec<LearningMethod>>,
-    confidence_min: Option<f32>,
-    confidence_max: Option<f32>,
+    /// The inclusive lower bound on an event's score.
+    score_min: Option<f64>,
+    /// The inclusive upper bound on an event's score.
+    score_max: Option<f64>,
 }
 
 /// Standard event filter for `eventListWithTriage`. It has the same fields as
@@ -987,11 +450,20 @@ struct EventListFilterInput {
 struct EventStandardFilterInput {
     start: Option<Timestamp>,
     end: Option<Timestamp>,
+    /// Selects an event when some listed endpoint's network contains one of
+    /// its originator-side addresses (`FROM`), responder-side addresses
+    /// (`TO`), or either. The originator side is a raw event body's
+    /// originator address, or a subject's related IPs observed as the
+    /// source; the responder side is the body's responder address, or the
+    /// related IPs observed as the destination. A host subject's IP is on
+    /// both sides, and a body without both addresses has none.
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
     source: Option<String>,
     destination: Option<String>,
     keywords: Option<Vec<String>>,
+    /// Selects only an event whose sensor is set and belongs to one of the
+    /// listed nodes.
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
@@ -1003,17 +475,29 @@ struct EventStandardFilterInput {
     /// selects events whose country could not be determined, and `"XX"`
     /// selects events recorded without country information.
     countries: Option<Vec<String>>,
+    /// Selects an event whose category is listed; a null entry selects an
+    /// event with no category.
     categories: Option<Vec<Option<u8>>>,
-    levels: Option<Vec<ThreatLevel>>,
-    kinds: Option<Vec<EventKindInput>>,
+    /// Selects an event exactly when its detection model is listed, so an
+    /// empty list selects nothing.
+    detection_models: Option<Vec<DetectionModel>>,
+    /// Selects an event exactly when its raw event kind is listed, so an
+    /// empty list selects nothing.
+    raw_event_kinds: Option<Vec<RawEventKind>>,
+    /// Selects an event whose detection model has one of the listed learning
+    /// methods.
     learning_methods: Option<Vec<LearningMethod>>,
-    confidence_min: Option<f32>,
-    confidence_max: Option<f32>,
+    /// The inclusive lower bound on an event's score.
+    score_min: Option<f64>,
+    /// The inclusive upper bound on an event's score.
+    score_max: Option<f64>,
 }
 
 #[derive(InputObject)]
 struct EventTriageInput {
     policies: Option<Vec<EventTriagePolicyInput>>,
+    /// Inline exclusions. They are validated, but remove no event from the
+    /// connection or from `totalCount`.
     exclusions: Option<Vec<EventTriageExclusionInput>>,
 }
 
@@ -1025,16 +509,15 @@ struct EventTriageInput {
 struct EventTriagePolicyInput {
     id: i32,
     packet_attr: Vec<PacketAttrInput>,
-    confidence: Vec<ConfidenceInput>,
+    score: Vec<ScoreConditionInput>,
     response: Vec<ResponseInput>,
 }
 
 /// Inline exclusion input for `eventListWithTriage`.
 ///
 /// All four fields are nullable at the schema level; an object with no
-/// populated field is rejected by the resolver. When more than one field is
-/// populated the object is flattened into independent `TriageExclusion`
-/// values that are OR-combined with the rest.
+/// populated field is rejected by the resolver. An exclusion is validated,
+/// but removes no event.
 #[derive(InputObject)]
 struct EventTriageExclusionInput {
     ip_address: Option<HostNetworkGroupInput>,
@@ -1064,29 +547,10 @@ impl<'a> From<&'a database::event::TriageScore> for TriageScore<'a> {
     }
 }
 
-fn country_code(code: &[u8; 2]) -> &str {
-    std::str::from_utf8(code).unwrap_or("ZZ")
-}
-
-fn country_codes(codes: &[[u8; 2]]) -> Vec<&str> {
-    codes.iter().map(country_code).collect()
-}
-
-fn find_ip_network(map: &IndexedTable<database::Network>, addr: IpAddr) -> Result<Option<Network>> {
-    for entry in map.iter(Direction::Forward, None) {
-        let network = entry?;
-        if network.networks.contains(addr) {
-            return Ok(Some(network.into()));
-        }
-    }
-    Ok(None)
-}
-
 struct EventTotalCount {
     start: Option<jiff::Timestamp>,
     end: Option<jiff::Timestamp>,
     filter: EventFilter,
-    exclusions: Vec<TriageExclusion>,
 }
 
 #[Object]
@@ -1113,19 +577,14 @@ impl EventTotalCount {
             if key > last {
                 break;
             }
-            if !event.matches(&self.filter)?.0 {
-                continue;
+            if event.matches(&self.filter)?.0 {
+                count += 1;
             }
-            if !self.exclusions.is_empty() && event.matches_exclusion(&self.exclusions) {
-                continue;
-            }
-            count += 1;
         }
         Ok(StringNumber(count))
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn from_filter_input(
     ctx: &Context<'_>,
     store: &Store,
@@ -1191,15 +650,15 @@ fn from_filter_input(
         None
     };
 
-    let levels = input
-        .levels
+    let detection_models = input
+        .detection_models
         .as_ref()
-        .map(|v| v.iter().map(|l| DatabaseThreatLevel::from(*l)).collect());
+        .map(|v| v.iter().map(|&model| model.into()).collect());
 
-    let kinds = input
-        .kinds
+    let raw_event_kinds = input
+        .raw_event_kinds
         .as_ref()
-        .map(|v| v.iter().map(|k| database::EventKind::from(*k)).collect());
+        .map(|v| v.iter().map(|&kind| kind.into()).collect());
 
     let sensors = if let Some(sensors_input) = &input.sensors {
         let scope = crate::graphql::customer_access::users_customers(ctx)
@@ -1220,15 +679,15 @@ fn from_filter_input(
         destination,
         countries,
         categories,
-        levels,
-        kinds,
+        detection_models,
+        raw_event_kinds,
         input
             .learning_methods
             .as_ref()
             .map(|v| v.iter().map(|v| (*v).into()).collect()),
         sensors,
-        input.confidence_min,
-        input.confidence_max,
+        input.score_min,
+        input.score_max,
         None,
     ))
 }
@@ -1347,7 +806,7 @@ fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<Strin
     Ok(Some(sensors))
 }
 
-async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
+async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<DetectionEvent>> {
     let key = parse_event_id(id)?;
     let store = crate::graphql::get_store(ctx)?;
 
@@ -1365,21 +824,18 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     let Some(item) = iter.next() else {
         return Ok(None);
     };
-    let Some((found_key, mut event)) = readable_event(ctx, item)? else {
+    let Some((found_key, event)) = readable_event(ctx, item)? else {
         return Ok(None);
     };
     if found_key != key {
         return Ok(None);
     }
 
-    let (matched, triage_score) = event.matches(&filter).map_err(|e| format!("{e}"))?;
+    let (matched, _) = event.matches(&filter).map_err(|e| format!("{e}"))?;
     if !matched {
         return Ok(None);
     }
-    if let Some(triage_score) = triage_score {
-        event.set_triage_scores(triage_score);
-    }
-    Ok(Some((found_key, event).into()))
+    Ok(Some(DetectionEvent::new(found_key, event)))
 }
 
 async fn load(
@@ -1389,53 +845,8 @@ async fn load(
     before: Option<String>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx)?;
-
-    let start = filter.start.map(Into::into);
-    let end = filter.end.map(Into::into);
-    let filter = from_filter_input(ctx, &store, filter)?;
-    let db = store.events();
-    let bounds = if empty_time_range(start, end)? {
-        None
-    } else {
-        event_range(start, end, after.as_deref(), before.as_deref())?
-    };
-    let (events, has_previous, has_next) = if let Some((earliest, latest)) = bounds {
-        if let Some(last) = last {
-            let iter = db.iter_from(latest, Direction::Reverse);
-            let (events, has_more) =
-                iter_to_events(ctx, iter, earliest, cmp::Ordering::is_ge, last, &filter)
-                    .map_err(|e| format!("{e}"))?;
-            (events.into_iter().rev().collect(), has_more, false)
-        } else {
-            let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
-            let iter = db.iter_from(earliest, Direction::Forward);
-            let (events, has_more) =
-                iter_to_events(ctx, iter, latest, cmp::Ordering::is_le, first, &filter)
-                    .map_err(|e| format!("{e}"))?;
-            (events, false, has_more)
-        }
-    } else {
-        (Vec::new(), false, false)
-    };
-
-    let mut connection = Connection::with_additional_fields(
-        has_previous,
-        has_next,
-        EventTotalCount {
-            start,
-            end,
-            filter,
-            exclusions: Vec::new(),
-        },
-    );
-    connection.edges.extend(
-        events
-            .into_iter()
-            .map(|(k, ev)| Edge::new(k.to_string(), ev)),
-    );
-    Ok(connection)
+) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
+    load_with_triage(ctx, filter, &[], after, before, first, last).await
 }
 
 fn earliest(start: Option<jiff::Timestamp>) -> Result<i128> {
@@ -1521,8 +932,8 @@ fn is_event_read_failure(error: &InvalidEvent) -> bool {
 
 fn readable_event(
     ctx: &Context<'_>,
-    item: std::result::Result<(i128, database::Event), InvalidEvent>,
-) -> anyhow::Result<Option<(i128, database::Event)>> {
+    item: std::result::Result<(i128, StoredDetectionEvent), InvalidEvent>,
+) -> anyhow::Result<Option<(i128, StoredDetectionEvent)>> {
     match item {
         Ok(event) => Ok(Some(event)),
         Err(e) if is_event_read_failure(&e) => {
@@ -1534,38 +945,6 @@ fn readable_event(
             Ok(None)
         }
     }
-}
-
-fn iter_to_events(
-    ctx: &Context<'_>,
-    iter: EventIterator,
-    to: i128,
-    cond: fn(cmp::Ordering) -> bool,
-    len: usize,
-    filter: &EventFilter,
-) -> anyhow::Result<(Vec<(i128, Event)>, bool)> {
-    let mut events = Vec::new();
-    let mut exceeded = false;
-    for item in iter {
-        let Some((key, event)) = readable_event(ctx, item)? else {
-            continue;
-        };
-        if !(cond)(key.cmp(&to)) {
-            break;
-        }
-        if !event.matches(filter)?.0 {
-            continue;
-        }
-        events.push((key, (key, event).into()));
-        exceeded = events.len() > len;
-        if exceeded {
-            break;
-        }
-    }
-    if exceeded {
-        events.pop();
-    }
-    Ok((events, exceeded))
 }
 
 impl From<EventStandardFilterInput> for EventListFilterInput {
@@ -1587,11 +966,11 @@ impl From<EventStandardFilterInput> for EventListFilterInput {
             user_departments: input.user_departments,
             countries: input.countries,
             categories: input.categories,
-            levels: input.levels,
-            kinds: input.kinds,
+            detection_models: input.detection_models,
+            raw_event_kinds: input.raw_event_kinds,
             learning_methods: input.learning_methods,
-            confidence_min: input.confidence_min,
-            confidence_max: input.confidence_max,
+            score_min: input.score_min,
+            score_max: input.score_max,
         }
     }
 }
@@ -1612,7 +991,7 @@ fn convert_event_triage_policies(
             creation_time: now,
             triage_exclusion: Vec::new(),
             packet_attr: policy.packet_attr.iter().map(Into::into).collect(),
-            confidence: policy.confidence.iter().map(Into::into).collect(),
+            score: policy.score.iter().map(Into::into).collect(),
             response: policy.response.iter().map(Into::into).collect(),
         });
     }
@@ -1676,23 +1055,23 @@ fn convert_event_triage_exclusions(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Loads a page of the events `filter` selects, scoring each against
+/// `policies` when there are any. An event no policy qualifies for stays in
+/// the page with no triage scores.
 async fn load_with_triage(
     ctx: &Context<'_>,
-    filter: &EventStandardFilterInput,
+    filter: &EventListFilterInput,
     policies: &[DbTriagePolicyInput],
-    exclusions: &[TriageExclusion],
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
 
     let start = filter.start.map(Into::into);
     let end = filter.end.map(Into::into);
-    let list_filter: EventListFilterInput = filter.clone().into();
-    let event_filter = from_filter_input(ctx, &store, &list_filter)?;
+    let event_filter = from_filter_input(ctx, &store, filter)?;
     let db = store.events();
     let bounds = if empty_time_range(start, end)? {
         None
@@ -1702,7 +1081,7 @@ async fn load_with_triage(
     let (events, has_previous, has_next) = if let Some((earliest, latest)) = bounds {
         if let Some(last) = last {
             let iter = db.iter_from(latest, Direction::Reverse);
-            let (events, has_more) = iter_to_events_with_triage(
+            let (events, has_more) = iter_to_events(
                 ctx,
                 iter,
                 earliest,
@@ -1710,14 +1089,13 @@ async fn load_with_triage(
                 last,
                 &event_filter,
                 policies,
-                exclusions,
             )
             .map_err(|e| format!("{e}"))?;
             (events.into_iter().rev().collect(), has_more, false)
         } else {
             let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
             let iter = db.iter_from(earliest, Direction::Forward);
-            let (events, has_more) = iter_to_events_with_triage(
+            let (events, has_more) = iter_to_events(
                 ctx,
                 iter,
                 latest,
@@ -1725,7 +1103,6 @@ async fn load_with_triage(
                 first,
                 &event_filter,
                 policies,
-                exclusions,
             )
             .map_err(|e| format!("{e}"))?;
             (events, false, has_more)
@@ -1741,7 +1118,6 @@ async fn load_with_triage(
             start,
             end,
             filter: event_filter,
-            exclusions: exclusions.to_vec(),
         },
     );
     connection.edges.extend(
@@ -1752,8 +1128,7 @@ async fn load_with_triage(
     Ok(connection)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn iter_to_events_with_triage(
+fn iter_to_events(
     ctx: &Context<'_>,
     iter: EventIterator,
     to: i128,
@@ -1761,12 +1136,11 @@ fn iter_to_events_with_triage(
     len: usize,
     filter: &EventFilter,
     policies: &[DbTriagePolicyInput],
-    exclusions: &[TriageExclusion],
-) -> anyhow::Result<(Vec<(i128, Event)>, bool)> {
+) -> anyhow::Result<(Vec<(i128, DetectionEvent)>, bool)> {
     let mut events = Vec::new();
     let mut exceeded = false;
     for item in iter {
-        let Some((key, mut event)) = readable_event(ctx, item)? else {
+        let Some((key, event)) = readable_event(ctx, item)? else {
             continue;
         };
         if !(cond)(key.cmp(&to)) {
@@ -1775,16 +1149,12 @@ fn iter_to_events_with_triage(
         if !event.matches(filter)?.0 {
             continue;
         }
-        if !exclusions.is_empty() && event.matches_exclusion(exclusions) {
-            continue;
-        }
-        if !policies.is_empty() {
-            let scores = event.score_against_policies(policies);
-            if !scores.is_empty() {
-                event.set_triage_scores(scores);
-            }
-        }
-        events.push((key, (key, event).into()));
+        let scores = if policies.is_empty() {
+            None
+        } else {
+            Some(event.score_against_policies(policies)).filter(|scores| !scores.is_empty())
+        };
+        events.push((key, DetectionEvent::with_triage_scores(key, event, scores)));
         exceeded = events.len() > len;
         if exceeded {
             break;
@@ -1794,4635 +1164,4 @@ fn iter_to_events_with_triage(
         events.pop();
     }
     Ok((events, exceeded))
-}
-
-#[cfg(test)]
-#[allow(clippy::await_holding_lock)]
-mod tests {
-
-    use std::{net::Ipv4Addr, sync::Arc};
-
-    use futures_util::StreamExt;
-    use jiff::{SignedDuration, Timestamp};
-    use review_database::{
-        EventCategory, EventKind, EventMessage,
-        event::{
-            BlocklistBootpFields, BlocklistConnFields, BlocklistDceRpcFields, BlocklistDhcpFields,
-            BlocklistDnsFields, BlocklistKerberosFields, BlocklistMqttFields, BlocklistNfsFields,
-            BlocklistNtlmFields, BlocklistRdpFields, BlocklistSmbFields, BlocklistSmtpFields,
-            BlocklistSshFields, BlocklistTlsFields, DnsEventFields, MultiHostPortScanFields,
-            UnusualDestinationPatternFields,
-        },
-    };
-
-    use crate::graphql::{Role, RoleGuard, TestSchema};
-
-    #[test]
-    fn undecodable_event_records_are_skippable() {
-        use review_database::event::{EventDb, InvalidEvent};
-
-        let dir = tempfile::tempdir().unwrap();
-        let raw = rocksdb::OptimisticTransactionDB::open_default(dir.path()).unwrap();
-        let events = EventDb::new(&raw);
-        let keys: Vec<_> = (0..3)
-            .map(|second| {
-                events
-                    .put(&event_message_at_timestamp(
-                        Timestamp::from_second(second).unwrap(),
-                        1,
-                        2,
-                        Some(EventCategory::CommandAndControl),
-                        "sensor1",
-                    ))
-                    .unwrap()
-            })
-            .collect();
-        raw.put(keys[1].to_be_bytes(), [0xff]).unwrap();
-        let mut iter = events.iter_forward();
-        assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[0]));
-        let error = iter.next().unwrap().err().unwrap();
-        assert!(matches!(&error, InvalidEvent::Value(_)));
-        assert!(!super::is_event_read_failure(&error));
-        assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[2]));
-        assert!(iter.next().is_none());
-        drop(iter);
-
-        raw.put([0xff], [0xff]).unwrap();
-        let error = events.iter_forward().find_map(Result::err).unwrap();
-        assert!(matches!(&error, InvalidEvent::Key(_)));
-        assert!(!super::is_event_read_failure(&error));
-    }
-
-    fn sst_files(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
-        std::fs::read_dir(dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "sst"))
-            .collect()
-    }
-
-    async fn corrupted_event_store() -> (TestSchema, Vec<i128>, i128, i128) {
-        use std::io::{Seek, SeekFrom, Write};
-
-        use review_database::event::InvalidEvent;
-
-        let schema = TestSchema::new().await;
-        let db_dir = schema.dir.path().join("states.db");
-        let existing = sst_files(&db_dir);
-        let keys = {
-            let store = schema.store();
-            let events = store.events();
-            (0..20_000)
-                .map(|second| {
-                    events
-                        .put(&event_message_at_timestamp(
-                            Timestamp::from_second(second).unwrap(),
-                            1,
-                            2,
-                            Some(EventCategory::CommandAndControl),
-                            "sensor1",
-                        ))
-                        .unwrap()
-                })
-                .collect::<Vec<_>>()
-        };
-        review_database::backup::create(&schema.store, true, 1).unwrap();
-        let new_files = sst_files(&db_dir);
-        let created: Vec<_> = new_files.difference(&existing).collect();
-        assert_eq!(created.len(), 1);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(created[0])
-            .unwrap();
-        file.seek(SeekFrom::Start(file.metadata().unwrap().len() / 3))
-            .unwrap();
-        file.write_all(&[0; 64]).unwrap();
-        file.sync_all().unwrap();
-
-        let (last_good, first_bad) = {
-            let store = schema.store();
-            let events = store.events();
-            let mut last_good = None;
-            let mut failure = None;
-            for (index, item) in events.iter_forward().enumerate() {
-                match item {
-                    Ok((key, _)) => last_good = Some(key),
-                    Err(error) => {
-                        assert!(matches!(&error, InvalidEvent::Iteration(error)
-                            if error.kind() == rocksdb::ErrorKind::Corruption));
-                        assert!(super::is_event_read_failure(&error));
-                        failure = Some((last_good.unwrap(), keys[index]));
-                        break;
-                    }
-                }
-            }
-            failure.expect("the damaged SST block must produce an iteration failure")
-        };
-        (schema, keys, last_good, first_bad)
-    }
-
-    #[tokio::test]
-    async fn corrupted_event_store_returns_field_errors() {
-        let (schema, keys, last_good, first_bad) = corrupted_event_store().await;
-        let after_bad = keys.iter().copied().find(|key| *key > first_bad).unwrap();
-        let cases = [
-            ("eventList(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventList": null}), vec!["eventList", "totalCount"]),
-            ("eventListWithTriage(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventListWithTriage": null}), vec!["eventListWithTriage", "totalCount"]),
-            (format!("eventList(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
-            (format!("eventListWithTriage(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventListWithTriage"]),
-            (format!("eventList(filter: {{}}, before: \"{after_bad}\", last: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
-            (format!("event(id: \"{first_bad}\") {{ __typename }}"), serde_json::Value::Null, vec!["event"]),
-            ("eventCountsByKind(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByKind"]),
-            ("eventCountsByNetwork(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByNetwork"]),
-            (r#"eventFrequencySeries(filter: {start: "1970-01-01T00:00:00Z", end: "1970-01-01T05:33:20Z"}, period: 20000)"#.to_string(), serde_json::Value::Null, vec!["eventFrequencySeries"]),
-        ];
-        for (query, data, path) in cases {
-            let response = schema
-                .execute_as_system_admin(&format!("{{ {query} }}"))
-                .await;
-            assert_eq!(response.data.into_json().unwrap(), data, "{query}");
-            assert_eq!(response.errors.len(), 1, "{query}: {:?}", response.errors);
-            let error = response.errors.first().unwrap();
-            assert_eq!(error.message, "failed to read events", "{query}");
-            assert_eq!(
-                serde_json::to_value(&error.path).unwrap(),
-                serde_json::json!(path),
-                "{query}"
-            );
-            if let Some(source) = &error.source {
-                if let Some(source) = source.downcast_ref::<anyhow::Error>() {
-                    assert_eq!(source.chain().count(), 1);
-                    assert_eq!(format!("{source:#}"), "failed to read events");
-                } else {
-                    assert_eq!(
-                        source.downcast_ref::<String>().unwrap(),
-                        "failed to read events"
-                    );
-                }
-            }
-        }
-
-        // An independently resolved sibling can still read an unaffected range.
-        let response = schema
-            .execute_as_system_admin(&format!(
-                "{{ eventList(filter: {{}}) {{ totalCount }} event(id: \"{}\") {{ __typename }} }}",
-                keys[0]
-            ))
-            .await;
-        assert_eq!(response.errors.len(), 1);
-        assert!(!response.data.into_json().unwrap()["event"].is_null());
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn subscription_task_logs_the_starting_connection() {
-        use crate::graphql::logging_test_support::{CapturedEvents, identity};
-        use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
-
-        let schema = TestSchema::new().await;
-        let time = "2025-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
-        schema
-            .store()
-            .events()
-            .put(&event_message_at(time, 1, 2))
-            .unwrap();
-        let (events, _guard) = CapturedEvents::start();
-        // The task must retain these values after the request context is dropped.
-        let request = async_graphql::Request::new(r#"subscription { eventStream(start: "2025-01-01T00:00:00Z", fetchInterval: 1) { __typename } }"#)
-            .data(identity("subscription"))
-            .data(RoleGuard::Role(Role::SecurityMonitor))
-            .data(CustomerIds(None));
-        let mut stream = schema.schema.execute_stream(request);
-        let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(response.errors.is_empty(), "{response:?}");
-        // Drop the subscription context, then force a send to its closed receiver.
-        drop(stream);
-        schema
-            .store()
-            .events()
-            .put(&event_message_at(time + SignedDuration::from_secs(1), 3, 4))
-            .unwrap();
-        events.wait_for("Failed to fetch events:").await;
-        events.assert_fields(
-            "Failed to fetch events:",
-            "subscription.web-app.node-01.customer.internal",
-            Some("SecurityMonitor"),
-        );
-    }
-
-    /// The `Event.sensor` of events emitted by the test node whose hostname is
-    /// `sensor1`.
-    const SENSOR1_EVENT_SENSOR: &str = "piglet.sensor1";
-
-    /// Creates an event message at `timestamp` emitted by the `sensor1` test
-    /// node.
-    fn sensor1_event_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
-        event_message_with_category(
-            timestamp,
-            src,
-            dst,
-            Some(EventCategory::CommandAndControl),
-            SENSOR1_EVENT_SENSOR,
-        )
-    }
-
-    async fn connection_page(
-        schema: &TestSchema,
-        field: &str,
-        arguments: &str,
-    ) -> serde_json::Value {
-        let output = schema
-            .execute_as_system_admin(&format!(
-                r"{{ {field}({arguments}) {{
-                    edges {{ cursor node {{
-                        ... on DnsCovertChannel {{ time triageScores {{ policyId }} }}
-                    }} }}
-                    pageInfo {{ hasNextPage hasPreviousPage }}
-                    totalCount
-                }} }}"
-            ))
-            .await;
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        output.data.into_json().expect("valid GraphQL JSON")[field].clone()
-    }
-
-    /// Creates an event message at `timestamp` with the given sensor and
-    /// destination `IPv4` addresses.
-    fn event_message_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
-        event_message_at_timestamp(
-            timestamp,
-            src,
-            dst,
-            Some(EventCategory::CommandAndControl),
-            "sensor1",
-        )
-    }
-
-    fn event_message_with_category(
-        timestamp: Timestamp,
-        src: u32,
-        dst: u32,
-        category: Option<EventCategory>,
-        sensor: &str,
-    ) -> EventMessage {
-        event_message_at_timestamp(timestamp, src, dst, category, sensor)
-    }
-
-    fn event_message_at_timestamp(
-        timestamp: Timestamp,
-        src: u32,
-        dst: u32,
-        category: Option<EventCategory>,
-        sensor: &str,
-    ) -> EventMessage {
-        let fields = DnsEventFields {
-            sensor: sensor.to_string(),
-            start_time: i64::try_from(timestamp.as_nanosecond())
-                .expect("test timestamp must fit in the event key range"),
-            duration: 0,
-            orig_addr: Ipv4Addr::from(src).into(),
-            orig_port: 10000,
-            resp_addr: Ipv4Addr::from(dst).into(),
-            resp_port: 53,
-            proto: 17,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            query: "domain".into(),
-            answer: Vec::new(),
-            trans_id: 0,
-            rtt: 0,
-            qclass: 0,
-            qtype: 0,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: false,
-            ra_flag: false,
-            ttl: Vec::new(),
-            confidence: 0.8,
-            category,
-        };
-        EventMessage {
-            time: timestamp,
-            kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        }
-    }
-
-    /// Returns the UTC time of the given date and time of day.
-    pub(super) fn utc_micro(
-        year: i16,
-        month: i8,
-        day: i8,
-        hour: i8,
-        minute: i8,
-        second: i8,
-        microsecond: i32,
-    ) -> Timestamp {
-        jiff::tz::Offset::UTC
-            .to_timestamp(jiff::civil::date(year, month, day).at(
-                hour,
-                minute,
-                second,
-                microsecond * 1_000,
-            ))
-            .expect("a test time is representable")
-    }
-
-    /// Returns `timestamp` in nanoseconds since the Unix epoch.
-    pub(super) fn nanos(timestamp: Timestamp) -> i64 {
-        review_database::timestamp::to_i64_nanos(timestamp)
-            .expect("test timestamp must fit in i64 nanoseconds")
-    }
-
-    #[tokio::test]
-    async fn event_stream_fetch_interval_range() {
-        let schema = TestSchema::new().await;
-        for (interval, range) in [
-            (0, "must be greater than or equal to 1"),
-            (86_401, "must be less than or equal to 86400"),
-        ] {
-            let query = format!(
-                r#"subscription {{ eventStream(start: "2018-01-28T00:00:00Z", fetchInterval: {interval}) {{ __typename }} }}"#
-            );
-            let mut stream = schema.execute_stream(&query).await;
-            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(response.errors.len(), 1, "{response:?}");
-            let error = response.errors.first().unwrap();
-            assert!(error.message.contains(range), "{error:?}");
-            // Identify fetchInterval by the reported argument value location.
-            let column = query.find("fetchInterval: ").unwrap() + "fetchInterval: ".len() + 1;
-            assert_eq!(
-                error.locations,
-                vec![async_graphql::Pos { line: 1, column }]
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn event_timestamps_preserve_rfc3339_io_and_datetime_schema() {
-        let schema = TestSchema::new().await;
-        let cases = [
-            (-1, "1969-12-31T23:59:59.999999999Z"),
-            (0, "1970-01-01T00:00:00Z"),
-            (1_123_456_789, "1970-01-01T00:00:01.123456789Z"),
-            (i64::MIN, "1677-09-21T00:12:43.145224192Z"),
-            (i64::MAX, "2262-04-11T23:47:16.854775807Z"),
-        ];
-
-        for (nanos, expected) in cases {
-            let timestamp = Timestamp::from_nanosecond(i128::from(nanos))
-                .expect("i64 nanoseconds must fit in jiff");
-            assert_eq!(timestamp.to_string(), expected);
-
-            let key = {
-                let store = schema.store();
-                store
-                    .events()
-                    .put(&event_message_at_timestamp(
-                        timestamp,
-                        1,
-                        2,
-                        Some(EventCategory::CommandAndControl),
-                        "sensor1",
-                    ))
-                    .expect("event timestamp must be stored")
-            };
-            let output = schema
-                .execute_as_system_admin(&format!(
-                    "{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ time }} }} }}"
-                ))
-                .await;
-            assert!(output.errors.is_empty(), "{:?}", output.errors);
-            assert_eq!(
-                output.data.to_string(),
-                format!(r#"{{event: {{time: "{expected}"}}}}"#)
-            );
-
-            let input = schema
-                .execute_as_system_admin(&format!(
-                    "{{ eventList(filter: {{ start: \"{expected}\", end: \"{expected}\" }}, first: 1) {{ totalCount }} }}"
-                ))
-                .await;
-            assert!(input.errors.is_empty(), "{:?}", input.errors);
-            assert_eq!(input.data.to_string(), r#"{eventList: {totalCount: "0"}}"#);
-        }
-
-        let compatible_offset = schema
-            .execute_as_system_admin(
-                r#"{ eventList(filter: { start: "1970-01-01T00:00:00+00:00", end: "1970-01-01T00:00:00+00:00" }, first: 1) { totalCount } }"#,
-            )
-            .await;
-        assert!(
-            compatible_offset.errors.is_empty(),
-            "{:?}",
-            compatible_offset.errors
-        );
-        assert_eq!(
-            compatible_offset.data.to_string(),
-            r#"{eventList: {totalCount: "0"}}"#
-        );
-
-        let out_of_range = schema
-            .execute_as_system_admin(
-                r#"{ eventList(filter: { start: "2262-04-11T23:47:16.854775808Z" }, first: 1) { totalCount } }"#,
-            )
-            .await;
-        assert_eq!(out_of_range.errors.len(), 1);
-        assert!(
-            out_of_range.errors[0]
-                .message
-                .contains("outside the supported nanosecond range")
-        );
-
-        let introspection = schema
-            .execute_as_system_admin(
-                r#"{ __type(name: "EventListFilterInput") {
-                    inputFields { name type { kind name ofType { kind name } } }
-                } }"#,
-            )
-            .await;
-        assert!(
-            introspection.errors.is_empty(),
-            "{:?}",
-            introspection.errors
-        );
-        let data = introspection.data.to_string();
-        assert!(data.contains(r#"name: "start""#));
-        assert!(data.contains(r#"kind: SCALAR, name: "DateTime""#));
-    }
-
-    #[tokio::test]
-    async fn empty_time_range_does_not_skip_filter_validation() {
-        let schema = TestSchema::new().await;
-        let queries = [
-            r#"{
-                eventList(
-                    filter: {
-                        start: "2026-01-01T00:00:00Z"
-                        end: "2026-01-01T00:00:00Z"
-                        source: "invalid"
-                    }
-                    first: 1
-                ) { edges { cursor } }
-            }"#,
-            r#"{
-                eventListWithTriage(
-                    filter: {
-                        start: "2026-01-01T00:00:00Z"
-                        end: "2026-01-01T00:00:00Z"
-                        source: "invalid"
-                    }
-                    first: 1
-                ) { edges { cursor } }
-            }"#,
-            r#"{
-                eventCountsByCategory(
-                    filter: {
-                        start: "2026-01-01T00:00:00Z"
-                        end: "2026-01-01T00:00:00Z"
-                        source: "invalid"
-                    }
-                    first: 1
-                ) { counts }
-            }"#,
-            r#"{
-                eventCountsByNetwork(
-                    filter: {
-                        start: "2026-01-01T00:00:00Z"
-                        end: "2026-01-01T00:00:00Z"
-                        source: "invalid"
-                    }
-                    first: 1
-                ) { counts }
-            }"#,
-            r#"{
-                eventFrequencySeries(
-                    filter: {
-                        start: "2026-01-01T00:00:00Z"
-                        end: "2026-01-01T00:00:00Z"
-                        source: "invalid"
-                    }
-                    period: 1
-                )
-            }"#,
-        ];
-
-        for query in queries {
-            let output = schema.execute_as_system_admin(query).await;
-            assert_eq!(output.errors.len(), 1, "query: {query}");
-            assert_eq!(output.errors[0].message, "invalid source IP address");
-        }
-    }
-
-    #[test]
-    fn event_end_boundaries_are_exclusive() {
-        let epoch = Timestamp::UNIX_EPOCH;
-        let negative = Timestamp::from_nanosecond(-1).expect("valid timestamp");
-        let positive = Timestamp::from_nanosecond(1).expect("valid timestamp");
-        let minimum = Timestamp::from_nanosecond(i128::from(i64::MIN))
-            .expect("i64 nanoseconds must fit in jiff");
-
-        assert_eq!(super::latest(Some(epoch)).unwrap(), -1);
-        assert_eq!(super::latest(Some(minimum)).unwrap(), i128::MIN);
-        assert_eq!(super::latest(None).unwrap(), i128::MAX);
-        assert_eq!(
-            super::latest(Some(negative)).unwrap(),
-            -((1_i128 << 64) + 1)
-        );
-        assert_eq!(super::latest(Some(positive)).unwrap(), (1_i128 << 64) - 1);
-    }
-
-    #[test]
-    fn event_cursor_bounds_cover_the_signed_key_range() {
-        assert_eq!(super::earliest(None).unwrap(), i128::MIN);
-        assert_eq!(super::earliest_after("-1").unwrap(), Some(0));
-        assert_eq!(super::earliest_after(&i128::MAX.to_string()).unwrap(), None);
-        assert_eq!(super::latest_before("1").unwrap(), Some(0));
-        assert_eq!(super::latest_before("0").unwrap(), Some(-1));
-        assert_eq!(super::latest_before(&i128::MIN.to_string()).unwrap(), None);
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn unbounded_event_list_paginates_across_the_unix_epoch() {
-        let schema = TestSchema::new().await;
-        let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
-        let epoch = Timestamp::UNIX_EPOCH;
-        let after_epoch = Timestamp::from_nanosecond(1).expect("valid timestamp");
-        let store = schema.store();
-        let events = store.events();
-        let mut keys = Vec::new();
-        for (timestamp, source, destination) in [
-            (before_epoch, 1, 2),
-            (before_epoch, 7, 8),
-            (epoch, 3, 4),
-            (epoch, 9, 10),
-            (after_epoch, 5, 6),
-            (after_epoch, 11, 12),
-        ] {
-            keys.push(
-                events
-                    .put(&event_message_at_timestamp(
-                        timestamp,
-                        source,
-                        destination,
-                        Some(EventCategory::CommandAndControl),
-                        "sensor1",
-                    ))
-                    .expect("event timestamp must be stored"),
-            );
-        }
-        drop(store);
-
-        keys.sort_unstable();
-        let expected: Vec<String> = keys.iter().map(ToString::to_string).collect();
-        let mut after = None;
-        let mut forward = Vec::new();
-        for (index, expected_cursor) in expected.iter().enumerate() {
-            let cursor_argument = after
-                .as_ref()
-                .map_or_else(String::new, |cursor| format!(r#", after: "{cursor}""#));
-            let page = connection_page(
-                &schema,
-                "eventList",
-                &format!("filter: {{}}, first: 1{cursor_argument}"),
-            )
-            .await;
-            assert_eq!(page["totalCount"], "6");
-            assert_eq!(page["pageInfo"]["hasNextPage"], index < expected.len() - 1);
-            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
-            let cursor = page["edges"][0]["cursor"]
-                .as_str()
-                .expect("page must contain a cursor")
-                .to_string();
-            assert_eq!(&cursor, expected_cursor);
-            forward.push(cursor.clone());
-            after = Some(cursor);
-        }
-        assert_eq!(forward, expected);
-
-        let mut before = None;
-        let mut backward = Vec::new();
-        for (index, expected_cursor) in expected.iter().rev().enumerate() {
-            let cursor_argument = before
-                .as_ref()
-                .map_or_else(String::new, |cursor| format!(r#", before: "{cursor}""#));
-            let page = connection_page(
-                &schema,
-                "eventList",
-                &format!("filter: {{}}, last: 1{cursor_argument}"),
-            )
-            .await;
-            assert_eq!(page["totalCount"], "6");
-            assert_eq!(page["pageInfo"]["hasNextPage"], false);
-            assert_eq!(
-                page["pageInfo"]["hasPreviousPage"],
-                index < expected.len() - 1
-            );
-            let cursor = page["edges"][0]["cursor"]
-                .as_str()
-                .expect("page must contain a cursor")
-                .to_string();
-            assert_eq!(&cursor, expected_cursor);
-            backward.push(cursor.clone());
-            before = Some(cursor);
-        }
-        backward.reverse();
-        assert_eq!(backward, expected);
-
-        let triage = r#"triage: {
-            policies: [{
-                id: 7
-                packetAttr: []
-                confidence: [{
-                    threatCategory: COMMAND_AND_CONTROL
-                    threatKind: "dns covert channel"
-                    confidence: 0.0
-                    weight: 1.0
-                }]
-                response: [{ minimumScore: 0.0, kind: MANUAL }]
-            }]
-            exclusions: [{
-                ipAddress: { hosts: ["0.0.0.4"], networks: [], ranges: [] }
-            }]
-        }"#;
-        let expected_with_triage = expected
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != 2)
-            .map(|(_, cursor)| cursor.clone())
-            .collect::<Vec<_>>();
-        let mut after = None;
-        let mut with_triage = Vec::new();
-        for (index, expected_cursor) in expected_with_triage.iter().enumerate() {
-            let cursor_argument = after
-                .as_ref()
-                .map_or_else(String::new, |cursor| format!(r#", after: "{cursor}""#));
-            let page = connection_page(
-                &schema,
-                "eventListWithTriage",
-                &format!("filter: {{}}, {triage}, first: 1{cursor_argument}"),
-            )
-            .await;
-            assert_eq!(page["totalCount"], "5");
-            assert_eq!(
-                page["pageInfo"]["hasNextPage"],
-                index < expected_with_triage.len() - 1
-            );
-            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
-            assert_eq!(page["edges"][0]["node"]["triageScores"][0]["policyId"], "7");
-            let cursor = page["edges"][0]["cursor"]
-                .as_str()
-                .expect("page must contain a cursor")
-                .to_string();
-            assert_eq!(&cursor, expected_cursor);
-            with_triage.push(cursor.clone());
-            after = Some(cursor);
-        }
-        assert_eq!(with_triage, expected_with_triage);
-
-        let mut before = None;
-        let mut with_triage_backward = Vec::new();
-        for (index, expected_cursor) in expected_with_triage.iter().rev().enumerate() {
-            let cursor_argument = before
-                .as_ref()
-                .map_or_else(String::new, |cursor| format!(r#", before: "{cursor}""#));
-            let page = connection_page(
-                &schema,
-                "eventListWithTriage",
-                &format!("filter: {{}}, {triage}, last: 1{cursor_argument}"),
-            )
-            .await;
-            assert_eq!(page["totalCount"], "5");
-            assert_eq!(page["pageInfo"]["hasNextPage"], false);
-            assert_eq!(
-                page["pageInfo"]["hasPreviousPage"],
-                index < expected_with_triage.len() - 1
-            );
-            assert_eq!(page["edges"][0]["node"]["triageScores"][0]["policyId"], "7");
-            let cursor = page["edges"][0]["cursor"]
-                .as_str()
-                .expect("page must contain a cursor")
-                .to_string();
-            assert_eq!(&cursor, expected_cursor);
-            with_triage_backward.push(cursor.clone());
-            before = Some(cursor);
-        }
-        with_triage_backward.reverse();
-        assert_eq!(with_triage_backward, expected_with_triage);
-
-        for (arguments, field, total_count) in [
-            (
-                format!(r#"filter: {{}}, after: "{}", first: 1"#, i128::MAX),
-                "eventList",
-                "6",
-            ),
-            (
-                format!(r#"filter: {{}}, before: "{}", last: 1"#, i128::MIN),
-                "eventList",
-                "6",
-            ),
-            (
-                format!(
-                    r#"filter: {{}}, {triage}, after: "{}", first: 1"#,
-                    i128::MAX
-                ),
-                "eventListWithTriage",
-                "5",
-            ),
-            (
-                format!(
-                    r#"filter: {{}}, {triage}, before: "{}", last: 1"#,
-                    i128::MIN
-                ),
-                "eventListWithTriage",
-                "5",
-            ),
-        ] {
-            let page = connection_page(&schema, field, &arguments).await;
-            assert_eq!(page["edges"], serde_json::json!([]));
-            assert_eq!(page["totalCount"], total_count);
-            assert_eq!(page["pageInfo"]["hasNextPage"], false);
-            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
-        }
-
-        for (field, triage_argument, total_count) in
-            [("eventList", "", "6"), ("eventListWithTriage", triage, "5")]
-        {
-            let page = connection_page(
-                &schema,
-                field,
-                &format!(r#"filter: {{}}, {triage_argument} before: "0", last: 1"#),
-            )
-            .await;
-            assert_eq!(page["edges"][0]["cursor"], expected[1]);
-            assert_eq!(page["totalCount"], total_count);
-        }
-
-        let range = format!(r#"{{ start: "{epoch}", end: "{after_epoch}" }}"#);
-        for (cursor, argument, expected_cursors) in [
-            (&expected[1], "after", vec![&expected[2], &expected[3]]),
-            (&expected[4], "after", vec![]),
-            (&expected[2], "before", vec![]),
-            (&expected[5], "before", vec![&expected[2], &expected[3]]),
-        ] {
-            let page = connection_page(
-                &schema,
-                "eventList",
-                &format!(r#"filter: {range}, {argument}: "{cursor}", first: 10"#),
-            )
-            .await;
-            let cursors = page["edges"]
-                .as_array()
-                .expect("connection edges must be an array")
-                .iter()
-                .map(|edge| {
-                    edge["cursor"]
-                        .as_str()
-                        .expect("edge cursor must be a string")
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(cursors, expected_cursors);
-            assert_eq!(page["totalCount"], "2");
-        }
-    }
-
-    #[tokio::test]
-    async fn minimum_end_is_an_empty_event_range() {
-        let schema = TestSchema::new().await;
-        let minimum = Timestamp::from_nanosecond(i128::from(i64::MIN))
-            .expect("i64 nanoseconds must fit in jiff");
-        let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
-        let store = schema.store();
-        let events = store.events();
-        let minimum_key = events
-            .put(&event_message_at_timestamp(
-                minimum,
-                1,
-                2,
-                Some(EventCategory::CommandAndControl),
-                "sensor1",
-            ))
-            .expect("event timestamp must be stored");
-        assert_eq!(minimum_key, i128::MIN);
-        events
-            .put(&event_message_at_timestamp(
-                before_epoch,
-                1,
-                2,
-                Some(EventCategory::CommandAndControl),
-                "sensor1",
-            ))
-            .expect("event timestamp must be stored");
-        drop(store);
-
-        let output = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    eventList(filter: {{ end: "{minimum}" }}) {{ edges {{ cursor }} totalCount }}
-                    eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
-                    eventFrequencySeries(filter: {{ start: "{minimum}", end: "{minimum}" }}, period: 1)
-                    beforeMinimum: eventList(
-                        filter: {{}}
-                        before: "{}"
-                        last: 10
-                    ) {{ edges {{ cursor }} totalCount }}
-                }}"#,
-                i128::MIN
-            ))
-            .await;
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(
-            output.data.to_string(),
-            r#"{eventList: {edges: [], totalCount: "0"}, eventCountsByCategory: {counts: []}, eventFrequencySeries: [], beforeMinimum: {edges: [], totalCount: "2"}}"#
-        );
-
-        let epoch_output = schema
-            .execute_as_system_admin(&format!(
-                r#"{{ eventList(filter: {{ start: "{before_epoch}", end: "1970-01-01T00:00:00Z" }}) {{ edges {{ cursor }} totalCount }} }}"#
-            ))
-            .await;
-        assert!(epoch_output.errors.is_empty(), "{:?}", epoch_output.errors);
-        assert_eq!(
-            epoch_output.data.to_string(),
-            r#"{eventList: {edges: [{cursor: "-18446744073709551616"}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn negative_end_is_exclusive_across_event_queries() {
-        let schema = TestSchema::new().await;
-        let start = Timestamp::from_nanosecond(-2).expect("valid timestamp");
-        let end = Timestamp::from_nanosecond(-1).expect("valid timestamp");
-        let store = schema.store();
-        let events = store.events();
-        events
-            .put(&event_message_at_timestamp(
-                start,
-                1,
-                2,
-                Some(EventCategory::CommandAndControl),
-                "sensor1",
-            ))
-            .expect("event at start must be stored");
-        events
-            .put(&event_message_at_timestamp(
-                end,
-                1,
-                2,
-                Some(EventCategory::CommandAndControl),
-                "sensor1",
-            ))
-            .expect("event at end must be stored");
-        drop(store);
-
-        let network = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNetwork(
-                        name: "negative-time-range"
-                        description: ""
-                        networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
-                    )
-                }"#,
-            )
-            .await;
-        assert!(network.errors.is_empty(), "{:?}", network.errors);
-
-        let output = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    eventListWithTriage(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        triage: {{
-                            policies: [{{
-                                id: 0
-                                packetAttr: []
-                                confidence: [{{
-                                    threatCategory: COMMAND_AND_CONTROL
-                                    threatKind: "dns covert channel"
-                                    confidence: 0.0
-                                    weight: 1.0
-                                }}]
-                                response: [{{ minimumScore: 0.5, kind: MANUAL }}]
-                            }}]
-                        }}
-                        first: 10
-                    ) {{
-                        edges {{
-                            node {{ ... on DnsCovertChannel {{ time triageScores {{ policyId }} }} }}
-                        }}
-                    }}
-                    eventCountsByCategory(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        first: 10
-                    ) {{ counts }}
-                    eventCountsByNetwork(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        first: 10
-                    ) {{ values counts }}
-                    eventFrequencySeries(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        period: 1
-                    )
-                }}"#
-            ))
-            .await;
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(
-            output.data.to_string(),
-            r#"{eventListWithTriage: {edges: [{node: {time: "1969-12-31T23:59:59.999999998Z", triageScores: [{policyId: "0"}]}}]}, eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
-        );
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn grouped_event_queries_cross_the_unix_epoch() {
-        let schema = TestSchema::new().await;
-        let start = Timestamp::from_nanosecond(-2_000_000_000).unwrap();
-        let epoch = Timestamp::UNIX_EPOCH;
-        let positive = Timestamp::from_nanosecond(2_000_000_000).unwrap();
-        let end = Timestamp::from_nanosecond(4_000_000_000).unwrap();
-        let store = schema.store();
-        let events = store.events();
-        for (time, kind, category, source) in [
-            (
-                start,
-                EventKind::DnsCovertChannel,
-                EventCategory::CommandAndControl,
-                1,
-            ),
-            (
-                epoch,
-                EventKind::LockyRansomware,
-                EventCategory::CommandAndControl,
-                3,
-            ),
-            (
-                positive,
-                EventKind::DnsCovertChannel,
-                EventCategory::InitialAccess,
-                5,
-            ),
-            (
-                end,
-                EventKind::DnsCovertChannel,
-                EventCategory::InitialAccess,
-                7,
-            ),
-        ] {
-            let mut message =
-                event_message_at_timestamp(time, source, 2, Some(category), "sensor1");
-            message.kind = kind;
-            events.put(&message).expect("event must be stored");
-        }
-        drop(store);
-
-        let network = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNetwork(
-                        name: "cross-epoch"
-                        description: ""
-                        networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
-                    )
-                }"#,
-            )
-            .await;
-        assert!(network.errors.is_empty(), "{:?}", network.errors);
-
-        let output = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    eventListWithTriage(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        triage: {{
-                            policies: [{{
-                                id: 0
-                                packetAttr: []
-                                confidence: [
-                                    {{
-                                        threatCategory: COMMAND_AND_CONTROL
-                                        threatKind: "dns covert channel"
-                                        confidence: 0.0
-                                        weight: 0.9
-                                    }}
-                                    {{
-                                        threatCategory: COMMAND_AND_CONTROL
-                                        threatKind: "locky ransomware"
-                                        confidence: 0.0
-                                        weight: 0.9
-                                    }}
-                                    {{
-                                        threatCategory: INITIAL_ACCESS
-                                        threatKind: "dns covert channel"
-                                        confidence: 0.0
-                                        weight: 0.5
-                                    }}
-                                ]
-                                response: [{{ minimumScore: 0.3, kind: MANUAL }}]
-                            }}]
-                        }}
-                        first: 10
-                    ) {{
-                        edges {{
-                            node {{
-                                __typename
-                                ... on DnsCovertChannel {{ time triageScores {{ score }} }}
-                                ... on LockyRansomware {{ time triageScores {{ score }} }}
-                            }}
-                        }}
-                    }}
-                    eventCountsByCategory(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        first: 10
-                    ) {{ counts }}
-                    eventCountsByNetwork(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        first: 10
-                    ) {{ values counts }}
-                    eventFrequencySeries(
-                        filter: {{ start: "{start}", end: "{end}" }}
-                        period: 1
-                    )
-                }}"#
-            ))
-            .await;
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        let data = output.data.into_json().expect("valid GraphQL JSON");
-        let triage = data["eventListWithTriage"]["edges"]
-            .as_array()
-            .expect("triage edges must be an array")
-            .iter()
-            .map(|edge| &edge["node"])
-            .collect::<Vec<_>>();
-        assert_eq!(triage.len(), 3);
-        assert!(triage.iter().all(|node| !node["triageScores"].is_null()));
-        assert_eq!(triage[0]["__typename"], "DnsCovertChannel");
-        assert_eq!(triage[0]["time"], start.to_string());
-        assert_eq!(triage[1]["__typename"], "LockyRansomware");
-        assert_eq!(triage[1]["time"], epoch.to_string());
-        assert_eq!(triage[2]["__typename"], "DnsCovertChannel");
-        assert_eq!(triage[2]["time"], positive.to_string());
-        assert_eq!(
-            triage[0]["triageScores"][0]["score"],
-            triage[1]["triageScores"][0]["score"]
-        );
-        assert!(
-            triage[1]["triageScores"][0]["score"].as_f64().unwrap()
-                > triage[2]["triageScores"][0]["score"].as_f64().unwrap()
-        );
-        assert_eq!(
-            data["eventCountsByCategory"]["counts"],
-            serde_json::json!([2, 1])
-        );
-        assert_eq!(
-            data["eventCountsByNetwork"]["values"],
-            serde_json::json!(["0"])
-        );
-        assert_eq!(
-            data["eventCountsByNetwork"]["counts"],
-            serde_json::json!([3])
-        );
-        assert_eq!(
-            data["eventFrequencySeries"],
-            serde_json::json!([1, 0, 1, 0, 1, 0])
-        );
-    }
-
-    const IP2LOCATION_HEADER_LEN: usize = 35;
-    const IP2LOCATION_ROW_LEN: usize = 8;
-
-    fn write_fixture_u32(bytes: &mut [u8], offset: usize, value: u32) {
-        let end = offset
-            .checked_add(size_of::<u32>())
-            .expect("fixture offset must fit in usize");
-        bytes
-            .get_mut(offset..end)
-            .expect("fixture offset must be within the buffer")
-            .copy_from_slice(&value.to_le_bytes());
-    }
-
-    fn append_fixture_country(bytes: &mut Vec<u8>, code: [u8; 2], name: &str) -> u32 {
-        let pointer = u32::try_from(bytes.len()).expect("test fixture must fit in u32");
-        bytes.push(u8::try_from(code.len()).expect("country code length must fit in u8"));
-        bytes.extend_from_slice(&code);
-        bytes.push(u8::try_from(name.len()).expect("country name length must fit in u8"));
-        bytes.extend_from_slice(name.as_bytes());
-        pointer
-    }
-
-    fn write_fixture_row(bytes: &mut [u8], row: usize, ip_from: Ipv4Addr, country_pointer: u32) {
-        let offset = IP2LOCATION_HEADER_LEN + row * IP2LOCATION_ROW_LEN;
-        write_fixture_u32(bytes, offset, u32::from(ip_from));
-        write_fixture_u32(bytes, offset + size_of::<u32>(), country_pointer);
-    }
-
-    /// Creates a minimal DB1 file mapping `1.0.0.0/8` to US and
-    /// `2.0.0.0/8` to KR for deterministic ingestion-time country resolution.
-    pub(super) fn event_country_locator() -> (tempfile::TempDir, Arc<ip2location::DB>) {
-        let locator_dir = tempfile::tempdir().unwrap();
-        let locator_path = locator_dir.path().join("event-countries.bin");
-
-        // DB1 has a 35-byte header, two 8-byte data rows, and one boundary row.
-        let mut bytes = vec![
-            1, 2, 26, 8, 27, // DB type, columns, and creation date.
-            1, 0, 0, 0, // Last searchable IPv4 row index.
-            36, 0, 0, 0, // One-based IPv4 row address.
-            0, 0, 0, 0, // IPv6 row count.
-            0, 0, 0, 0, // IPv6 row address.
-            0, 0, 0, 0, // IPv4 index address.
-            0, 0, 0, 0, // IPv6 index address.
-            1, 0, // Product and license codes.
-            0, 0, 0, 0, // Database size, populated below.
-        ];
-        bytes.resize(IP2LOCATION_HEADER_LEN + 3 * IP2LOCATION_ROW_LEN, 0);
-
-        let us_pointer = append_fixture_country(&mut bytes, *b"US", "United States");
-        let kr_pointer = append_fixture_country(&mut bytes, *b"KR", "South Korea");
-        write_fixture_row(&mut bytes, 0, Ipv4Addr::new(1, 0, 0, 0), us_pointer);
-        write_fixture_row(&mut bytes, 1, Ipv4Addr::new(2, 0, 0, 0), kr_pointer);
-        write_fixture_row(&mut bytes, 2, Ipv4Addr::new(3, 0, 0, 0), 0);
-        let database_size = u32::try_from(bytes.len()).expect("test fixture must fit in u32");
-        write_fixture_u32(&mut bytes, 31, database_size);
-
-        std::fs::write(&locator_path, bytes).unwrap();
-        let locator = ip2location::DB::from_file(locator_path).unwrap();
-        (locator_dir, Arc::new(locator))
-    }
-
-    /// Creates a schema with one US-to-KR event and one KR-only event while
-    /// keeping the ingestion-time country locator out of the GraphQL context.
-    pub(super) async fn schema_with_country_filter_events(
-        us_event_time: Timestamp,
-        kr_event_time: Timestamp,
-    ) -> (tempfile::TempDir, TestSchema) {
-        let (locator_dir, locator) = event_country_locator();
-        let schema = TestSchema::new_with_event_country_locator(locator).await;
-        let store = schema.store();
-        let db = store.events();
-        db.put(&event_message_at(
-            us_event_time,
-            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
-            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
-        ))
-        .unwrap();
-        db.put(&event_message_at(
-            kr_event_time,
-            u32::from(Ipv4Addr::new(2, 0, 0, 2)),
-            u32::from(Ipv4Addr::new(2, 0, 0, 3)),
-        ))
-        .unwrap();
-        drop(store);
-        (locator_dir, schema)
-    }
-
-    #[test]
-    fn country_code_converts_stored_bytes() {
-        assert_eq!(super::country_code(b"KR"), "KR");
-        assert_eq!(super::country_code(b"ZZ"), "ZZ");
-        assert_eq!(super::country_code(b"XX"), "XX");
-        assert_eq!(super::country_code(&[0xff, b'X']), "ZZ");
-    }
-
-    #[test]
-    fn country_codes_preserves_order_and_cardinality() {
-        let codes = [*b"US", *b"ZZ", [0xff, 0xfe], *b"JP"];
-
-        assert_eq!(super::country_codes(&codes), vec!["US", "ZZ", "ZZ", "JP"]);
-    }
-
-    #[tokio::test]
-    async fn event_lookup_by_id_returns_matching_event() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
-        drop(store);
-
-        let query = format!(
-            "{{ event(id: \"{key}\") {{ id, ... on DnsCovertChannel {{ time, query }} }} }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829Z", query: "domain"}}}}"#
-            )
-        );
-    }
-
-    #[tokio::test]
-    async fn single_endpoint_event_countries_use_stored_codes_without_locator() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
-        drop(store);
-
-        let query = format!(
-            "{{ event(id: \"{key}\") {{ \
-                ... on DnsCovertChannel {{ origCountry respCountry }} \
-            }} }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-
-        assert_eq!(
-            res.data.to_string(),
-            r#"{event: {origCountry: "XX", respCountry: "XX"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn multi_endpoint_event_countries_use_stored_codes_without_locator() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        let first_event_start_time = ts - SignedDuration::from_mins(5);
-        let fields = MultiHostPortScanFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::from(1).into(),
-            resp_port: 443,
-            resp_addrs: vec![Ipv4Addr::from(2).into(), Ipv4Addr::from(3).into()],
-            proto: 6,
-            first_event_start_time: nanos(first_event_start_time),
-            last_event_start_time: nanos(ts),
-            confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        let key = db
-            .put(&EventMessage {
-                time: ts,
-                kind: EventKind::MultiHostPortScan,
-                fields: bincode::serialize(&fields).expect("serializable"),
-            })
-            .unwrap();
-        drop(store);
-
-        let query = format!(
-            "{{ event(id: \"{key}\") {{ \
-                ... on MultiHostPortScan {{ \
-                    origCountry \
-                    respCountries \
-                    firstEventStartTime \
-                    lastEventStartTime \
-                }} \
-            }} }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-
-        let data = res.data.to_string();
-        assert!(
-            data.contains(&format!(
-                "firstEventStartTime: \"{first_event_start_time}\""
-            )),
-            "data: {data}"
-        );
-        assert!(
-            data.contains(&format!("lastEventStartTime: \"{ts}\"")),
-            "data: {data}"
-        );
-        assert!(data.contains(r#"origCountry: "XX""#), "data: {data}");
-        assert!(
-            data.contains(r#"respCountries: ["XX", "XX"]"#),
-            "data: {data}"
-        );
-    }
-
-    #[tokio::test]
-    async fn event_country_filter_uses_stored_endpoint_codes_without_locator() {
-        let (_locator_dir, locator) = event_country_locator();
-        let schema = TestSchema::new_with_event_country_locator(locator).await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(
-            ts,
-            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
-            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
-        ))
-        .unwrap();
-        drop(store);
-
-        // The schema has no IP2Location value in its request context. Both
-        // endpoint filters therefore depend exclusively on the stored codes.
-        let res = schema
-            .execute_as_system_admin(
-                r#"{
-                    byOrigin: eventList(filter: { countries: ["US"] }) {
-                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
-                        totalCount
-                    }
-                    byResponder: eventList(filter: { countries: ["KR"] }) {
-                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
-                        totalCount
-                    }
-                    noMatch: eventList(filter: { countries: ["JP"] }) {
-                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
-                        totalCount
-                    }
-                }"#,
-            )
-            .await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{byOrigin: {edges: [{node: {origCountry: "US", respCountry: "KR"}}], totalCount: "1"}, byResponder: {edges: [{node: {origCountry: "US", respCountry: "KR"}}], totalCount: "1"}, noMatch: {edges: [], totalCount: "0"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn country_filter_with_no_locator_selects_xx() {
-        // The store is created without a locator, so the event is written with
-        // the unresolved country code.
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(
-            ts,
-            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
-            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
-        ))
-        .unwrap();
-        drop(store);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"{
-                    unfiltered: eventList(filter: {}) { totalCount }
-                    byUnresolved: eventList(filter: { countries: ["XX"] }) { totalCount }
-                    byUnknown: eventList(filter: { countries: ["ZZ"] }) { totalCount }
-                    byCountry: eventList(filter: { countries: ["US"] }) { totalCount }
-                }"#,
-            )
-            .await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{unfiltered: {totalCount: "1"}, byUnresolved: {totalCount: "1"}, byUnknown: {totalCount: "0"}, byCountry: {totalCount: "0"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn failed_country_lookup_stores_zz_and_filter_selects_it() {
-        let (_locator_dir, locator) = event_country_locator();
-        let schema = TestSchema::new_with_event_country_locator(locator).await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        let key = db
-            .put(&event_message_at(
-                ts,
-                u32::from(Ipv4Addr::new(4, 0, 0, 1)),
-                u32::from(Ipv4Addr::new(5, 0, 0, 1)),
-            ))
-            .unwrap();
-        drop(store);
-
-        let res = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    event(id: "{key}") {{
-                        ... on DnsCovertChannel {{ origCountry respCountry }}
-                    }}
-                    byUnknown: eventList(filter: {{ countries: ["ZZ"] }}) {{ totalCount }}
-                    byUnresolved: eventList(filter: {{ countries: ["XX"] }}) {{ totalCount }}
-                    byCountry: eventList(filter: {{ countries: ["US"] }}) {{ totalCount }}
-                }}"#
-            ))
-            .await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{event: {origCountry: "ZZ", respCountry: "ZZ"}, byUnknown: {totalCount: "1"}, byUnresolved: {totalCount: "0"}, byCountry: {totalCount: "0"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn country_aggregation_placeholder_buckets_round_trip_to_filters() {
-        let unresolved_schema = TestSchema::new().await;
-        let (_locator_dir, locator) = event_country_locator();
-        let unknown_schema = TestSchema::new_with_event_country_locator(locator).await;
-
-        for (schema, code, address) in [
-            (unresolved_schema, "XX", Ipv4Addr::new(1, 0, 0, 1)),
-            (unknown_schema, "ZZ", Ipv4Addr::new(4, 0, 0, 1)),
-        ] {
-            let store = schema.store();
-            let db = store.events();
-            let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-            for offset in 0..2 {
-                db.put(&event_message_at(
-                    ts + SignedDuration::from_secs(offset),
-                    u32::from(address),
-                    u32::from(address),
-                ))
-                .unwrap();
-            }
-            drop(store);
-
-            let aggregation = schema
-                .execute_as_system_admin(
-                    r"{
-                        eventCountsByCountry(filter: {}, first: 100) {
-                            values
-                            counts
-                        }
-                    }",
-                )
-                .await;
-            assert!(
-                aggregation.errors.is_empty(),
-                "unexpected errors for {code}: {:?}",
-                aggregation.errors
-            );
-            let aggregation = aggregation.data.into_json().unwrap();
-            let buckets = aggregation
-                .get("eventCountsByCountry")
-                .expect("country aggregation must be present");
-            let values = buckets
-                .get("values")
-                .and_then(serde_json::Value::as_array)
-                .expect("country aggregation values must be an array");
-            let counts = buckets
-                .get("counts")
-                .and_then(serde_json::Value::as_array)
-                .expect("country aggregation counts must be an array");
-            let index = values
-                .iter()
-                .position(|value| value.as_str() == Some(code))
-                .expect("placeholder aggregation bucket must be present");
-            let bucket_code = values
-                .get(index)
-                .and_then(serde_json::Value::as_str)
-                .expect("placeholder aggregation bucket must be a string");
-            let count = counts
-                .get(index)
-                .and_then(serde_json::Value::as_u64)
-                .expect("placeholder aggregation count must be an integer");
-
-            let filtered = schema
-                .execute_as_system_admin(&format!(
-                    r#"{{ eventList(filter: {{ countries: ["{bucket_code}"] }}) {{ totalCount }} }}"#
-                ))
-                .await;
-            assert!(
-                filtered.errors.is_empty(),
-                "unexpected errors for {code}: {:?}",
-                filtered.errors
-            );
-            let filtered = filtered.data.into_json().unwrap();
-            let expected_count = count.to_string();
-            assert_eq!(
-                filtered
-                    .get("eventList")
-                    .and_then(|event_list| event_list.get("totalCount"))
-                    .and_then(serde_json::Value::as_str),
-                Some(expected_count.as_str())
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_country_filter_uses_stored_codes_without_locator() {
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        let (_locator_dir, schema) =
-            schema_with_country_filter_events(ts, ts + SignedDuration::from_secs(1)).await;
-
-        // Omitting inline triage still exercises the dedicated
-        // eventListWithTriage matching and pagination path.
-        let res = schema
-            .execute_as_system_admin(
-                r#"{
-                    eventListWithTriage(filter: { countries: ["US"] }, first: 10) {
-                        edges { node { ... on DnsCovertChannel { origAddr } } }
-                        totalCount
-                    }
-                }"#,
-            )
-            .await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventListWithTriage: {edges: [{node: {origAddr: "1.0.0.1"}}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn multi_raw_event_types_expose_precise_time_fields() {
-        let schema = TestSchema::new().await;
-        let type_names = [
-            "PortScan",
-            "MultiHostPortScan",
-            "ExternalDdos",
-            "FtpBruteForce",
-            "LdapBruteForce",
-            "RdpBruteForce",
-            "RepeatedHttpSessions",
-        ];
-        let selections = type_names
-            .iter()
-            .enumerate()
-            .map(|(index, type_name)| {
-                format!(
-                    "eventType{index}: __type(name: \"{type_name}\") {{ fields {{ name description }} }}"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        let res = schema
-            .execute_as_system_admin(&format!("{{ {selections} }}"))
-            .await;
-        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-        let data = res.data.into_json().unwrap();
-
-        for (index, type_name) in type_names.iter().enumerate() {
-            let fields = data[format!("eventType{index}")]["fields"]
-                .as_array()
-                .expect("fields array");
-            let field = |name| fields.iter().find(|field| field["name"] == name);
-            assert_eq!(
-                field("firstEventStartTime").map(|value| &value["description"]),
-                Some(&serde_json::json!(
-                    "Session start time of the first raw event used for detection."
-                )),
-                "type: {type_name}"
-            );
-            assert_eq!(
-                field("lastEventStartTime").map(|value| &value["description"]),
-                Some(&serde_json::json!(
-                    "Session start time of the last raw event used for detection."
-                )),
-                "type: {type_name}"
-            );
-            assert!(field("startTime").is_none(), "type: {type_name}");
-            assert!(field("endTime").is_none(), "type: {type_name}");
-        }
-    }
-
-    #[tokio::test]
-    async fn unusual_destination_pattern_exposes_sampling_window_times() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"{ __type(name: "UnusualDestinationPattern") {
-                    fields { name description }
-                } }"#,
-            )
-            .await;
-        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-        let data = res.data.into_json().unwrap();
-        let fields = data["__type"]["fields"].as_array().expect("fields array");
-        let field = |name| fields.iter().find(|field| field["name"] == name);
-
-        assert_eq!(
-            field("samplingWindowStartTime").map(|value| &value["description"]),
-            Some(&serde_json::json!(
-                "Start boundary of the anomaly sampling window used for detection."
-            ))
-        );
-        assert_eq!(
-            field("samplingWindowEndTime").map(|value| &value["description"]),
-            Some(&serde_json::json!(
-                "End boundary of the anomaly sampling window used for detection."
-            ))
-        );
-        assert!(field("startTime").is_none());
-        assert!(field("endTime").is_none());
-    }
-
-    #[tokio::test]
-    async fn event_lookup_unknown_id_returns_null() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin("{ event(id: \"0\") { id } }")
-            .await;
-        assert_eq!(res.data.to_string(), r"{event: null}");
-    }
-
-    #[tokio::test]
-    async fn event_lookup_invalid_id_errors() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin("{ event(id: \"not-a-number\") { id } }")
-            .await;
-        assert_ne!(res.errors, Vec::new());
-    }
-
-    #[tokio::test]
-    async fn event_lookup_id_matches_event_list_cursor() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-        drop(store);
-
-        let res = schema
-            .execute_as_system_admin("{ eventList(filter: {}) { edges { cursor, node { id } } } }")
-            .await;
-        let s = res.data.to_string();
-        let cursor_pos = s.find("cursor: \"").expect("cursor present");
-        let cursor_start = cursor_pos + "cursor: \"".len();
-        let cursor_end = cursor_start + s[cursor_start..].find('"').unwrap();
-        let cursor = &s[cursor_start..cursor_end];
-        let id_pos = s.find("id: \"").expect("id present");
-        let id_start = id_pos + "id: \"".len();
-        let id_end = id_start + s[id_start..].find('"').unwrap();
-        let id = &s[id_start..id_end];
-        assert_eq!(cursor, id);
-    }
-
-    #[tokio::test]
-    async fn event_lookup_respects_tenant_scope() {
-        let schema = TestSchema::new().await;
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "sensor1",
-                        customerId: 0,
-                        description: "This is the sensor node",
-                        hostname: "sensor1",
-                        agents: [{
-                            key: "sensor"
-                            kind: SENSOR
-                            status: ENABLED
-                        }],
-                        externalServices: [],
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-        let _ = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    applyNode(
-                        id: "0"
-                        node: {
-                            name: "sensor1",
-                            nameDraft: "sensor1",
-                            profile: null,
-                            profileDraft: {
-                                customerId: 0,
-                                description: "This is the sensor node",
-                                hostname: "sensor1",
-                            }
-                            agents: [
-                                {
-                                    key: "sensor",
-                                    kind: "SENSOR",
-                                    status: "ENABLED"
-                                }
-                            ],
-                            externalServices: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let key = db.put(&sensor1_event_at(ts, 1, 2)).unwrap();
-        drop(store);
-
-        let query =
-            format!("{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ sensor }} }} }}");
-
-        // Scoped user assigned to customer 0 (which owns sensor1) can see it.
-        let res = schema
-            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![0]))
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{sensor: "{SENSOR1_EVENT_SENSOR}"}}}}"#)
-        );
-
-        // Scoped user assigned to customer 1 (not owning sensor1) cannot.
-        let res = schema
-            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
-            .await;
-        assert_eq!(res.data.to_string(), r"{event: null}");
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn event_lookup_resolves_each_blocklist_kind() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let base = utc_micro(2026, 4, 1, 0, 0, 0, 0);
-
-        let conn_ts = base;
-        let conn_key = db
-            .put(&EventMessage {
-                time: conn_ts,
-                kind: EventKind::BlocklistConn,
-                fields: bincode::serialize(&BlocklistConnFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-                    orig_port: 1000,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
-                    resp_port: 80,
-                    proto: 6,
-                    conn_state: "S0".to_string(),
-                    start_time: nanos(conn_ts),
-                    duration: 0,
-                    service: "http".to_string(),
-                    orig_bytes: 0,
-                    resp_bytes: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    confidence: 0.7,
-                    category: Some(EventCategory::InitialAccess),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let dns_ts = utc_micro(2026, 4, 1, 0, 0, 1, 0);
-        let dns_key = db
-            .put(&EventMessage {
-                time: dns_ts,
-                kind: EventKind::BlocklistDns,
-                fields: bincode::serialize(&BlocklistDnsFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
-                    orig_port: 50000,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
-                    resp_port: 53,
-                    proto: 17,
-                    start_time: nanos(dns_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    query: "evil.example.com".to_string(),
-                    answer: vec!["1.2.3.4".to_string()],
-                    trans_id: 1,
-                    rtt: 0,
-                    qclass: 1,
-                    qtype: 1,
-                    rcode: 0,
-                    aa_flag: false,
-                    tc_flag: false,
-                    rd_flag: true,
-                    ra_flag: true,
-                    ttl: vec![60],
-                    confidence: 0.7,
-                    category: Some(EventCategory::CommandAndControl),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let dcerpc_ts = utc_micro(2026, 4, 1, 0, 0, 2, 0);
-        let dcerpc_key = db
-            .put(&EventMessage {
-                time: dcerpc_ts,
-                kind: EventKind::BlocklistDceRpc,
-                fields: bincode::serialize(&BlocklistDceRpcFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
-                    orig_port: 1024,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
-                    resp_port: 135,
-                    proto: 6,
-                    start_time: nanos(dcerpc_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    context: Vec::new(),
-                    request: Vec::new(),
-                    confidence: 0.7,
-                    category: Some(EventCategory::LateralMovement),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let kerberos_ts = utc_micro(2026, 4, 1, 0, 0, 3, 0);
-        let kerberos_key = db
-            .put(&EventMessage {
-                time: kerberos_ts,
-                kind: EventKind::BlocklistKerberos,
-                fields: bincode::serialize(&BlocklistKerberosFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
-                    orig_port: 1025,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
-                    resp_port: 88,
-                    proto: 6,
-                    start_time: nanos(kerberos_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    client_time: 0,
-                    server_time: 0,
-                    error_code: 0,
-                    client_realm: "REALM".to_string(),
-                    cname_type: 1,
-                    cname: vec!["alice".to_string()],
-                    realm: "REALM".to_string(),
-                    sname_type: 2,
-                    sname: vec!["krbtgt".to_string()],
-                    confidence: 0.7,
-                    category: Some(EventCategory::LateralMovement),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let mqtt_ts = utc_micro(2026, 4, 1, 0, 0, 4, 0);
-        let mqtt_key = db
-            .put(&EventMessage {
-                time: mqtt_ts,
-                kind: EventKind::BlocklistMqtt,
-                fields: bincode::serialize(&BlocklistMqttFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 9).into(),
-                    orig_port: 1026,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 10).into(),
-                    resp_port: 1883,
-                    proto: 6,
-                    start_time: nanos(mqtt_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    protocol: "MQTT".to_string(),
-                    version: 4,
-                    client_id: "client".to_string(),
-                    connack_reason: 0,
-                    subscribe: vec!["topic".to_string()],
-                    suback_reason: vec![0],
-                    confidence: 0.7,
-                    category: Some(EventCategory::CommandAndControl),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let nfs_ts = utc_micro(2026, 4, 1, 0, 0, 5, 0);
-        let nfs_key = db
-            .put(&EventMessage {
-                time: nfs_ts,
-                kind: EventKind::BlocklistNfs,
-                fields: bincode::serialize(&BlocklistNfsFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 11).into(),
-                    orig_port: 1027,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 12).into(),
-                    resp_port: 2049,
-                    proto: 6,
-                    start_time: nanos(nfs_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    read_files: vec!["/etc/passwd".to_string()],
-                    write_files: vec![],
-                    confidence: 0.7,
-                    category: Some(EventCategory::Collection),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let ntlm_ts = utc_micro(2026, 4, 1, 0, 0, 6, 0);
-        let ntlm_key = db
-            .put(&EventMessage {
-                time: ntlm_ts,
-                kind: EventKind::BlocklistNtlm,
-                fields: bincode::serialize(&BlocklistNtlmFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 13).into(),
-                    orig_port: 1028,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 14).into(),
-                    resp_port: 445,
-                    proto: 6,
-                    start_time: nanos(ntlm_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    protocol: "NTLM".to_string(),
-                    username: "alice".to_string(),
-                    hostname: "host".to_string(),
-                    domainname: "domain".to_string(),
-                    success: "true".to_string(),
-                    confidence: 0.7,
-                    category: Some(EventCategory::CredentialAccess),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let rdp_ts = utc_micro(2026, 4, 1, 0, 0, 7, 0);
-        let rdp_key = db
-            .put(&EventMessage {
-                time: rdp_ts,
-                kind: EventKind::BlocklistRdp,
-                fields: bincode::serialize(&BlocklistRdpFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 15).into(),
-                    orig_port: 1029,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 16).into(),
-                    resp_port: 3389,
-                    proto: 6,
-                    start_time: nanos(rdp_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    cookie: "cookie".to_string(),
-                    confidence: 0.7,
-                    category: Some(EventCategory::LateralMovement),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let smb_ts = utc_micro(2026, 4, 1, 0, 0, 8, 0);
-        let smb_key = db
-            .put(&EventMessage {
-                time: smb_ts,
-                kind: EventKind::BlocklistSmb,
-                fields: bincode::serialize(&BlocklistSmbFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 17).into(),
-                    orig_port: 1030,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 18).into(),
-                    resp_port: 445,
-                    proto: 6,
-                    start_time: nanos(smb_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    command: 1,
-                    path: "/share".to_string(),
-                    service: "IPC".to_string(),
-                    file_name: "file".to_string(),
-                    file_size: 0,
-                    resource_type: 0,
-                    fid: 0,
-                    create_time: 0,
-                    access_time: 0,
-                    write_time: 0,
-                    change_time: 0,
-                    confidence: 0.7,
-                    category: Some(EventCategory::Collection),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let smtp_ts = utc_micro(2026, 4, 1, 0, 0, 9, 0);
-        let smtp_key = db
-            .put(&EventMessage {
-                time: smtp_ts,
-                kind: EventKind::BlocklistSmtp,
-                fields: bincode::serialize(&BlocklistSmtpFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 19).into(),
-                    orig_port: 1031,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 20).into(),
-                    resp_port: 25,
-                    proto: 6,
-                    start_time: nanos(smtp_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    mailfrom: "alice@example.com".to_string(),
-                    date: "2026-04-01".to_string(),
-                    from: "alice".to_string(),
-                    to: "bob".to_string(),
-                    subject: "subject".to_string(),
-                    agent: "agent".to_string(),
-                    state: "state".to_string(),
-                    confidence: 0.7,
-                    category: Some(EventCategory::Exfiltration),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        let ssh_ts = utc_micro(2026, 4, 1, 0, 0, 10, 0);
-        let ssh_key = db
-            .put(&EventMessage {
-                time: ssh_ts,
-                kind: EventKind::BlocklistSsh,
-                fields: bincode::serialize(&BlocklistSshFields {
-                    sensor: "sensor1".to_string(),
-                    orig_addr: Ipv4Addr::new(10, 0, 0, 21).into(),
-                    orig_port: 1032,
-                    resp_addr: Ipv4Addr::new(10, 0, 0, 22).into(),
-                    resp_port: 22,
-                    proto: 6,
-                    start_time: nanos(ssh_ts),
-                    duration: 0,
-                    orig_pkts: 0,
-                    resp_pkts: 0,
-                    orig_l2_bytes: 0,
-                    resp_l2_bytes: 0,
-                    client: "OpenSSH".to_string(),
-                    server: "OpenSSH".to_string(),
-                    cipher_alg: "aes".to_string(),
-                    mac_alg: "hmac".to_string(),
-                    compression_alg: "none".to_string(),
-                    kex_alg: "kex".to_string(),
-                    host_key_alg: "rsa".to_string(),
-                    hassh_algorithms: "h".to_string(),
-                    hassh: "h".to_string(),
-                    hassh_server_algorithms: "h".to_string(),
-                    hassh_server: "h".to_string(),
-                    client_shka: "s".to_string(),
-                    server_shka: "s".to_string(),
-                    confidence: 0.7,
-                    category: Some(EventCategory::LateralMovement),
-                })
-                .unwrap(),
-            })
-            .unwrap();
-
-        drop(store);
-
-        let cases = [
-            (conn_key, "BlocklistConn"),
-            (dns_key, "BlocklistDns"),
-            (dcerpc_key, "BlocklistDceRpc"),
-            (kerberos_key, "BlocklistKerberos"),
-            (mqtt_key, "BlocklistMqtt"),
-            (nfs_key, "BlocklistNfs"),
-            (ntlm_key, "BlocklistNtlm"),
-            (rdp_key, "BlocklistRdp"),
-            (smb_key, "BlocklistSmb"),
-            (smtp_key, "BlocklistSmtp"),
-            (ssh_key, "BlocklistSsh"),
-        ];
-        for (key, typename) in cases {
-            let query = format!("{{ event(id: \"{key}\") {{ id __typename }} }}");
-            let res = schema.execute_as_system_admin(&query).await;
-            assert_eq!(
-                res.data.to_string(),
-                format!(r#"{{event: {{id: "{key}", __typename: "{typename}"}}}}"#)
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn event_level_and_learning_method() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{start:\"{ts}\"}}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ level, learningMethod }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r"{eventList: {edges: [{node: {level: MEDIUM, learningMethod: SEMI_SUPERVISED}}]}}"
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                "{eventList(filter: {}){edges{node{... on DnsCovertChannel{query}}}totalCount}}",
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [], totalCount: "0"}}"#
-        );
-
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts3, 5, 6)).unwrap();
-        let query = format!(
-            "{{ \
-                eventList(filter: {{ start:\"{ts2}\", end:\"{ts3}\" }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
-                    totalCount \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn filter_by_categories_and_sensors() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                "{eventList(filter: {}){edges{node{... on DnsCovertChannel{query}}}totalCount}}",
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [], totalCount: "0"}}"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "sensor1",
-                        customerId: 0,
-                        description: "This is the sensor node",
-                        hostname: "sensor1",
-                        agents: [{
-                            key: "sensor"
-                            kind: SENSOR
-                            status: ENABLED
-                        }],
-                        externalServices: [],
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-        let _ = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    applyNode(
-                        id: "0"
-                        node: {
-                            name: "sensor1",
-                            nameDraft: "sensor1",
-                            profile: null,
-                            profileDraft: {
-                                customerId: 0,
-                                description: "This is the sensor node",
-                                hostname: "sensor1",
-                            }
-                            agents: [
-                                {
-                                    key: "sensor",
-                                    kind: "SENSOR",
-                                    status: "ENABLED"
-                                }
-                            ],
-                            externalServices: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&sensor1_event_at(ts1, 1, 2)).unwrap();
-        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
-        db.put(&sensor1_event_at(ts2, 3, 4)).unwrap();
-        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
-        db.put(&sensor1_event_at(ts3, 5, 6)).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList( \
-                    filter: {{ \
-                        start:\"{ts2}\", end:\"{ts3}\", \
-                        categories: 7, \
-                        sensors: [0], \
-                    }}, \
-                ) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ time, sensor }} }} }} \
-                    totalCount \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{time: "2018-01-27T18:30:09.453829Z", sensor: "{SENSOR1_EVENT_SENSOR}"}}}}], totalCount: "1"}}}}"#
-            )
-        );
-    }
-
-    #[tokio::test]
-    async fn explicit_sensors_outside_scope_returns_forbidden() {
-        let schema = TestSchema::new().await;
-
-        // Insert and apply a sensor node owned by customer 0.
-        let _ = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "sensor1",
-                        customerId: 0,
-                        description: "",
-                        hostname: "sensor1",
-                        agents: [{
-                            key: "sensor"
-                            kind: SENSOR
-                            status: ENABLED
-                        }],
-                        externalServices: [],
-                    )
-                }"#,
-            )
-            .await;
-        let _ = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    applyNode(
-                        id: "0"
-                        node: {
-                            name: "sensor1",
-                            nameDraft: "sensor1",
-                            profile: null,
-                            profileDraft: {
-                                customerId: 0,
-                                description: "",
-                                hostname: "sensor1",
-                            }
-                            agents: [
-                                {
-                                    key: "sensor",
-                                    kind: "SENSOR",
-                                    status: "ENABLED"
-                                }
-                            ],
-                            externalServices: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-
-        // Caller scoped to customer 1 (out of scope for sensor node 0) must be
-        // rejected when supplying `sensors: [0]`.
-        let res = schema
-            .execute_as_scoped_user(
-                "{ eventList(filter: { sensors: [0] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }",
-                Role::SecurityMonitor,
-                Some(vec![1]),
-            )
-            .await;
-        assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
-        assert!(
-            res.errors[0].message.contains("Forbidden"),
-            "message: {}",
-            res.errors[0].message
-        );
-
-        // Caller scoped to customer 0 (in scope) succeeds.
-        let res = schema
-            .execute_as_scoped_user(
-                "{ eventList(filter: { sensors: [0] }) { totalCount } }",
-                Role::SecurityMonitor,
-                Some(vec![0]),
-            )
-            .await;
-        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-    }
-
-    #[tokio::test]
-    async fn total_count() {
-        let timestamps: Vec<_> = [
-            (2018, 1, 26, 18, 30, 9, 453_829),
-            (2018, 1, 27, 18, 30, 9, 453_829),
-            (2018, 1, 28, 18, 30, 9, 453_829),
-        ]
-        .into_iter()
-        .map(|(y, m, d, h, min, s, micro)| utc_micro(y, m, d, h, min, s, micro))
-        .collect();
-        let src_dst: Vec<_> = vec![(1, 2), (3, 1), (2, 3)];
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        timestamps
-            .iter()
-            .zip(src_dst.into_iter())
-            .for_each(|(ts, (src, dst))| {
-                db.put(&event_message_at(*ts, src, dst)).unwrap();
-            });
-
-        let query = format!(
-            "{{ \
-                        eventList(filter: {{ start:\"{}\", end:\"{}\" }}) {{ \
-                            edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
-                            totalCount \
-                        }} \
-                    }}",
-            timestamps[0], timestamps[2]
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829Z"}}, {node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "2"}}"#
-        );
-        let query = format!(
-            "{{ \
-                    eventList(filter: {{ start:\"{}\", end:\"{}\" }}) {{ \
-                        edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
-                        totalCount \
-                    }} \
-                }}",
-            timestamps[1], timestamps[2]
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn filter_by_network() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNetwork(
-                        name: "n0",
-                        description: "",
-                        networks: {
-                            hosts: ["0.0.0.4"],
-                            networks: [],
-                            ranges: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{ts1}\",
-                    end:\"{ts3}\",
-                    endpoints: [{{predefined: \"0\"}}]
-                }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.3"}}]}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn filter_by_unknown_category() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-
-        let ts1 = utc_micro(2024, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_with_category(
-            ts1,
-            1,
-            2,
-            Some(EventCategory::InitialAccess), //category = 2
-            "s1",
-        ))
-        .unwrap();
-
-        let ts2 = utc_micro(2024, 1, 1, 0, 0, 1, 0);
-        db.put(&event_message_with_category(ts2, 3, 4, None, "s2"))
-            .unwrap();
-
-        // 1. Filter by unknown category
-        let query = r"{ eventList(filter: { categories: [null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute_as_system_admin(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: "1"}}"#
-        );
-
-        // 2. Filter by a specific category (InitialAccess = 2)
-        let query = r"{ eventList(filter: { categories: [2] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute_as_system_admin(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: "1"}}"#
-        );
-
-        // 3. Filter by both specific and unknown categories
-        let query = r"{ eventList(filter: { categories: [2, null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute_as_system_admin(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: "2"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn event_stream() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts3, 5, 6)).unwrap();
-        for argument in [
-            "",
-            ", fetchInterval: null",
-            ", fetchInterval: 1",
-            ", fetchInterval: 86400",
-        ] {
-            let query = format!(
-                r#"
-                subscription {{
-                    eventStream(start: "2018-01-28T00:00:00.000000000Z"{argument}) {{
-                        __typename
-                        ... on DnsCovertChannel {{ origAddr }}
-                    }}
-                }}
-            "#
-            );
-            let mut stream = schema.execute_stream(&query).await;
-            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
-                .await
-                .unwrap()
-                .unwrap();
-            assert!(response.errors.is_empty(), "{response:?}");
-            assert_eq!(
-                response.data.to_string(),
-                r#"{eventStream: {__typename: "DnsCovertChannel", origAddr: "0.0.0.5"}}"#
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn event_list_blocklist_dhcp() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = BlocklistDhcpFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::LOCALHOST.into(),
-            orig_port: 68,
-            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            resp_port: 67,
-            proto: 17,
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            msg_type: 1,
-            ciaddr: Ipv4Addr::new(127, 0, 0, 5).into(),
-            yiaddr: Ipv4Addr::new(127, 0, 0, 6).into(),
-            siaddr: Ipv4Addr::new(127, 0, 0, 7).into(),
-            giaddr: Ipv4Addr::new(127, 0, 0, 8).into(),
-            subnet_mask: Ipv4Addr::new(255, 255, 255, 0).into(),
-            router: vec![Ipv4Addr::LOCALHOST.into()],
-            domain_name_server: vec![Ipv4Addr::LOCALHOST.into()],
-            req_ip_addr: Ipv4Addr::new(127, 0, 0, 100).into(),
-            lease_time: 100,
-            server_id: Ipv4Addr::LOCALHOST.into(),
-            param_req_list: vec![1, 2, 3],
-            message: "message".to_string(),
-            renewal_time: 100,
-            rebinding_time: 200,
-            class_id: vec![4, 5, 6],
-            client_id_type: 1,
-            client_id: vec![7, 8, 9],
-            options: vec![(53, vec![1]), (61, vec![7, 8, 9])],
-            category: Some(EventCategory::InitialAccess),
-            confidence: 0.8,
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::BlocklistDhcp,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{{code: 53, value: [1]}}, {{code: 61, value: [7, 8, 9]}}]}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query =
-            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistDhcp {{ origAddr }} }} }}");
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_blocklist_bootp() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = BlocklistBootpFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::LOCALHOST.into(),
-            orig_port: 68,
-            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            resp_port: 67,
-            proto: 17,
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            op: 1,
-            htype: 2,
-            hops: 1,
-            xid: 1,
-            ciaddr: Ipv4Addr::new(127, 0, 0, 5).into(),
-            yiaddr: Ipv4Addr::new(127, 0, 0, 6).into(),
-            siaddr: Ipv4Addr::new(127, 0, 0, 7).into(),
-            giaddr: Ipv4Addr::new(127, 0, 0, 8).into(),
-            chaddr: vec![1, 2, 3, 4, 5, 6],
-            sname: "server_name".to_string(),
-            file: "boot_file_name".to_string(),
-            category: Some(EventCategory::InitialAccess),
-            confidence: 0.8,
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::BlocklistBootp,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query =
-            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistBootp {{ origAddr }} }} }}");
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_locky_ransomware() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = DnsEventFields {
-            sensor: "sensor1".to_string(),
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_addr: Ipv4Addr::from(1).into(),
-            orig_port: 10000,
-            resp_addr: Ipv4Addr::from(2).into(),
-            resp_port: 53,
-            proto: 17,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            query: "domain".into(),
-            answer: Vec::new(),
-            trans_id: 0,
-            rtt: 10,
-            qclass: 0,
-            qtype: 0,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: false,
-            ra_flag: false,
-            ttl: Vec::new(),
-            confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::LockyRansomware,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", rtt: "10", query: "domain"}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query =
-            format!("{{ event(id: \"{key}\") {{ id, ... on LockyRansomware {{ origAddr }} }} }}");
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_suspicious_tls_traffic() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = BlocklistTlsFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::from(1).into(),
-            orig_port: 10000,
-            resp_addr: Ipv4Addr::from(2).into(),
-            resp_port: 443,
-            proto: 6,
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            server_name: "example.com".into(),
-            alpn_protocol: "h2".into(),
-            ja3: "ja3".into(),
-            version: "TLSv1.2".into(),
-            client_cipher_suites: vec![1234],
-            client_extensions: vec![5678],
-            cipher: 1234,
-            extensions: vec![5678],
-            ja3s: "ja3s".into(),
-            serial: "serial".into(),
-            subject_country: "US".into(),
-            subject_org_name: "org".into(),
-            subject_common_name: "common".into(),
-            validity_not_before: nanos(timestamp),
-            validity_not_after: nanos(timestamp),
-            subject_alt_name: "alt".into(),
-            issuer_country: "US".into(),
-            issuer_org_name: "org".into(),
-            issuer_org_unit_name: "unit".into(),
-            issuer_common_name: "common".into(),
-            last_alert: 3,
-            confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::SuspiciousTlsTraffic,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query = format!(
-            "{{ event(id: \"{key}\") {{ id, ... on SuspiciousTlsTraffic {{ origAddr }} }} }}"
-        );
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_blocklist_radius() {
-        use review_database::event::BlocklistRadiusFields;
-
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = BlocklistRadiusFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::LOCALHOST.into(),
-            orig_port: 1812,
-            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            resp_port: 1812,
-            proto: 17,
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            id: 1,
-            code: 1,
-            resp_code: 2,
-            auth: "authenticator".to_string(),
-            resp_auth: "response_authenticator".to_string(),
-            user_name: vec![0x75, 0x73, 0x65, 0x72],
-            user_passwd: vec![0x70, 0x61, 0x73, 0x73],
-            chap_passwd: vec![0x63, 0x68, 0x61, 0x70],
-            nas_ip: Ipv4Addr::new(192, 168, 1, 1).into(),
-            nas_port: 5000,
-            state: vec![0x73, 0x74, 0x61, 0x74, 0x65],
-            nas_id: vec![0x6e, 0x61, 0x73],
-            nas_port_type: 15,
-            message: "RADIUS message".to_string(),
-            confidence: 0.9,
-            category: Some(EventCategory::InitialAccess),
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::BlocklistRadius,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query =
-            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistRadius {{ origAddr }} }} }}");
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_blocklist_malformed_dns() {
-        use review_database::event::BlocklistMalformedDnsFields;
-
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let fields = BlocklistMalformedDnsFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::LOCALHOST.into(),
-            orig_port: 53000,
-            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            resp_port: 53,
-            proto: 17,
-            start_time: nanos(timestamp),
-            duration: 1,
-            orig_pkts: 2,
-            resp_pkts: 3,
-            orig_l2_bytes: 40,
-            resp_l2_bytes: 60,
-            trans_id: 42,
-            flags: 0b1010,
-            question_count: 1,
-            answer_count: 1,
-            authority_count: 0,
-            additional_count: 0,
-            query_count: 1,
-            resp_count: 1,
-            query_bytes: 20,
-            resp_bytes: 40,
-            query_body: vec![vec![0xde, 0xad]],
-            resp_body: vec![vec![0xca, 0xfe]],
-            confidence: 0.9,
-            category: Some(EventCategory::InitialAccess),
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::BlocklistMalformedDns,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        let key = db.put(&message).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{timestamp}\"
-                }}) {{ \
-                    edges {{ node {{ id, ... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(
-                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}}}]}}}}"#
-            )
-        );
-
-        let lookup_query = format!(
-            "{{ event(id: \"{key}\") {{ id, ... on BlocklistMalformedDns {{ origAddr }} }} }}"
-        );
-        let res = schema.execute_as_system_admin(&lookup_query).await;
-        assert_eq!(
-            res.data.to_string(),
-            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
-        );
-    }
-
-    fn http_threat_test_fields(
-        time: Timestamp,
-        orig_last_octet: u8,
-        cluster_id: Option<u32>,
-    ) -> review_database::event::HttpThreatFields {
-        review_database::event::HttpThreatFields {
-            time,
-            start_time: nanos(time),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, orig_last_octet).into(),
-            orig_port: 10001,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-            resp_port: 80,
-            proto: 6,
-            method: "GET".to_string(),
-            host: "http_threat.com".to_string(),
-            uri: "/malware".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "Mozilla/5.0".to_string(),
-            request_len: 100,
-            response_len: 200,
-            status_code: 200,
-            status_msg: "OK".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: "text/html".to_string(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            db_name: String::new(),
-            rule_id: 0,
-            matched_to: String::new(),
-            cluster_id,
-            attack_kind: String::new(),
-            confidence: 1.0,
-            category: Some(EventCategory::CommandAndControl),
-        }
-    }
-
-    fn dga_test_fields(time: Timestamp) -> review_database::event::DgaFields {
-        review_database::event::DgaFields {
-            start_time: nanos(time),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
-            orig_port: 10003,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
-            resp_port: 80,
-            proto: 6,
-            host: "dga.com".to_string(),
-            method: "GET".to_string(),
-            uri: "/".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "Bot".to_string(),
-            request_len: 50,
-            response_len: 50,
-            status_code: 404,
-            status_msg: "Not Found".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: String::new(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            confidence: 0.8,
-            category: Some(EventCategory::InitialAccess),
-        }
-    }
-
-    fn non_browser_test_fields(time: Timestamp) -> review_database::event::HttpEventFields {
-        review_database::event::HttpEventFields {
-            start_time: nanos(time),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
-            orig_port: 10004,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
-            resp_port: 8080,
-            proto: 6,
-            host: "api.com".to_string(),
-            method: "POST".to_string(),
-            uri: "/api".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "curl".to_string(),
-            request_len: 20,
-            response_len: 20,
-            status_code: 200,
-            status_msg: "OK".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: "application/json".to_string(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            confidence: 0.5,
-            category: Some(EventCategory::Discovery),
-        }
-    }
-
-    #[tokio::test]
-    async fn event_list_resolves_http_threat_dga_and_non_browser() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let base_ts = utc_micro(2024, 1, 1, 0, 0, 0, 0);
-        let at = |secs| base_ts + SignedDuration::from_secs(secs);
-
-        let messages = [
-            (
-                at(0),
-                EventKind::HttpThreat,
-                bincode::serialize(&http_threat_test_fields(at(0), 1, None)),
-            ),
-            (
-                at(1),
-                EventKind::HttpThreat,
-                bincode::serialize(&http_threat_test_fields(at(1), 2, Some(1005))),
-            ),
-            (
-                at(2),
-                EventKind::DomainGenerationAlgorithm,
-                bincode::serialize(&dga_test_fields(at(2))),
-            ),
-            (
-                at(3),
-                EventKind::NonBrowser,
-                bincode::serialize(&non_browser_test_fields(at(3))),
-            ),
-        ];
-        for (time, kind, fields) in messages {
-            db.put(&EventMessage {
-                time,
-                kind,
-                fields: fields.unwrap(),
-            })
-            .unwrap();
-        }
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"{
-                    eventList(filter: {
-                        start: "2024-01-01T00:00:00Z",
-                        end: "2024-01-02T00:00:00Z"
-                    }, first: 10) {
-                        edges { node {
-                            __typename
-                            ... on HttpThreat { origAddr clusterId }
-                            ... on DomainGenerationAlgorithm { origAddr }
-                            ... on NonBrowser { origAddr }
-                        } }
-                    }
-                }"#,
-            )
-            .await;
-        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
-        let json: serde_json::Value =
-            serde_json::to_value(&res.data).expect("serializable response data");
-        let nodes: Vec<&serde_json::Value> = json["eventList"]["edges"]
-            .as_array()
-            .expect("edges should be an array")
-            .iter()
-            .map(|edge| &edge["node"])
-            .collect();
-        assert_eq!(
-            nodes,
-            [
-                &serde_json::json!({
-                    "__typename": "HttpThreat",
-                    "origAddr": "192.168.1.1",
-                    "clusterId": "",
-                }),
-                &serde_json::json!({
-                    "__typename": "HttpThreat",
-                    "origAddr": "192.168.1.2",
-                    "clusterId": "1005",
-                }),
-                &serde_json::json!({
-                    "__typename": "DomainGenerationAlgorithm",
-                    "origAddr": "192.168.1.3",
-                }),
-                &serde_json::json!({
-                    "__typename": "NonBrowser",
-                    "origAddr": "192.168.1.4",
-                }),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_unusual_destination_pattern() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        let sampling_window_start_time = utc_micro(2018, 1, 26, 18, 0, 0, 0);
-        let sampling_window_end_time = utc_micro(2018, 1, 26, 18, 30, 0, 0);
-
-        let fields = UnusualDestinationPatternFields {
-            sensor: "sensor1".to_string(),
-            sampling_window_start_time: nanos(sampling_window_start_time),
-            sampling_window_end_time: nanos(sampling_window_end_time),
-            destination_ips: vec![
-                Ipv4Addr::new(192, 168, 1, 1).into(),
-                Ipv4Addr::new(192, 168, 1, 2).into(),
-                Ipv4Addr::new(192, 168, 1, 3).into(),
-            ],
-            count: 150,
-            expected_mean: 50.0,
-            std_deviation: 20.0,
-            z_score: 5.0,
-            confidence: 0.85,
-            category: Some(EventCategory::Reconnaissance),
-        };
-
-        let message = EventMessage {
-            time: timestamp,
-            kind: EventKind::UnusualDestinationPattern,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        };
-        db.put(&message).unwrap();
-
-        let query = format!(
-            "{{ \
-                eventList(filter: {{ start:\"{timestamp}\" }}) {{ \
-                    edges {{ \
-                        node {{ \
-                            ... on UnusualDestinationPattern {{ \
-                                sensor \
-                                samplingWindowStartTime \
-                                samplingWindowEndTime \
-                                respAddrs \
-                                count \
-                                expectedMean \
-                                stdDeviation \
-                                zScore \
-                                confidence \
-                                level \
-                                learningMethod \
-                            }} \
-                        }} \
-                    }} \
-                    totalCount \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        let data = res.data.to_string();
-        assert!(data.contains("sensor1"));
-        assert!(
-            data.contains(&format!(
-                "samplingWindowStartTime: \"{sampling_window_start_time}\""
-            )),
-            "data: {data}"
-        );
-        assert!(
-            data.contains(&format!(
-                "samplingWindowEndTime: \"{sampling_window_end_time}\""
-            )),
-            "data: {data}"
-        );
-        assert!(data.contains("192.168.1.1"));
-        assert!(data.contains("192.168.1.2"));
-        assert!(data.contains("192.168.1.3"));
-        assert!(data.contains("count: 150"));
-        assert!(data.contains("expectedMean: 50.0"));
-        assert!(data.contains("stdDeviation: 20.0"));
-        assert!(data.contains("zScore: 5.0"));
-        assert!(data.contains("confidence: 0.85"));
-        assert!(data.contains("level: MEDIUM"));
-        assert!(data.contains("learningMethod: SEMI_SUPERVISED"));
-        assert!(data.contains(r#"totalCount: "1""#));
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_matches_event_list_cursor_semantics() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let timestamps: Vec<_> = (0i8..5)
-            .map(|i| utc_micro(2026, 1, 1, 0, 0, i, 0))
-            .collect();
-        for (i, ts) in timestamps.iter().enumerate() {
-            let src = u32::try_from(i + 1).unwrap();
-            db.put(&event_message_at(*ts, src, src + 100)).unwrap();
-        }
-        let start_ts = timestamps[0];
-
-        let event_list_query = format!(
-            "{{ eventList(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
-                edges {{ cursor node {{... on DnsCovertChannel {{ time }} }} }} \
-                pageInfo {{ hasNextPage hasPreviousPage }} \
-            }} }}",
-        );
-        let event_list_res = schema.execute_as_system_admin(&event_list_query).await;
-        let event_list_data = event_list_res.data.to_string();
-
-        let with_triage_query = format!(
-            "{{ eventListWithTriage(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
-                edges {{ cursor node {{... on DnsCovertChannel {{ time }} }} }} \
-                pageInfo {{ hasNextPage hasPreviousPage }} \
-            }} }}",
-        );
-        let with_triage_res = schema.execute_as_system_admin(&with_triage_query).await;
-        let with_triage_data = with_triage_res.data.to_string();
-
-        let normalized_event_list = event_list_data.replacen("eventList", "eventListWithTriage", 1);
-        assert_eq!(normalized_event_list, with_triage_data);
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_rejects_negative_policy_id() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ \
-                    policies: [{{ \
-                        id: -1, \
-                        packetAttr: [], \
-                        confidence: [], \
-                        response: [] \
-                    }}] \
-                }} \
-            ) {{ totalCount }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert!(
-            !res.errors.is_empty(),
-            "expected error for negative policy id"
-        );
-        assert!(
-            res.errors
-                .iter()
-                .any(|e| e.message.contains("non-negative")),
-            "expected non-negative error, got {:?}",
-            res.errors,
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_policy_non_match_preserves_event() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        // Policy with very high minimum_score so the event scores nothing.
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ \
-                    policies: [{{ \
-                        id: 7, \
-                        packetAttr: [], \
-                        confidence: [], \
-                        response: [{{ minimumScore: 999.0, kind: MANUAL }}] \
-                    }}] \
-                }} \
-            ) {{ \
-                edges {{ node {{... on DnsCovertChannel {{ triageScores {{ policyId }} }} }} }} \
-                totalCount \
-            }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventListWithTriage: {edges: [{node: {triageScores: null}}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_inline_exclusion_cuts() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        // The default DnsCovertChannel test event has `query: "domain"`,
-        // which `TriageExclusion::Domain(["domain"])` matches via its regex.
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }} \
-            ) {{ \
-                edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
-                totalCount \
-            }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventListWithTriage: {edges: [], totalCount: "0"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_rejects_oversized_domain_exclusion() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        store
-            .events()
-            .put(&event_message_at(jiff::Timestamp::now(), 1, 2))
-            .unwrap();
-        let domains: Vec<_> = (0..5_000)
-            .map(|index| format!("host{index:06}.sub.example-domain.com"))
-            .collect();
-        let domains = serde_json::to_string(&domains).unwrap();
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{}}, \
-                triage: {{ exclusions: [{{ domain: {domains} }}] }} \
-            ) {{ edges {{ cursor }} totalCount }} }}",
-        );
-
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(res.data, async_graphql::Value::Null);
-        let error = res.errors.first().expect("expected an exclusion error");
-        assert!(
-            error.message.contains("triage.exclusions[0].domain"),
-            "{error:?}"
-        );
-        assert!(error.message.contains("size limit"), "{error:?}");
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_rejects_unbuildable_ip_address_exclusion() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        store
-            .events()
-            .put(&event_message_at(jiff::Timestamp::now(), 1, 2))
-            .unwrap();
-        // A buildable exclusion before the invalid one must not hide the failure.
-        let query = r#"{ eventListWithTriage(
-            filter: {},
-            triage: { exclusions: [
-                { domain: ["domain"] },
-                { ipAddress: { hosts: [], networks: [], ranges: [
-                    { start: "192.0.2.1", end: "2001:db8::1" }
-                ] } }
-            ] }
-        ) { edges { cursor } totalCount } }"#;
-
-        let res = schema.execute_as_system_admin(query).await;
-        assert_eq!(res.data, async_graphql::Value::Null);
-        let error = res.errors.first().expect("expected an exclusion error");
-        assert!(
-            error.message.contains("triage.exclusions[1].ipAddress"),
-            "{error:?}",
-        );
-        assert!(
-            error
-                .message
-                .contains("building IP triage exclusion filter"),
-            "{error:?}",
-        );
-        assert!(
-            error.message.contains("Invalid ip address format"),
-            "{error:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_first_plus_one_on_surviving_events() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        // Insert 4 excluded events, then 2 surviving events.
-        let mut idx = 0u32;
-        let ts = |seconds: u32| utc_micro(2026, 1, 1, 0, 0, i8::try_from(seconds).unwrap(), 0);
-        for _ in 0..4 {
-            // The default `event_message_at` builder uses `query: "domain"`,
-            // matched by `TriageExclusion::Domain(["domain"])`.
-            db.put(&event_message_at(ts(idx), idx + 1, idx + 100))
-                .unwrap();
-            idx += 1;
-        }
-        // Insert surviving events with a different query string.
-        for _ in 0..2 {
-            let fields = DnsEventFields {
-                sensor: "sensor1".to_string(),
-                start_time: nanos(ts(idx)),
-                duration: 0,
-                orig_addr: Ipv4Addr::from(idx + 1).into(),
-                orig_port: 10000,
-                resp_addr: Ipv4Addr::from(idx + 100).into(),
-                resp_port: 53,
-                proto: 17,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                query: "survivor".into(),
-                answer: Vec::new(),
-                trans_id: 0,
-                rtt: 0,
-                qclass: 0,
-                qtype: 0,
-                rcode: 0,
-                aa_flag: false,
-                tc_flag: false,
-                rd_flag: false,
-                ra_flag: false,
-                ttl: Vec::new(),
-                confidence: 0.8,
-                category: Some(EventCategory::CommandAndControl),
-            };
-            db.put(&EventMessage {
-                time: ts(idx),
-                kind: EventKind::DnsCovertChannel,
-                fields: bincode::serialize(&fields).expect("serializable"),
-            })
-            .unwrap();
-            idx += 1;
-        }
-        let start_ts = ts(0);
-
-        // Request first=1 with exclusion that cuts the first 4. The resolver
-        // must keep scanning and return the 5th event with hasNextPage=true.
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{start_ts}\" }}, \
-                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }}, \
-                first: 1 \
-            ) {{ \
-                edges {{ node {{... on DnsCovertChannel {{ time query }} }} }} \
-                pageInfo {{ hasNextPage }} \
-                totalCount \
-            }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        let data = res.data.to_string();
-        assert!(data.contains(r#"query: "survivor""#), "got: {data}");
-        assert!(data.contains("hasNextPage: true"), "got: {data}");
-        assert!(data.contains(r#"totalCount: "2""#), "got: {data}");
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_schema_rejects_filter_triage_policies() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"{ eventListWithTriage(filter: { triagePolicies: ["1"] }) { totalCount } }"#,
-            )
-            .await;
-        assert!(!res.errors.is_empty(), "expected schema validation error");
-    }
-
-    #[tokio::test]
-    async fn event_list_filter_rejects_triage_policies() {
-        let schema = TestSchema::new().await;
-        for query in [
-            r#"{ eventList(filter: { triagePolicies: ["0"] }, first: 1) { totalCount } }"#,
-            r#"{ eventCountsByCategory(filter: { triagePolicies: ["0"] }, first: 1) { counts } }"#,
-        ] {
-            let res = schema.execute_as_system_admin(query).await;
-            assert!(!res.errors.is_empty(), "expected an error for {query}");
-            assert_eq!(res.data, async_graphql::Value::Null, "{query}");
-        }
-
-        // Sending the field as `null` is rejected too.
-        let request = async_graphql::Request::new(
-            "query($filter: EventListFilterInput!) { eventList(filter: $filter) { totalCount } }",
-        )
-        .variables(async_graphql::Variables::from_json(
-            serde_json::json!({ "filter": { "triagePolicies": null } }),
-        ));
-        let request =
-            schema.request_with_context(request, RoleGuard::Role(Role::SystemAdministrator), None);
-        let res = schema.schema.execute(request).await;
-        assert!(!res.errors.is_empty(), "expected a variables error");
-        assert_eq!(res.data, async_graphql::Value::Null);
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_exclusion_flattens_and_rejects_empty() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        // Single multi-field exclusion: ipAddress (no match) + domain (matches).
-        let query_combined = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ \
-                    ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }}, \
-                    domain: [\"domain\"] \
-                }}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_combined = schema.execute_as_system_admin(&query_combined).await;
-        assert!(res_combined.errors.is_empty(), "{:?}", res_combined.errors);
-        assert_eq!(
-            res_combined.data.to_string(),
-            r#"{eventListWithTriage: {totalCount: "0"}}"#
-        );
-
-        // Equivalent two-element list.
-        let query_split = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [ \
-                    {{ ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }} }}, \
-                    {{ domain: [\"domain\"] }} \
-                ] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_split = schema.execute_as_system_admin(&query_split).await;
-        assert!(res_split.errors.is_empty(), "{:?}", res_split.errors);
-        assert_eq!(
-            res_split.data.to_string(),
-            r#"{eventListWithTriage: {totalCount: "0"}}"#
-        );
-
-        // Empty exclusion is rejected.
-        let query_empty = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{}}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_empty = schema.execute_as_system_admin(&query_empty).await;
-        assert!(
-            !res_empty.errors.is_empty(),
-            "expected error for empty exclusion"
-        );
-
-        // An ipAddress group with all sub-fields empty is also treated as no
-        // populated field and rejected.
-        let query_empty_group = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ \
-                    ipAddress: {{ hosts: [], networks: [], ranges: [] }} \
-                }}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_empty_group = schema.execute_as_system_admin(&query_empty_group).await;
-        assert!(
-            !res_empty_group.errors.is_empty(),
-            "expected error for exclusion with empty ipAddress group"
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_hostname_and_uri_exclusions() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        // The default DnsCovertChannel test event has `query: "domain"`,
-        // whose first label `TriageExclusion::Hostname(["domain"])` matches.
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        let query_hostname = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ hostname: [\"domain\"] }}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_hostname = schema.execute_as_system_admin(&query_hostname).await;
-        assert_eq!(
-            res_hostname.data.to_string(),
-            r#"{eventListWithTriage: {totalCount: "0"}}"#
-        );
-
-        // DNS events never match a URI exclusion, so the event survives.
-        let query_uri = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ uri: [\"/domain\"] }}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res_uri = schema.execute_as_system_admin(&query_uri).await;
-        assert_eq!(
-            res_uri.data.to_string(),
-            r#"{eventListWithTriage: {totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_total_count_matches_surviving() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let mut idx = 0u32;
-        let ts = |seconds: u32| utc_micro(2026, 1, 1, 0, 0, i8::try_from(seconds).unwrap(), 0);
-        // 3 events with default query "domain" (excluded), 2 with "survivor".
-        for _ in 0..3 {
-            db.put(&event_message_at(ts(idx), idx + 1, idx + 100))
-                .unwrap();
-            idx += 1;
-        }
-        for _ in 0..2 {
-            let fields = DnsEventFields {
-                sensor: "sensor1".to_string(),
-                start_time: nanos(ts(idx)),
-                duration: 0,
-                orig_addr: Ipv4Addr::from(idx + 1).into(),
-                orig_port: 10000,
-                resp_addr: Ipv4Addr::from(idx + 100).into(),
-                resp_port: 53,
-                proto: 17,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                query: "survivor".into(),
-                answer: Vec::new(),
-                trans_id: 0,
-                rtt: 0,
-                qclass: 0,
-                qtype: 0,
-                rcode: 0,
-                aa_flag: false,
-                tc_flag: false,
-                rd_flag: false,
-                ra_flag: false,
-                ttl: Vec::new(),
-                confidence: 0.8,
-                category: Some(EventCategory::CommandAndControl),
-            };
-            db.put(&EventMessage {
-                time: ts(idx),
-                kind: EventKind::DnsCovertChannel,
-                fields: bincode::serialize(&fields).expect("serializable"),
-            })
-            .unwrap();
-            idx += 1;
-        }
-        let start_ts = ts(0);
-
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{start_ts}\" }}, \
-                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }}, \
-                first: 100 \
-            ) {{ \
-                edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
-                totalCount \
-            }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        let data = res.data.to_string();
-        assert!(data.contains(r#"totalCount: "2""#), "got: {data}");
-        // Both surviving events should be in edges (count of "time:" occurrences = 2).
-        assert_eq!(data.matches("time:").count(), 2, "got: {data}");
-    }
-
-    mod event_sensor_names {
-        use review_database::{Agent, AgentKind, AgentStatus, Lifecycle, Node, NodeProfile, Store};
-        use serde_json::{Value, json};
-
-        use super::*;
-
-        const SENSOR_A: &str = "piglet.a.example.com";
-        const SENSOR_B: &str = "piglet.b.example.com";
-        const STALE_SENSOR: &str = "piglet.removed.example.com";
-
-        struct Fixture {
-            node_a: u32,
-            node_b: u32,
-            hog_only: u32,
-            event_a: i128,
-            event_b: i128,
-            event_stale: i128,
-        }
-
-        fn agent(kind: AgentKind, key: &str) -> Agent {
-            Agent {
-                node_id: u32::MAX,
-                key: key.to_string(),
-                kind,
-                status: AgentStatus::Enabled,
-                config: Some(String::new().try_into().expect("empty TOML is valid")),
-                draft: None,
-                installed_version: None,
-                installed_commit: None,
-                lifecycle: Lifecycle::NotInstalled,
-                bound_addrs: vec![],
-                instance: None,
-                run_as_root: false,
-                run_as_root_draft: None,
-                privilege_profile: None,
-            }
-        }
-
-        fn insert_node(store: &Store, customer_id: u32, hostname: &str, agents: Vec<Agent>) -> u32 {
-            let node = Node {
-                id: u32::MAX,
-                name: hostname.to_string(),
-                name_draft: Some(hostname.to_string()),
-                profile: Some(NodeProfile {
-                    customer_id,
-                    description: String::new(),
-                    hostname: hostname.to_string(),
-                }),
-                profile_draft: None,
-                agents,
-                external_services: vec![],
-                creation_time: jiff::Timestamp::now(),
-            };
-            store.node_map().put(&node).expect("insert node")
-        }
-
-        /// Seeds two customers, each with one sensor node, a customer-1 node
-        /// without a sensor, and events of both sensors, of a removed node's
-        /// sensor, and one carrying a bare node hostname.
-        fn seed(schema: &TestSchema) -> Fixture {
-            let store = schema.store();
-            let node_a = insert_node(
-                &store,
-                1,
-                "a.example.com",
-                vec![
-                    agent(AgentKind::Sensor, "001.piglet"),
-                    agent(AgentKind::SemiSupervised, "001.hog"),
-                ],
-            );
-            let node_b = insert_node(
-                &store,
-                2,
-                "b.example.com",
-                vec![agent(AgentKind::Sensor, "001.piglet")],
-            );
-            let hog_only = insert_node(
-                &store,
-                1,
-                "hog.example.com",
-                vec![agent(AgentKind::SemiSupervised, "001.hog")],
-            );
-
-            let db = store.events();
-            let ts = |day| utc_micro(2018, 1, day, 0, 0, 0, 0);
-            let put = |day, sensor| {
-                db.put(&event_message_with_category(
-                    ts(day),
-                    1,
-                    2,
-                    Some(EventCategory::CommandAndControl),
-                    sensor,
-                ))
-                .unwrap()
-            };
-            let event_a = put(1, SENSOR_A);
-            let event_b = put(2, SENSOR_B);
-            let event_stale = put(3, STALE_SENSOR);
-            // A bare hostname is not a name events carry under bootroot, and
-            // must never match a node.
-            put(4, "a.example.com");
-
-            Fixture {
-                node_a,
-                node_b,
-                hog_only,
-                event_a,
-                event_b,
-                event_stale,
-            }
-        }
-
-        fn sensors_of(res: async_graphql::Response) -> Vec<String> {
-            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-            let data = res.data.into_json().unwrap();
-            data["eventList"]["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
-                .collect()
-        }
-
-        fn event_list_query(filter: &str) -> String {
-            format!(
-                "{{ eventList(filter: {{ {filter} }}) {{ \
-                    edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
-                }} }}"
-            )
-        }
-
-        #[tokio::test]
-        async fn sensors_filter_matches_service_fqdn() {
-            let schema = TestSchema::new().await;
-            let fixture = seed(&schema);
-
-            let res = schema
-                .execute_as_system_admin(&event_list_query(&format!(
-                    "sensors: [\"{}\"]",
-                    fixture.node_a
-                )))
-                .await;
-            assert_eq!(sensors_of(res), vec![SENSOR_A]);
-
-            let res = schema
-                .execute_as_scoped_user(
-                    &event_list_query(&format!("sensors: [\"{}\"]", fixture.node_b)),
-                    Role::SecurityMonitor,
-                    Some(vec![2]),
-                )
-                .await;
-            assert_eq!(sensors_of(res), vec![SENSOR_B]);
-
-            let res = schema
-                .execute_as_system_admin(&format!(
-                    "{{ eventCountsByCategory(filter: {{ sensors: [\"{}\"] }}, first: 10) \
-                        {{ counts }} }}",
-                    fixture.node_a
-                ))
-                .await;
-            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-            let data = res.data.into_json().unwrap();
-            assert_eq!(data["eventCountsByCategory"]["counts"], json!([1]));
-        }
-
-        #[tokio::test]
-        async fn sensors_filter_on_node_without_sensor_matches_nothing() {
-            let schema = TestSchema::new().await;
-            let fixture = seed(&schema);
-
-            let res = schema
-                .execute_as_system_admin(&event_list_query(&format!(
-                    "sensors: [\"{}\"]",
-                    fixture.hog_only
-                )))
-                .await;
-            assert_eq!(sensors_of(res), Vec::<String>::new());
-        }
-
-        #[tokio::test]
-        async fn sensors_filter_outside_scope_is_forbidden() {
-            let schema = TestSchema::new().await;
-            let fixture = seed(&schema);
-
-            let res = schema
-                .execute_as_scoped_user(
-                    &event_list_query(&format!("sensors: [\"{}\"]", fixture.node_b)),
-                    Role::SecurityMonitor,
-                    Some(vec![1]),
-                )
-                .await;
-            assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
-            assert!(res.errors[0].message.contains("Forbidden"));
-        }
-
-        #[tokio::test]
-        async fn scoped_caller_without_sensors_sees_only_its_customers() {
-            let schema = TestSchema::new().await;
-            seed(&schema);
-            let query = event_list_query("");
-
-            let res = schema
-                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
-                .await;
-            assert_eq!(sensors_of(res), vec![SENSOR_A]);
-
-            let res = schema
-                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![2]))
-                .await;
-            assert_eq!(sensors_of(res), vec![SENSOR_B]);
-
-            let res = schema
-                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![]))
-                .await;
-            assert_eq!(sensors_of(res), Vec::<String>::new());
-
-            let res = schema
-                .execute_as_scoped_user(
-                    "{ eventCountsByCategory(filter: {}, first: 10) { counts } }",
-                    Role::SecurityMonitor,
-                    Some(vec![2]),
-                )
-                .await;
-            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-            let data = res.data.into_json().unwrap();
-            assert_eq!(data["eventCountsByCategory"]["counts"], json!([1]));
-        }
-
-        #[tokio::test]
-        async fn administrator_without_sensors_sees_every_sensor() {
-            let schema = TestSchema::new().await;
-            seed(&schema);
-
-            let res = schema.execute_as_system_admin(&event_list_query("")).await;
-            assert_eq!(
-                sensors_of(res),
-                vec![SENSOR_A, SENSOR_B, STALE_SENSOR, "a.example.com"]
-            );
-        }
-
-        #[tokio::test]
-        async fn event_lookup_uses_event_sensor_names() {
-            let schema = TestSchema::new().await;
-            let fixture = seed(&schema);
-            let lookup = |key: i128| {
-                format!("{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ sensor }} }} }}")
-            };
-            let sensor = |res: async_graphql::Response| -> Value {
-                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-                res.data.into_json().unwrap()["event"].clone()
-            };
-
-            let res = schema
-                .execute_as_scoped_user(
-                    &lookup(fixture.event_a),
-                    Role::SecurityMonitor,
-                    Some(vec![1]),
-                )
-                .await;
-            assert_eq!(sensor(res), json!({ "sensor": SENSOR_A }));
-
-            for key in [fixture.event_b, fixture.event_stale] {
-                let res = schema
-                    .execute_as_scoped_user(&lookup(key), Role::SecurityMonitor, Some(vec![1]))
-                    .await;
-                assert_eq!(sensor(res), Value::Null);
-            }
-
-            let res = schema
-                .execute_as_system_admin(&lookup(fixture.event_stale))
-                .await;
-            assert_eq!(sensor(res), json!({ "sensor": STALE_SENSOR }));
-        }
-    }
-
-    /// The `directions` filter, which tests each event against the networks
-    /// of its own customer.
-    mod directions_by_customer {
-        use review_database::{
-            Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
-            OwnedNetwork, Store, event::NetworkType,
-        };
-
-        use super::*;
-
-        const SENSOR_A: &str = "piglet.a.example.com";
-        const SENSOR_B: &str = "piglet.b.example.com";
-        const SENSOR_C: &str = "piglet.c.example.com";
-        const UNMAPPED_SENSOR: &str = "piglet.unmapped.example.com";
-
-        fn insert_sensor_node(store: &Store, customer_id: u32, hostname: &str) {
-            let node = Node {
-                id: u32::MAX,
-                name: hostname.to_string(),
-                name_draft: Some(hostname.to_string()),
-                profile: Some(NodeProfile {
-                    customer_id,
-                    description: String::new(),
-                    hostname: hostname.to_string(),
-                }),
-                profile_draft: None,
-                agents: vec![Agent {
-                    node_id: u32::MAX,
-                    key: "001.piglet".to_string(),
-                    kind: AgentKind::Sensor,
-                    status: AgentStatus::Enabled,
-                    config: None,
-                    draft: None,
-                    installed_version: None,
-                    installed_commit: None,
-                    lifecycle: Lifecycle::NotInstalled,
-                    bound_addrs: vec![],
-                    instance: None,
-                    run_as_root: false,
-                    run_as_root_draft: None,
-                    privilege_profile: None,
-                }],
-                external_services: vec![],
-                creation_time: jiff::Timestamp::now(),
-            };
-            store.node_map().put(&node).expect("insert node");
-        }
-
-        fn owned(name: &str, network_type: NetworkType, cidr: &str) -> OwnedNetwork {
-            OwnedNetwork {
-                name: name.to_string(),
-                network_type,
-                group: HostNetworkGroup::new(vec![], vec![cidr.parse().unwrap()], vec![]),
-            }
-        }
-
-        fn put_event(store: &Store, day: i8, sensor: &str, src: &str, dst: &str) {
-            let timestamp = utc_micro(2018, 1, day, 0, 0, 0, 0);
-            let src: Ipv4Addr = src.parse().unwrap();
-            let dst: Ipv4Addr = dst.parse().unwrap();
-            store
-                .events()
-                .put(&event_message_with_category(
-                    timestamp,
-                    src.into(),
-                    dst.into(),
-                    Some(EventCategory::CommandAndControl),
-                    sensor,
-                ))
-                .unwrap();
-        }
-
-        /// Seeds customer 1 (sensor A) owning Intranet `10.0.0.0/8` and
-        /// Extranet `8.0.0.0/8`, customer 2 (sensor B) owning nothing, and
-        /// customer 0 (sensor C) with no customer networks row; and one
-        /// `10.1.1.1 -> 8.8.8.8` event on each of them and on a sensor that
-        /// maps to no node.
-        fn seed(schema: &TestSchema) {
-            let store = schema.store();
-            insert_sensor_node(&store, 1, "a.example.com");
-            insert_sensor_node(&store, 2, "b.example.com");
-            insert_sensor_node(&store, 0, "c.example.com");
-            let table = store.customer_networks_map();
-            table
-                .replace(
-                    1,
-                    1,
-                    vec![
-                        owned("office", NetworkType::Intranet, "10.0.0.0/8"),
-                        owned("partner", NetworkType::Extranet, "8.0.0.0/8"),
-                    ],
-                )
-                .unwrap();
-            put_event(&store, 1, SENSOR_A, "10.1.1.1", "8.8.8.8");
-            put_event(&store, 2, SENSOR_B, "10.1.1.1", "8.8.8.8");
-            put_event(&store, 3, SENSOR_C, "10.1.1.1", "8.8.8.8");
-            put_event(&store, 4, UNMAPPED_SENSOR, "10.1.1.1", "8.8.8.8");
-        }
-
-        async fn sensors_matching(schema: &TestSchema, directions: &str) -> Vec<String> {
-            let res = schema
-                .execute_as_system_admin(&format!(
-                    "{{ eventList(filter: {{ directions: [{directions}] }}) {{ \
-                        edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
-                    }} }}"
-                ))
-                .await;
-            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-            let data = res.data.into_json().unwrap();
-            data["eventList"]["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
-                .collect()
-        }
-
-        #[tokio::test]
-        async fn event_is_classified_by_its_own_customer() {
-            let schema = TestSchema::new().await;
-            seed(&schema);
-
-            assert_eq!(sensors_matching(&schema, "OUTBOUND").await, vec![SENSOR_A]);
-            assert_eq!(
-                sensors_matching(&schema, "INBOUND").await,
-                Vec::<String>::new()
-            );
-            assert_eq!(
-                sensors_matching(&schema, "INTERNAL").await,
-                Vec::<String>::new()
-            );
-            assert_eq!(
-                sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
-                vec![SENSOR_A]
-            );
-        }
-
-        #[tokio::test]
-        async fn internal_and_inbound_follow_the_owner() {
-            let schema = TestSchema::new().await;
-            let store = schema.store();
-            insert_sensor_node(&store, 1, "a.example.com");
-            insert_sensor_node(&store, 2, "b.example.com");
-            let table = store.customer_networks_map();
-            table
-                .replace(
-                    1,
-                    0,
-                    vec![
-                        owned("office", NetworkType::Intranet, "10.0.0.0/8"),
-                        owned("edge", NetworkType::Gateway, "192.168.0.0/16"),
-                    ],
-                )
-                .unwrap();
-            table
-                .replace(2, 0, vec![owned("lab", NetworkType::Intranet, "8.0.0.0/8")])
-                .unwrap();
-            // Internal for customer 1: both sides are in its networks.
-            put_event(&store, 1, SENSOR_A, "10.1.1.1", "192.168.1.1");
-            // Inbound for customer 2: only the responder is its own.
-            put_event(&store, 2, SENSOR_B, "10.1.1.1", "8.8.8.8");
-            drop(store);
-
-            assert_eq!(sensors_matching(&schema, "INTERNAL").await, vec![SENSOR_A]);
-            assert_eq!(sensors_matching(&schema, "INBOUND").await, vec![SENSOR_B]);
-            assert_eq!(
-                sensors_matching(&schema, "OUTBOUND").await,
-                Vec::<String>::new()
-            );
-        }
-
-        #[tokio::test]
-        async fn extranet_only_customer_has_no_internal_side() {
-            let schema = TestSchema::new().await;
-            let store = schema.store();
-            insert_sensor_node(&store, 1, "a.example.com");
-            store
-                .customer_networks_map()
-                .replace(
-                    1,
-                    0,
-                    vec![owned("partner", NetworkType::Extranet, "10.0.0.0/8")],
-                )
-                .unwrap();
-            put_event(&store, 1, SENSOR_A, "10.1.1.1", "8.8.8.8");
-            drop(store);
-
-            assert_eq!(
-                sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
-                Vec::<String>::new()
-            );
-        }
-    }
-
-    /// The `kinds` filter, which matches each event's own kind exactly, and
-    /// `eventCountsByKind`, which counts one bucket per kind.
-    mod kinds_filter {
-        use std::collections::BTreeMap;
-
-        use review_database::{
-            Store,
-            event::{FtpEventFields, LdapEventFields},
-        };
-        use serde_json::{Value, json};
-
-        use super::*;
-
-        /// The window holding every event `store_kind_events` stores.
-        const START: &str = "2026-05-01T00:00:00Z";
-        const END: &str = "2026-05-02T00:00:00Z";
-
-        fn at(secs: i64) -> Timestamp {
-            utc_micro(2026, 5, 1, 0, 0, 0, 0) + SignedDuration::from_secs(secs)
-        }
-
-        fn conn_fields(time: Timestamp) -> BlocklistConnFields {
-            BlocklistConnFields {
-                sensor: "sensor1".to_string(),
-                orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-                orig_port: 1000,
-                resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
-                resp_port: 443,
-                proto: 6,
-                conn_state: "S0".to_string(),
-                start_time: nanos(time),
-                duration: 0,
-                service: "tls".to_string(),
-                orig_bytes: 0,
-                resp_bytes: 0,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                confidence: 0.7,
-                category: Some(EventCategory::CommandAndControl),
-            }
-        }
-
-        fn ftp_fields(time: Timestamp) -> FtpEventFields {
-            FtpEventFields {
-                sensor: "sensor1".to_string(),
-                orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
-                orig_port: 1001,
-                resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
-                resp_port: 21,
-                proto: 6,
-                start_time: nanos(time),
-                duration: 0,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                user: "user".to_string(),
-                password: "password".to_string(),
-                commands: Vec::new(),
-                confidence: 0.6,
-                category: Some(EventCategory::CredentialAccess),
-            }
-        }
-
-        fn ldap_fields(time: Timestamp) -> LdapEventFields {
-            LdapEventFields {
-                sensor: "sensor1".to_string(),
-                orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
-                orig_port: 1002,
-                resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
-                resp_port: 389,
-                proto: 6,
-                start_time: nanos(time),
-                duration: 0,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                message_id: 1,
-                version: 3,
-                opcode: vec!["bind".to_string()],
-                result: vec!["success".to_string()],
-                diagnostic_message: Vec::new(),
-                object: Vec::new(),
-                argument: Vec::new(),
-                confidence: 0.6,
-                category: Some(EventCategory::CredentialAccess),
-            }
-        }
-
-        fn dns_fields(time: Timestamp) -> BlocklistDnsFields {
-            BlocklistDnsFields {
-                sensor: "sensor1".to_string(),
-                orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
-                orig_port: 50000,
-                resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
-                resp_port: 53,
-                proto: 17,
-                start_time: nanos(time),
-                duration: 0,
-                orig_pkts: 0,
-                resp_pkts: 0,
-                orig_l2_bytes: 0,
-                resp_l2_bytes: 0,
-                query: "evil.example.com".to_string(),
-                answer: Vec::new(),
-                trans_id: 1,
-                rtt: 0,
-                qclass: 1,
-                qtype: 1,
-                rcode: 0,
-                aa_flag: false,
-                tc_flag: false,
-                rd_flag: true,
-                ra_flag: true,
-                ttl: Vec::new(),
-                confidence: 0.7,
-                category: Some(EventCategory::CommandAndControl),
-            }
-        }
-
-        fn unusual_destination_fields(time: Timestamp) -> UnusualDestinationPatternFields {
-            UnusualDestinationPatternFields {
-                sensor: "sensor1".to_string(),
-                sampling_window_start_time: nanos(time),
-                sampling_window_end_time: nanos(time),
-                destination_ips: vec![Ipv4Addr::new(10, 0, 0, 9).into()],
-                count: 150,
-                expected_mean: 50.0,
-                std_deviation: 20.0,
-                z_score: 5.0,
-                confidence: 0.85,
-                category: Some(EventCategory::Reconnaissance),
-            }
-        }
-
-        fn http_threat_fields(
-            time: Timestamp,
-            attack_kind: &str,
-        ) -> review_database::event::HttpThreatFields {
-            let mut fields = http_threat_test_fields(time, 10, None);
-            fields.attack_kind = attack_kind.to_string();
-            fields
-        }
-
-        /// Stores one event of each of `TorConnection`, `TorConnectionConn`,
-        /// `FtpPlainText`, `LdapPlainText`, `BlocklistConn`, `BlocklistDns`
-        /// and `UnusualDestinationPattern`, and two `HttpThreat` events with
-        /// different attack kinds — nine events in all.
-        fn store_kind_events(store: &Store) {
-            let messages = [
-                (
-                    EventKind::TorConnection,
-                    bincode::serialize(&non_browser_test_fields(at(0))),
-                ),
-                (
-                    EventKind::TorConnectionConn,
-                    bincode::serialize(&conn_fields(at(1))),
-                ),
-                (
-                    EventKind::FtpPlainText,
-                    bincode::serialize(&ftp_fields(at(2))),
-                ),
-                (
-                    EventKind::LdapPlainText,
-                    bincode::serialize(&ldap_fields(at(3))),
-                ),
-                (
-                    EventKind::BlocklistConn,
-                    bincode::serialize(&conn_fields(at(4))),
-                ),
-                (
-                    EventKind::BlocklistDns,
-                    bincode::serialize(&dns_fields(at(5))),
-                ),
-                (
-                    EventKind::UnusualDestinationPattern,
-                    bincode::serialize(&unusual_destination_fields(at(6))),
-                ),
-                (
-                    EventKind::HttpThreat,
-                    bincode::serialize(&http_threat_fields(at(7), "SQL Injection")),
-                ),
-                (
-                    EventKind::HttpThreat,
-                    bincode::serialize(&http_threat_fields(at(8), "Cross-site Scripting")),
-                ),
-            ];
-            let db = store.events();
-            for (secs, (kind, fields)) in (0..).zip(messages) {
-                db.put(&EventMessage {
-                    time: at(secs),
-                    kind,
-                    fields: fields.expect("serializable"),
-                })
-                .unwrap();
-            }
-        }
-
-        async fn schema_with_kind_events() -> TestSchema {
-            let schema = TestSchema::new().await;
-            store_kind_events(&schema.store());
-            schema
-        }
-
-        /// Runs `query` and returns its `field`, failing on any error.
-        async fn query_field(schema: &TestSchema, field: &str, query: &str) -> Value {
-            let res = schema.execute_as_system_admin(query).await;
-            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
-            res.data.into_json().expect("valid GraphQL JSON")[field].clone()
-        }
-
-        /// Returns the total count and the sorted `__typename`s that
-        /// `field` lists under `filter`.
-        async fn list_kinds(schema: &TestSchema, field: &str, filter: &str) -> (u64, Vec<String>) {
-            let query = format!(
-                "{{ {field}(filter: {{ {filter} }}) {{ \
-                    totalCount edges {{ node {{ __typename }} }} }} }}"
-            );
-            let connection = query_field(schema, field, &query).await;
-            let total = connection["totalCount"]
-                .as_str()
-                .expect("totalCount is a StringNumber")
-                .parse()
-                .expect("numeric totalCount");
-            let mut typenames: Vec<String> = connection["edges"]
-                .as_array()
-                .expect("edges")
-                .iter()
-                .map(|edge| edge["node"]["__typename"].as_str().unwrap().to_string())
-                .collect();
-            typenames.sort_unstable();
-            (total, typenames)
-        }
-
-        /// Returns the `values`→`counts` pairs of a counter query, which
-        /// come back in no fixed order among equal counts.
-        async fn counter(schema: &TestSchema, field: &str, filter: &str) -> BTreeMap<String, u64> {
-            let query =
-                format!("{{ {field}(filter: {{ {filter} }}, first: 100) {{ values counts }} }}");
-            let counter = query_field(schema, field, &query).await;
-            let values = counter["values"].as_array().expect("values");
-            let counts = counter["counts"].as_array().expect("counts");
-            assert_eq!(values.len(), counts.len());
-            values
-                .iter()
-                .zip(counts)
-                .map(|(value, count)| {
-                    (
-                        value.as_str().expect("enum value").to_string(),
-                        count.as_u64().expect("count"),
-                    )
-                })
-                .collect()
-        }
-
-        #[tokio::test]
-        async fn event_list_selects_exactly_the_listed_kinds() {
-            let schema = schema_with_kind_events().await;
-            for (kinds, expected) in [
-                ("TOR_CONNECTION", &["TorConnection"][..]),
-                ("TOR_CONNECTION_CONN", &["TorConnectionConn"]),
-                ("FTP_PLAIN_TEXT", &["FtpPlainText"]),
-                ("LDAP_PLAIN_TEXT", &["LdapPlainText"]),
-                ("BLOCKLIST_CONN", &["BlocklistConn"]),
-                ("BLOCKLIST_DNS", &["BlocklistDns"]),
-                (
-                    "UNUSUAL_DESTINATION_PATTERN",
-                    &["UnusualDestinationPattern"],
-                ),
-                ("HTTP_THREAT", &["HttpThreat", "HttpThreat"]),
-                (
-                    "TOR_CONNECTION, TOR_CONNECTION_CONN",
-                    &["TorConnection", "TorConnectionConn"],
-                ),
-                ("TOR_CONNECTION, TOR_CONNECTION", &["TorConnection"]),
-                ("LOCKY_RANSOMWARE", &[]),
-                ("", &[]),
-            ] {
-                let (total, typenames) =
-                    list_kinds(&schema, "eventList", &format!("kinds: [{kinds}]")).await;
-                assert_eq!(typenames, expected, "kinds: [{kinds}]");
-                assert_eq!(
-                    total,
-                    u64::try_from(expected.len()).unwrap(),
-                    "kinds: [{kinds}]"
-                );
-            }
-
-            // Omitting `kinds` applies no kind constraint.
-            let (total, typenames) = list_kinds(&schema, "eventList", "").await;
-            assert_eq!(total, 9);
-            assert_eq!(typenames.len(), 9);
-        }
-
-        #[tokio::test]
-        async fn event_list_with_triage_selects_exactly_the_listed_kind() {
-            let schema = schema_with_kind_events().await;
-            let (total, typenames) =
-                list_kinds(&schema, "eventListWithTriage", "kinds: [FTP_PLAIN_TEXT]").await;
-            assert_eq!(total, 1);
-            assert_eq!(typenames, ["FtpPlainText"]);
-
-            let (total, typenames) = list_kinds(&schema, "eventListWithTriage", "kinds: []").await;
-            assert_eq!(total, 0);
-            assert_eq!(typenames, Vec::<String>::new());
-        }
-
-        #[tokio::test]
-        async fn aggregations_select_exactly_the_listed_kinds() {
-            let schema = schema_with_kind_events().await;
-
-            let query = format!(
-                r#"{{ eventFrequencySeries(
-                    filter: {{ start: "{START}", end: "{END}", kinds: [TOR_CONNECTION, TOR_CONNECTION_CONN] }},
-                    period: 86400
-                ) }}"#
-            );
-            assert_eq!(
-                query_field(&schema, "eventFrequencySeries", &query).await,
-                json!([2])
-            );
-
-            let levels = counter(&schema, "eventCountsByLevel", "kinds: [BLOCKLIST_CONN]").await;
-            assert_eq!(levels.values().sum::<u64>(), 1, "{levels:?}");
-            let levels = counter(&schema, "eventCountsByLevel", "kinds: []").await;
-            assert!(levels.is_empty(), "{levels:?}");
-
-            let res = schema
-                .execute_as_system_admin(
-                    r#"mutation { insertNetwork(
-                        name: "n0",
-                        description: "",
-                        networks: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
-                    ) }"#,
-                )
-                .await;
-            assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-            let networks = counter(&schema, "eventCountsByNetwork", "kinds: [HTTP_THREAT]").await;
-            assert_eq!(networks, BTreeMap::from([("0".to_string(), 2)]));
-        }
-
-        #[tokio::test]
-        async fn event_counts_by_kind_counts_one_bucket_per_kind() {
-            let schema = schema_with_kind_events().await;
-            let expected = BTreeMap::from(
-                [
-                    ("TOR_CONNECTION", 1),
-                    ("TOR_CONNECTION_CONN", 1),
-                    ("FTP_PLAIN_TEXT", 1),
-                    ("LDAP_PLAIN_TEXT", 1),
-                    ("BLOCKLIST_CONN", 1),
-                    ("BLOCKLIST_DNS", 1),
-                    ("UNUSUAL_DESTINATION_PATTERN", 1),
-                    ("HTTP_THREAT", 2),
-                ]
-                .map(|(kind, count)| (kind.to_string(), count)),
-            );
-            assert_eq!(counter(&schema, "eventCountsByKind", "").await, expected);
-
-            let filtered = counter(
-                &schema,
-                "eventCountsByKind",
-                "kinds: [BLOCKLIST_CONN, HTTP_THREAT]",
-            )
-            .await;
-            assert_eq!(
-                filtered,
-                BTreeMap::from([
-                    ("BLOCKLIST_CONN".to_string(), 1),
-                    ("HTTP_THREAT".to_string(), 2)
-                ])
-            );
-
-            // Every counted value can be passed back as a `kinds` filter.
-            for kind in expected.keys() {
-                let (total, _) =
-                    list_kinds(&schema, "eventList", &format!("kinds: [{kind}]")).await;
-                assert_eq!(Some(&total), expected.get(kind), "{kind}");
-            }
-        }
-
-        #[tokio::test]
-        async fn kinds_rejects_values_outside_the_enum() {
-            let schema = schema_with_kind_events().await;
-            for literal in [
-                "UNKNOWN_KIND",
-                "TorConnection",
-                r#""TorConnection""#,
-                "tor_connection",
-            ] {
-                let query =
-                    format!("{{ eventList(filter: {{ kinds: [{literal}] }}) {{ totalCount }} }}");
-                let res = schema.execute_as_system_admin(&query).await;
-                assert!(!res.errors.is_empty(), "expected an error for {literal}");
-                assert_eq!(res.data, async_graphql::Value::Null, "{literal}");
-            }
-
-            for value in ["TorConnection", "tor_connection", "UNKNOWN_KIND"] {
-                for (field, input) in [
-                    ("eventList", "EventListFilterInput"),
-                    ("eventListWithTriage", "EventStandardFilterInput"),
-                ] {
-                    let request = async_graphql::Request::new(format!(
-                        "query($filter: {input}!) {{ {field}(filter: $filter) {{ totalCount }} }}"
-                    ))
-                    .variables(async_graphql::Variables::from_json(
-                        json!({ "filter": { "kinds": [value] } }),
-                    ));
-                    let request = schema.request_with_context(
-                        request,
-                        RoleGuard::Role(Role::SystemAdministrator),
-                        None,
-                    );
-                    let res = schema.schema.execute(request).await;
-                    assert!(
-                        !res.errors.is_empty(),
-                        "expected an error for {value} on {field}"
-                    );
-                    assert_eq!(res.data, async_graphql::Value::Null, "{value} on {field}");
-                }
-            }
-        }
-    }
 }

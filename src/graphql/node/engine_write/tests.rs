@@ -1417,7 +1417,7 @@ async fn node_writes_wait_for_the_engine_configuration_lock() {
 
 fn definition_text(source: &str, server_name: &str) -> String {
     format!(
-        r#"event_kind = "http"
+        r#"raw_event_kind = "http"
 method = "multidimension"
 sources = ["{source}"]
 window_start = "2026-10-14T00:00:00Z"
@@ -1582,7 +1582,8 @@ async fn a_customer_change_is_refused_while_a_definition_lists_the_nodes_source(
             customer_id: A,
             instance: f.engine_a.clone(),
             method: ModelMethod::Multidimension,
-            event_kind: "http".to_string(),
+            raw_event_kind: "http".to_string(),
+            log_kind: None,
             sources: vec![f.sensor_a.clone()],
             indicator: None,
             definition: String::new(),
@@ -1671,7 +1672,8 @@ async fn a_new_node_or_a_hostname_change_is_refused_for_a_listed_name() {
             customer_id: A,
             instance: f.engine_a.clone(),
             method: ModelMethod::Multidimension,
-            event_kind: "http".to_string(),
+            raw_event_kind: "http".to_string(),
+            log_kind: None,
             sources: vec![f.sensor_a.clone(), f.logs_a.clone()],
             indicator: None,
             definition: String::new(),
@@ -1736,7 +1738,8 @@ impl Fixture {
                     customer_id: A,
                     instance: self.engine_a.clone(),
                     method: ModelMethod::Multidimension,
-                    event_kind: "http".to_string(),
+                    raw_event_kind: "http".to_string(),
+                    log_kind: None,
                     sources: sources.iter().map(ToString::to_string).collect(),
                     indicator: None,
                     definition: String::new(),

@@ -3495,10 +3495,9 @@ mod tests {
     use async_trait::async_trait;
     use ipnet::IpNet;
     use review_database::{
-        Agent, AgentStatus, EventCategory, ExternalService, ExternalServiceStatus,
-        HostNetworkGroup, NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase,
-        OperationRetryPolicy, OwnedNetwork,
-        event::{DnsEventFields, Event, EventKind, EventMessage, NetworkType},
+        Agent, AgentStatus, ExternalService, ExternalServiceStatus, HostNetworkGroup,
+        NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase, OperationRetryPolicy,
+        OwnedNetwork, event::NetworkType,
     };
     use rocksdb::{OptimisticTransactionDB, Options, SingleThreaded};
 
@@ -4399,10 +4398,12 @@ mod tests {
                 customer_id,
                 1,
                 vec![NetworkListEntry {
+                    id: 1,
                     name: "allowed".to_string(),
                     group,
                 }],
                 vec![NetworkListEntry {
+                    id: 1,
                     name: "blocked".to_string(),
                     group: HostNetworkGroup::new(
                         vec!["198.51.100.1".parse().unwrap()],
@@ -4415,42 +4416,23 @@ mod tests {
     }
 
     fn put_dns_event(test_store: &TestStore, sensor: &str, second: i64) {
-        let fields = DnsEventFields {
-            sensor: sensor.to_string(),
-            orig_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            orig_port: 10_000,
-            resp_addr: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-            resp_port: 53,
-            proto: 17,
-            start_time: second * 1_000_000_000,
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            query: "example.com".to_string(),
-            answer: vec!["127.0.0.1".to_string()],
-            trans_id: 1,
-            rtt: 1,
-            qclass: 0,
-            qtype: 0,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: false,
-            ra_flag: false,
-            ttl: vec![1],
-            confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
-        };
+        put_detection_event(test_store, Some(sensor), second);
+    }
+
+    /// Stores a detection event of `sensor`, or of no sensor, at `second`.
+    fn put_detection_event(test_store: &TestStore, sensor: Option<&str>, second: i64) {
+        let mut event = crate::graphql::event_test_support::dns_event(
+            jiff::Timestamp::from_second(second).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+            Some(review_protocol::types::EventCategory::CommandAndControl),
+            sensor.unwrap_or_default(),
+        );
+        event.sensor = sensor.map(ToString::to_string);
         read_store(&test_store.store)
             .unwrap()
             .events()
-            .put(&EventMessage {
-                time: jiff::Timestamp::from_second(second).unwrap(),
-                kind: EventKind::DnsCovertChannel,
-                fields: bincode::serialize(&fields).unwrap(),
-            })
+            .put(&event, &crate::graphql::event_test_support::stamp())
             .unwrap();
     }
 
@@ -5477,6 +5459,7 @@ mod tests {
         put_dns_event(&test_store, "piglet.one.example", 1);
         put_dns_event(&test_store, "piglet.one.example.extra", 2);
         put_dns_event(&test_store, "piglet.other.example", 3);
+        put_detection_event(&test_store, None, 4);
         let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let other_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         {
@@ -5583,14 +5566,17 @@ mod tests {
         let sensors = store
             .events()
             .iter_forward()
-            .map(|entry| match entry.unwrap().1 {
-                Event::DnsCovertChannel(event) => event.sensor,
-                _ => panic!("expected DNS event"),
-            })
+            .map(|entry| entry.unwrap().1.event().sensor.clone())
             .collect::<Vec<_>>();
+        // The events of the deleted customer's sensor are gone; those of
+        // another sensor and the one with no sensor remain.
         assert_eq!(
             sensors,
-            ["piglet.one.example.extra", "piglet.other.example"]
+            [
+                Some("piglet.one.example.extra".to_string()),
+                Some("piglet.other.example".to_string()),
+                None,
+            ]
         );
     }
 
@@ -5893,7 +5879,8 @@ mod tests {
                         agent_key: "001.unsupervised".to_string(),
                     },
                     method: review_database::ModelMethod::Timeseries,
-                    event_kind: "conn".to_string(),
+                    raw_event_kind: "conn".to_string(),
+                    log_kind: None,
                     sources: vec![used.to_string()],
                     indicator: None,
                     definition: String::new(),
@@ -6005,7 +5992,8 @@ mod tests {
                 customer_id,
                 instance: instance.clone(),
                 method: review_database::ModelMethod::Timeseries,
-                event_kind: "timeseries".to_string(),
+                raw_event_kind: "timeseries".to_string(),
+                log_kind: None,
                 sources: vec![policy.to_string()],
                 indicator: None,
                 definition: String::new(),
@@ -6359,9 +6347,8 @@ mod tests {
                 let store = read_store(&test_store.store).unwrap();
                 let target_event_exists = store.events().iter_forward().any(|entry| {
                     matches!(
-                        entry.unwrap().1,
-                        Event::DnsCovertChannel(event)
-                            if event.sensor == "piglet.one.example"
+                        entry.unwrap().1.event().sensor.as_deref(),
+                        Some(sensor) if sensor == "piglet.one.example"
                     )
                 });
                 assert_eq!(target_event_exists, fail_stage == Stage::Events);
@@ -6495,15 +6482,14 @@ mod tests {
             );
             assert!(store.events().iter_forward().all(|entry| {
                 !matches!(
-                    entry.unwrap().1,
-                    Event::DnsCovertChannel(event) if event.sensor == "piglet.one.example"
+                    entry.unwrap().1.event().sensor.as_deref(),
+                    Some(sensor) if sensor == "piglet.one.example"
                 )
             }));
             assert!(store.events().iter_forward().any(|entry| {
                 matches!(
-                    entry.unwrap().1,
-                    Event::DnsCovertChannel(event)
-                        if event.sensor == "piglet.one.example.extra"
+                    entry.unwrap().1.event().sensor.as_deref(),
+                    Some(sensor) if sensor == "piglet.one.example.extra"
                 )
             }));
             assert_eq!(customer_models(&store, 1), Vec::<String>::new());
@@ -6975,9 +6961,8 @@ mod tests {
             assert!(store.traffic_filter_map().get(hostname).unwrap().is_none());
             assert!(store.events().iter_forward().all(|entry| {
                 !matches!(
-                    entry.unwrap().1,
-                    Event::DnsCovertChannel(event)
-                        if event.sensor == format!("piglet.{hostname}")
+                    entry.unwrap().1.event().sensor.as_deref(),
+                    Some(sensor) if sensor == format!("piglet.{hostname}")
                 )
             }));
             assert_eq!(

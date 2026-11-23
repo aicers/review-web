@@ -133,7 +133,7 @@ const NAMED_EVENT_KINDS: [&str; 44] = [
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TrainingDocument {
-    pub(crate) event_kind: String,
+    pub(crate) raw_event_kind: String,
     pub(crate) method: Method,
     pub(crate) sources: Vec<String>,
     /// RFC 3339 with an offset, kept as text so a re-serialization keeps it.
@@ -313,16 +313,16 @@ impl TrainingDocument {
                         "",
                     ));
                 }
-                if self.event_kind != TIMESERIES_EVENT_KIND {
+                if self.raw_event_kind != TIMESERIES_EVENT_KIND {
                     return Err(refusal(
                         RefusalCode::EventKindNotAllowed,
                         format!(
                             "the timeseries method takes event kind \"{TIMESERIES_EVENT_KIND}\", \
                              not {:?}",
-                            self.event_kind
+                            self.raw_event_kind
                         ),
-                        "event_kind",
-                        self.event_kind.as_str(),
+                        "raw_event_kind",
+                        self.raw_event_kind.as_str(),
                     ));
                 }
                 Ok(())
@@ -336,15 +336,15 @@ impl TrainingDocument {
                         "",
                     ));
                 }
-                if !MULTIDIMENSION_EVENT_KINDS.contains(&self.event_kind.as_str()) {
+                if !MULTIDIMENSION_EVENT_KINDS.contains(&self.raw_event_kind.as_str()) {
                     return Err(refusal(
                         RefusalCode::EventKindNotAllowed,
                         format!(
                             "the multidimension method does not take event kind {:?}",
-                            self.event_kind
+                            self.raw_event_kind
                         ),
-                        "event_kind",
-                        self.event_kind.as_str(),
+                        "raw_event_kind",
+                        self.raw_event_kind.as_str(),
                     ));
                 }
                 Ok(())
@@ -358,17 +358,17 @@ impl TrainingDocument {
                         "",
                     ));
                 }
-                if self.event_kind.is_empty()
-                    || NAMED_EVENT_KINDS.contains(&self.event_kind.as_str())
+                if self.raw_event_kind.is_empty()
+                    || NAMED_EVENT_KINDS.contains(&self.raw_event_kind.as_str())
                 {
                     return Err(refusal(
                         RefusalCode::EventKindNotAllowed,
                         format!(
                             "the prefix method takes a log kind, not {:?}",
-                            self.event_kind
+                            self.raw_event_kind
                         ),
-                        "event_kind",
-                        self.event_kind.as_str(),
+                        "raw_event_kind",
+                        self.raw_event_kind.as_str(),
                     ));
                 }
                 Ok(())

@@ -287,6 +287,11 @@ struct NetworkListEntry<'a> {
 
 #[Object]
 impl NetworkListEntry<'_> {
+    /// The writer's ID of the entry, unique within its list, as it was given.
+    async fn id(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.id)
+    }
+
     /// The name of the entry, unique within its list.
     async fn name(&self) -> &str {
         &self.inner.name
@@ -300,6 +305,9 @@ impl NetworkListEntry<'_> {
 
 #[derive(InputObject)]
 struct NetworkListEntryInput {
+    /// The writer's ID of the entry, unique within its list and stored as
+    /// given. The same ID may appear in both the allowlist and the blocklist.
+    id: StringNumber<u64>,
     name: String,
     network_group: HostNetworkGroupInput,
 }
@@ -325,9 +333,10 @@ impl fmt::Display for NetworkList {
 ///
 /// # Errors
 ///
-/// Returns an error, naming `list`, if there are too many entries, a name is
-/// empty or repeated, or a network group is empty, too large, unparsable, or
-/// holds a range that ends before it starts or mixes address families.
+/// Returns an error, naming `list`, if there are too many entries, an ID is
+/// repeated, a name is empty or repeated, or a network group is empty, too
+/// large, unparsable, or holds a range that ends before it starts or mixes
+/// address families.
 fn validate_list(
     list: NetworkList,
     entries: Vec<NetworkListEntryInput>,
@@ -338,6 +347,7 @@ fn validate_list(
         )
         .into());
     }
+    let mut ids = HashSet::with_capacity(entries.len());
     let mut names = HashSet::with_capacity(entries.len());
     for entry in &entries {
         if entry.name.trim().is_empty() {
@@ -345,6 +355,10 @@ fn validate_list(
         }
         if !names.insert(entry.name.as_str()) {
             return Err(format!("duplicate {list} entry name {:?}", entry.name).into());
+        }
+        let StringNumber(id) = entry.id;
+        if !ids.insert(id) {
+            return Err(format!("duplicate {list} entry id {id}").into());
         }
     }
 
@@ -354,6 +368,7 @@ fn validate_list(
             let group = validate_group(&entry.network_group)
                 .map_err(|e| format!("{list} entry {:?}: {e}", entry.name))?;
             Ok(database::NetworkListEntry {
+                id: entry.id.0,
                 name: entry.name,
                 group,
             })
@@ -451,8 +466,22 @@ mod tests {
         )
     }
 
+    /// Returns the ID the tests give the entry named `name`, so that entries
+    /// with distinct names get distinct IDs.
+    fn entry_id(name: &str) -> u64 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+        name.bytes().fold(FNV_OFFSET, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+        })
+    }
+
     fn entry(name: &str, group: &str) -> String {
-        format!(r#"{{ name: "{name}", networkGroup: {group} }}"#)
+        entry_with_id(entry_id(name), name, group)
+    }
+
+    fn entry_with_id(id: u64, name: &str, group: &str) -> String {
+        format!(r#"{{ id: "{id}", name: "{name}", networkGroup: {group} }}"#)
     }
 
     fn query(customer_id: &str) -> String {
@@ -474,6 +503,7 @@ mod tests {
 
     fn stored_entry(name: &str, group: HostNetworkGroup) -> NetworkListEntry {
         NetworkListEntry {
+            id: entry_id(name),
             name: name.to_string(),
             group,
         }
@@ -1084,5 +1114,98 @@ mod tests {
         let res = schema.execute_as_system_admin(&remove("0")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         assert_eq!(served(&schema, 0), Default::default());
+    }
+
+    #[tokio::test]
+    async fn entry_without_id_is_refused() {
+        let schema = TestSchema::new().await;
+        let no_id = format!(r#"{{ name: "office", networkGroup: {OFFICE} }}"#);
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &no_id, ""))
+            .await;
+        assert!(!res.errors.is_empty(), "expected an error, got {res:?}");
+        let res = schema.execute_as_system_admin(&query("7")).await;
+        assert_eq!(data(res), json!({ "networkLists": null }));
+    }
+
+    #[tokio::test]
+    async fn duplicate_id_within_a_list_is_refused_and_nothing_is_stored() {
+        let schema = TestSchema::new().await;
+        for (allowlist, blocklist, list) in [
+            (
+                [
+                    entry_with_id(4, "office", OFFICE),
+                    entry_with_id(4, "scanner", SCANNER),
+                ]
+                .join(", "),
+                String::new(),
+                "allowlist",
+            ),
+            (
+                String::new(),
+                [
+                    entry_with_id(9, "office", OFFICE),
+                    entry_with_id(9, "scanner", SCANNER),
+                ]
+                .join(", "),
+                "blocklist",
+            ),
+        ] {
+            let res = schema
+                .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+                .await;
+            let message = error_message(&res);
+            assert!(
+                message.starts_with(&format!("duplicate {list} entry id ")),
+                "unexpected error: {message}"
+            );
+        }
+        let res = schema.execute_as_system_admin(&query("7")).await;
+        assert_eq!(data(res), json!({ "networkLists": null }));
+        assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ids_are_stored_verbatim_and_may_repeat_across_lists() {
+        // Above 2^53, where a JSON number would lose precision.
+        const WIDE_ID: u64 = (1 << 53) + 1;
+
+        let schema = TestSchema::new().await;
+        let allowlist = [
+            entry_with_id(WIDE_ID, "office", OFFICE),
+            entry_with_id(u64::MAX, "partner", SCANNER),
+        ]
+        .join(", ");
+        let blocklist = entry_with_id(WIDE_ID, "scanner", SCANNER);
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+            .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+
+        let stored = schema.store().network_lists_map().get(7).unwrap().unwrap();
+        assert_eq!(
+            stored.allowlist.iter().map(|e| e.id).collect::<Vec<_>>(),
+            [WIDE_ID, u64::MAX]
+        );
+        assert_eq!(
+            stored.blocklist.iter().map(|e| e.id).collect::<Vec<_>>(),
+            [WIDE_ID]
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ networkLists(customerId: "7") { allowlist { id name } blocklist { id name } } }"#,
+            )
+            .await;
+        assert_eq!(
+            data(res),
+            json!({ "networkLists": {
+                "allowlist": [
+                    { "id": WIDE_ID.to_string(), "name": "office" },
+                    { "id": u64::MAX.to_string(), "name": "partner" },
+                ],
+                "blocklist": [{ "id": WIDE_ID.to_string(), "name": "scanner" }],
+            } })
+        );
     }
 }

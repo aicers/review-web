@@ -66,7 +66,7 @@ impl<'a> TestModel<'a> {
             kind: self.kind.to_string(),
             serialized_classifier: vec![1, 2, 3],
             max_event_id_num: 50,
-            event_kind: TEST_EVENT_KIND.to_string(),
+            raw_event_kind: TEST_EVENT_KIND.to_string(),
             classification_id: 0,
             batch_info: self
                 .rounds
@@ -89,6 +89,7 @@ impl<'a> TestModel<'a> {
             run_id: 1,
             definition: String::new(),
             sources: self.trained_sources,
+            log_kind: None,
         };
         store
             .replace_model(model, owner, self.trained_at, trained)
@@ -212,7 +213,8 @@ pub(crate) fn insert_definition(
             customer_id,
             instance: instance.clone(),
             method: ModelMethod::Multidimension,
-            event_kind: TEST_EVENT_KIND.to_string(),
+            raw_event_kind: TEST_EVENT_KIND.to_string(),
+            log_kind: None,
             sources: vec![],
             indicator: Some(indicator.to_string()),
             definition: String::new(),
