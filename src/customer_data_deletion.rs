@@ -3036,6 +3036,8 @@ async fn run_review_worker_and_persist(
 /// by hand, is removed from the records only, and its removal is logged.
 ///
 /// It runs on a blocking worker: it waits for `policies_lock` there.
+// The steps are one sequence of stages, each with its test checkpoint, and read best in order.
+#[allow(clippy::too_many_lines)]
 fn delete_review_data(
     store_lock: &RwLock<Store>,
     policies_lock: &SamplingPoliciesLock,
@@ -3126,6 +3128,15 @@ fn delete_review_data(
             &invalid_external_services,
         )?;
     }
+    // The history rows carry the customer id they were recorded under, so
+    // this also removes those of the customer's nodes removed before the
+    // deletion.
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::ConfigHistory, customer_id)
+        .with_context(|| format!("deleting configuration history for customer {customer_id}"))?;
+    store
+        .remove_customer_config_history(customer_id)
+        .with_context(|| format!("deleting configuration history for customer {customer_id}"))?;
     #[cfg(test)]
     tests::checkpoint(&store, tests::Stage::Unsupervised, customer_id).with_context(|| {
         format!("deleting Unsupervised Engine records for customer {customer_id}")
@@ -4450,6 +4461,7 @@ mod tests {
         CustomerNetworks,
         NetworkLists,
         Nodes,
+        ConfigHistory,
         Unsupervised,
         DataStoreRecorded,
         /// Before the write recording overdue Sensor and Semi-supervised
@@ -6225,16 +6237,133 @@ mod tests {
         );
     }
 
+    /// Stores a node of `customer_id` with a Semi-supervised Engine agent whose applied document
+    /// records revision 1, and returns the agent's instance.
+    fn put_hog_node(
+        test_store: &TestStore,
+        customer_id: u32,
+        hostname: &str,
+    ) -> review_database::ModelInstance {
+        let agent = Agent::new(
+            0,
+            "001.hog".to_string(),
+            AgentKind::SemiSupervised,
+            AgentStatus::Enabled,
+            Some("[detection_models.port_scan]\nenabled = false\n".to_string()),
+            None,
+        )
+        .unwrap();
+        let node = Node {
+            id: 0,
+            name: hostname.to_string(),
+            name_draft: None,
+            profile: Some(NodeProfile {
+                customer_id,
+                description: String::new(),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![agent],
+            external_services: vec![],
+            creation_time: jiff::Timestamp::now(),
+        };
+        let node_id = read_store(&test_store.store)
+            .unwrap()
+            .node_map()
+            .put(&node)
+            .unwrap();
+        review_database::ModelInstance {
+            node_id,
+            agent_key: "001.hog".to_string(),
+        }
+    }
+
+    fn has_revision(test_store: &TestStore, instance: &review_database::ModelInstance) -> bool {
+        read_store(&test_store.store)
+            .unwrap()
+            .config_revision_record(instance, 1)
+            .unwrap()
+            .is_some()
+    }
+
+    #[tokio::test]
+    async fn deletion_removes_the_customers_configuration_history() {
+        let test_store = TestStore::new();
+        let kept = put_hog_node(&test_store, 1, "one.example");
+        let removed = put_hog_node(&test_store, 1, "gone.example");
+        let other = put_hog_node(&test_store, 2, "two.example");
+        read_store(&test_store.store)
+            .unwrap()
+            .node_map()
+            .remove(removed.node_id)
+            .unwrap();
+        for instance in [&kept, &removed, &other] {
+            assert!(has_revision(&test_store, instance), "{instance:?}");
+        }
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+
+        // The deletion fails after the history is removed, and is resumed.
+        let hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(|stage, _| {
+                if stage == Stage::Unsupervised {
+                    bail!("injected RocksDB boundary error");
+                }
+                Ok(())
+            }),
+        );
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
+            .await;
+        assert_eq!(
+            job(&test_store.store, 1)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!has_revision(&test_store, &kept));
+        assert!(!has_revision(&test_store, &removed));
+        assert!(has_revision(&test_store, &other));
+        drop(hook);
+
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
+            .await;
+        let result = job(&test_store.store, 1);
+        let result = result.service_results.first().unwrap();
+        assert_eq!(
+            result.status,
+            CustomerDataDeletionStatus::Succeeded,
+            "{:?}",
+            result.error
+        );
+        assert!(!has_revision(&test_store, &kept));
+        assert!(!has_revision(&test_store, &removed));
+        assert!(has_revision(&test_store, &other));
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
-        const STAGES: [Stage; 7] = [
+        const STAGES: [Stage; 8] = [
             Stage::Events,
             Stage::Hosts,
             Stage::TrafficFilters,
             Stage::CustomerNetworks,
             Stage::NetworkLists,
             Stage::Nodes,
+            Stage::ConfigHistory,
             Stage::Unsupervised,
         ];
         let test_store = TestStore::new();
@@ -6331,6 +6460,7 @@ mod tests {
             let error_context = match fail_stage {
                 Stage::CustomerNetworks => Some("deleting customer networks for customer 1"),
                 Stage::NetworkLists => Some("deleting network lists for customer 1"),
+                Stage::ConfigHistory => Some("deleting configuration history for customer 1"),
                 Stage::Unsupervised => Some("deleting Unsupervised Engine records for customer 1"),
                 _ => None,
             };
@@ -6390,7 +6520,7 @@ mod tests {
                             | Stage::NetworkLists
                     )
                 );
-                let nodes_kept = fail_stage != Stage::Unsupervised;
+                let nodes_kept = !matches!(fail_stage, Stage::ConfigHistory | Stage::Unsupervised);
                 assert_eq!(
                     store.node_map().get_by_id(node).unwrap().is_some(),
                     nodes_kept

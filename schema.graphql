@@ -817,6 +817,33 @@ type ColumnTimeSeries {
 }
 
 """
+A configuration revision of an engine instance, as its history records
+it.
+"""
+type ConfigRevision {
+	"""
+	The ID of the node the instance runs on.
+	"""
+	nodeId: ID!
+	"""
+	The key of the instance's agent.
+	"""
+	agentKey: String!
+	"""
+	The revision number.
+	"""
+	revision: StringNumber!
+	"""
+	When the apply that stored the revision was written.
+	"""
+	appliedAt: DateTime!
+	"""
+	The completed engine configuration document the revision stored.
+	"""
+	document: String!
+}
+
+"""
 A named configuration template's metadata.
 """
 type ConfigTemplate {
@@ -1263,6 +1290,40 @@ type DetectionEventEdge {
 }
 
 """
+The detection technique a model belongs to.
+"""
+enum DetectionFamily {
+	"""
+	Matches traffic against a list of known threats.
+	"""
+	KNOWN_THREAT
+	"""
+	Applies a classifier trained before deployment.
+	"""
+	PRETRAINED_CLASSIFIER
+	"""
+	Counts a behavior and reports when the count reaches a threshold.
+	"""
+	BEHAVIOR_THRESHOLD
+	"""
+	Reports traffic that breaks a policy.
+	"""
+	POLICY_VIOLATION
+	"""
+	Measures how random a name is.
+	"""
+	RANDOMNESS
+	"""
+	Reports a deviation from a learned baseline.
+	"""
+	BASELINE_DEVIATION
+	"""
+	Reports what clustering finds anomalous.
+	"""
+	CLUSTERING_ANOMALY
+}
+
+"""
 The detection model that produced a detection event.
 
 A `detectionModels` filter matches an event exactly when its detection
@@ -1292,6 +1353,92 @@ enum DetectionModel {
 type DetectionModelEventCounter {
 	values: [DetectionModel!]!
 	counts: [Int!]!
+}
+
+"""
+The static properties of a detection model, shared by every detection
+event it reports.
+"""
+type DetectionModelProperties {
+	"""
+	The detection model these properties describe.
+	"""
+	detectionModel: DetectionModel!
+	"""
+	The detection technique.
+	"""
+	family: DetectionFamily!
+	"""
+	The MITRE tactics of the model; empty when no tactic applies.
+	"""
+	categories: [ThreatCategory!]!
+	"""
+	The engine that runs the model.
+	"""
+	learningMethod: LearningMethod!
+	"""
+	The kinds of the raw events the model can report.
+	"""
+	rawEventKinds: [RawEventKind!]!
+	"""
+	What the model's detection events are about.
+	"""
+	primarySubject: DetectionModelSubject!
+	"""
+	What the score measures, in one line. A higher score always means more
+	suspicious.
+	"""
+	scoreMeaning: String!
+	"""
+	Whether the model needs device and account identification.
+	"""
+	requiresDeviceAccountIdentification: Boolean!
+	"""
+	The values an operator may set for the model in its section of an
+	engine configuration document, in the order completion adds them.
+	"""
+	operatorValues: [OperatorValue!]!
+}
+
+"""
+The primary subject a model's detection events are about.
+"""
+type DetectionModelSubject {
+	"""
+	The kind of the subject.
+	"""
+	kind: DetectionModelSubjectKind!
+	"""
+	Where the subject's threat role comes from; non-null exactly for
+	`HOST` and `NETWORK`.
+	"""
+	roleSource: ThreatRoleSource
+}
+
+"""
+The kind of the primary subject a model's detection events are about.
+"""
+enum DetectionModelSubjectKind {
+	"""
+	No primary subject: the detection is about a raw event.
+	"""
+	RAW_EVENT
+	"""
+	A host.
+	"""
+	HOST
+	"""
+	A cluster.
+	"""
+	CLUSTER
+	"""
+	A sensor.
+	"""
+	SENSOR
+	"""
+	A network.
+	"""
+	NETWORK
 }
 
 """
@@ -3175,6 +3322,21 @@ type Mutation {
 	Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
 	refused with "the node changed since it was read; reload and retry".
 	
+	Each Semi-supervised Engine agent's document being applied that differs from its stored
+	config is completed with the defaults of the detection model properties
+	(`detectionModelProperties`) and stored completed. If completion refuses one such
+	document, the whole apply is refused before anything is stored or any agent, network or
+	Time Series Generator is told. The refusal carries `extensions.code`:
+	`INVALID_DOCUMENT` for a document that is not TOML, a `detection_models` or an entry under
+	it that is not a table, or a value of the wrong type; `UNKNOWN_FIELD` for an unknown model,
+	a model of another engine or a key that is not an operator value of the model; and
+	`BOUND_VIOLATED` for a value outside its range. Its `field` is the dotted path of the
+	offending part, empty for a document that does not parse; its `value` is the offending
+	value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
+	
+	A Semi-supervised Engine agent whose draft is empty is notified when the apply changes its
+	stored completed config, since completion gives it a populated document.
+	
 	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
 	policy assigned to it is in use, naming the policies and their uses. It is also refused
 	before anything is committed while a policy assigned to it, even an unused one, could not
@@ -3218,6 +3380,18 @@ type Mutation {
 	§5.11 refuse, which names another customer's detector or definition only to a System
 	Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
 	refused with "the node changed since it was read; reload and retry".
+	
+	Each Semi-supervised Engine agent's document being applied that differs from its stored
+	config is completed with the defaults of the detection model properties
+	(`detectionModelProperties`) and stored completed. If completion refuses one such
+	document, the whole apply is refused before anything is stored or any agent, network or
+	Time Series Generator is told. The refusal carries `extensions.code`:
+	`INVALID_DOCUMENT` for a document that is not TOML, a `detection_models` or an entry under
+	it that is not a table, or a value of the wrong type; `UNKNOWN_FIELD` for an unknown model,
+	a model of another engine or a key that is not an operator value of the model; and
+	`BOUND_VIOLATED` for a value outside its range. Its `field` is the dotted path of the
+	offending part, empty for a document that does not parse; its `value` is the offending
+	value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
 	
 	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
 	policy assigned to it is in use, naming the policies and their uses. It is also refused
@@ -4416,6 +4590,57 @@ enum OperationPhase {
 	COMPLETED
 }
 
+"""
+A value an operator may set for a detection model, in that model's
+section of an engine configuration document.
+"""
+type OperatorValue {
+	"""
+	The key of the value in the model's section.
+	"""
+	name: String!
+	"""
+	The type of the value.
+	"""
+	valueType: OperatorValueType!
+	"""
+	The default, written as a TOML value.
+	"""
+	defaultValue: String!
+	"""
+	The inclusive lower bound, written as a TOML value; null unless the
+	value is a ranged integer or float.
+	"""
+	min: String
+	"""
+	The inclusive upper bound, written as a TOML value; null unless the
+	value is a ranged integer or float.
+	"""
+	max: String
+}
+
+"""
+The type of an operator value.
+"""
+enum OperatorValueType {
+	"""
+	A boolean.
+	"""
+	BOOLEAN
+	"""
+	A 64-bit signed integer.
+	"""
+	INTEGER
+	"""
+	A 64-bit float.
+	"""
+	FLOAT
+	"""
+	A list of strings.
+	"""
+	STRING_LIST
+}
+
 type Outlier {
 	size: Int!
 	id: ID!
@@ -4799,6 +5024,11 @@ type Query {
 	"""
 	backupConfig: BackupConfig
 	"""
+	The static properties of every detection model, one entry per model
+	in model number order.
+	"""
+	detectionModelProperties: [DetectionModelProperties!]!
+	"""
 	The engine instance `agentKey` of node `nodeId`: whether it is
 	stopped, the highest detector id its documents have named, and the
 	last status each of its detectors reported.
@@ -5090,6 +5320,21 @@ type Query {
 	model of none of the caller's customers with `Forbidden`.
 	"""
 	rankedOutliers(modelId: ID!, time: DateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput, previous: Boolean = false): RankedOutlierConnection!
+	"""
+	A configuration revision of the agent `agentKey` of node `nodeId`: the
+	completed engine configuration document an apply stored, and when.
+	
+	Node access is checked as `node(id)` checks it, before any history is
+	read: an unknown or removed node is refused with `no such node`, and a
+	node outside the caller's customers with `Forbidden`. The scope is the
+	node's current customer, so after a node moves to another customer,
+	that customer's users read the revisions applied before the move.
+	
+	Returns null if the revision was never issued or its history was
+	removed by a customer data deletion. Whether the agent still exists, or
+	what kind it is now, is not checked.
+	"""
+	configRevision(nodeId: ID!, agentKey: String!, revision: StringNumber!): ConfigRevision
 	"""
 	A list of sampling policies.
 	"""
@@ -6503,6 +6748,38 @@ The role a primary subject plays in a threat.
 enum ThreatRole {
 	ACTOR
 	TARGET
+}
+
+"""
+The source of the threat role of a model's primary subject.
+"""
+type ThreatRoleSource {
+	"""
+	Where the role comes from.
+	"""
+	kind: ThreatRoleSourceKind!
+	"""
+	The role the model always assigns; non-null exactly for `FIXED`.
+	"""
+	role: ThreatRole
+}
+
+"""
+Where the threat role of a model's primary subject comes from.
+"""
+enum ThreatRoleSourceKind {
+	"""
+	The model always assigns the same role.
+	"""
+	FIXED
+	"""
+	Each detection event sets the role.
+	"""
+	PER_EVENT
+	"""
+	The time-series type sets the role.
+	"""
+	TIME_SERIES_TYPE
 }
 
 type TimeCount {

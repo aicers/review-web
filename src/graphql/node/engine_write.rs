@@ -16,8 +16,9 @@ use std::{
 
 use async_graphql::{Context, Error, ErrorExtensions, Result};
 use review_database::{
-    Agent, AgentConfig, AgentKind, EngineDocumentError, EngineDocumentWrite, ModelInstance, Node,
-    NodeProfile, NodeUpdate, Referrer, Store,
+    Agent, AgentConfig, AgentKind, DetectionModelsSectionError, EngineDocumentError,
+    EngineDocumentWrite, ModelInstance, Node, NodeProfile, NodeUpdate, Referrer, Store,
+    complete_engine_document,
 };
 
 use crate::graphql::{
@@ -477,6 +478,123 @@ pub(super) fn store_refusal(
         _ => None,
     };
     mapped.unwrap_or_else(|| error.into())
+}
+
+/// Maps a refusal of a node write that completion of a Semi-supervised Engine
+/// document caused, or returns `None` for any other error.
+///
+/// The store names the refused agent only in a context message, which is not
+/// parsed: the agent is found by completing again the `config` of each
+/// Semi-supervised Engine agent of `new` whose `config` the write changes
+/// from `stored`, in `new`'s order, and taking the first whose error equals
+/// the store's. Should none match, which needs `stored` to have changed
+/// under the write, every Semi-supervised Engine agent of `new` is tried in
+/// the same way; should none of them match either, the error is left to the
+/// caller.
+pub(super) fn completion_refusal(
+    error: &anyhow::Error,
+    stored: &Node,
+    new: &NodeUpdate,
+) -> Option<Error> {
+    let refused = error.downcast_ref::<DetectionModelsSectionError>()?;
+    let fails_alike = |agent: &&Agent| {
+        agent.kind == AgentKind::SemiSupervised
+            && agent.config.as_ref().is_some_and(|config| {
+                complete_engine_document(AgentKind::SemiSupervised, config.as_ref())
+                    .err()
+                    .as_ref()
+                    == Some(refused)
+            })
+    };
+    let changes_config = |agent: &&Agent| {
+        stored
+            .agents
+            .iter()
+            .find(|stored_agent| stored_agent.key == agent.key)
+            .is_none_or(|stored_agent| {
+                stored_agent.kind != agent.kind || stored_agent.config != agent.config
+            })
+    };
+    let agent = new
+        .agents
+        .iter()
+        .filter(changes_config)
+        .find(fails_alike)
+        .or_else(|| new.agents.iter().find(fails_alike))?;
+    let document = agent.config.as_ref().map_or("", AsRef::as_ref);
+    Some(detection_models_refusal(refused, &agent.key, document))
+}
+
+/// Returns the refusal of `refused`, the completion error of the document
+/// `document` of agent `agent_key`, with the extension `agentKey`.
+///
+/// `field` is the dotted path of the offending part, empty for a document
+/// that does not parse. `value` is the parser's message for such a
+/// document, the offending value as TOML for a value of the wrong type or
+/// out of range, and empty otherwise.
+pub(super) fn detection_models_refusal(
+    refused: &DetectionModelsSectionError,
+    agent_key: &str,
+    document: &str,
+) -> Error {
+    const SECTION: &str = "detection_models";
+    let (code, field, value) = match refused {
+        DetectionModelsSectionError::InvalidToml(message) => {
+            (RefusalCode::InvalidDocument, String::new(), message.clone())
+        }
+        DetectionModelsSectionError::NotATable => (
+            RefusalCode::InvalidDocument,
+            SECTION.to_string(),
+            String::new(),
+        ),
+        DetectionModelsSectionError::SectionNotATable { section } => (
+            RefusalCode::InvalidDocument,
+            format!("{SECTION}.{section}"),
+            String::new(),
+        ),
+        DetectionModelsSectionError::TypeMismatch { section, key, .. } => (
+            RefusalCode::InvalidDocument,
+            format!("{SECTION}.{section}.{key}"),
+            operator_value(document, section, key).unwrap_or_default(),
+        ),
+        DetectionModelsSectionError::UnknownModel { section }
+        | DetectionModelsSectionError::ModelOfAnotherEngine { section, .. } => (
+            RefusalCode::UnknownField,
+            format!("{SECTION}.{section}"),
+            String::new(),
+        ),
+        DetectionModelsSectionError::UnknownKey { section, key } => (
+            RefusalCode::UnknownField,
+            format!("{SECTION}.{section}.{key}"),
+            String::new(),
+        ),
+        DetectionModelsSectionError::OutOfRange {
+            section,
+            key,
+            value,
+            ..
+        } => (
+            RefusalCode::BoundViolated,
+            format!("{SECTION}.{section}.{key}"),
+            value.clone(),
+        ),
+    };
+    let agent_key = agent_key.to_string();
+    refusal(code, refused.to_string(), &field, value)
+        .extend_with(|_, extensions| extensions.set("agentKey", agent_key.as_str()))
+}
+
+/// Returns the value at `detection_models.<section>.<key>` of `document`,
+/// written as a TOML value, or `None` if there is none.
+fn operator_value(document: &str, section: &str, key: &str) -> Option<String> {
+    let table = document.parse::<toml::Table>().ok()?;
+    let value = table
+        .get("detection_models")?
+        .as_table()?
+        .get(section)?
+        .as_table()?
+        .get(key)?;
+    Some(value.to_string().trim().to_string())
 }
 
 /// Returns the last detector that `matches`, with its index: for a repeated
