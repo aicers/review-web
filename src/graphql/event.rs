@@ -30,6 +30,7 @@ use tokio::time;
 use tracing::{error, warn};
 
 use self::detection::DetectionEvent;
+pub(super) use self::detection::ThreatRole;
 pub(super) use self::group::EventGroupQuery;
 use super::{
     Role, RoleGuard,

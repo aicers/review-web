@@ -1,4 +1,6 @@
 mod bind_addr;
+#[cfg(test)]
+mod completion_tests;
 mod control;
 mod crud;
 mod customer_sensor_list;

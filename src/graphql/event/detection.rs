@@ -17,7 +17,7 @@ use crate::graphql::{
 /// The role a primary subject plays in a threat.
 #[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
 #[graphql(remote = "protocol::ThreatRole")]
-pub(super) enum ThreatRole {
+pub(in crate::graphql) enum ThreatRole {
     Actor,
     Target,
 }

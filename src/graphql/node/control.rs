@@ -217,6 +217,21 @@ impl NodeControlMutation {
     /// Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
     /// refused with "the node changed since it was read; reload and retry".
     ///
+    /// Each Semi-supervised Engine agent's document being applied that differs from its stored
+    /// config is completed with the defaults of the detection model properties
+    /// (`detectionModelProperties`) and stored completed. If completion refuses one such
+    /// document, the whole apply is refused before anything is stored or any agent, network or
+    /// Time Series Generator is told. The refusal carries `extensions.code`:
+    /// `INVALID_DOCUMENT` for a document that is not TOML, a `detection_models` or an entry under
+    /// it that is not a table, or a value of the wrong type; `UNKNOWN_FIELD` for an unknown model,
+    /// a model of another engine or a key that is not an operator value of the model; and
+    /// `BOUND_VIOLATED` for a value outside its range. Its `field` is the dotted path of the
+    /// offending part, empty for a document that does not parse; its `value` is the offending
+    /// value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
+    ///
+    /// A Semi-supervised Engine agent whose draft is empty is notified when the apply changes its
+    /// stored completed config, since completion gives it a populated document.
+    ///
     /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
     /// policy assigned to it is in use, naming the policies and their uses. It is also refused
     /// before anything is committed while a policy assigned to it, even an unused one, could not
@@ -257,8 +272,12 @@ impl NodeControlMutation {
 
         let apply_scope = node_apply_scope(&node);
 
-        let updated_node = if apply_scope.db {
-            let updated = update_db(
+        let applied = if apply_scope.db {
+            let AppliedNode {
+                node: updated_node,
+                generators,
+                completed_drafts,
+            } = update_db(
                 ctx,
                 i,
                 &node,
@@ -279,18 +298,21 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-            sampling::notify_generators(ctx, updated.generators).await;
-            Some(updated.node)
+            sampling::notify_generators(ctx, generators).await;
+            Some((updated_node, completed_drafts))
         } else {
             None
         };
 
-        if let Some(ref target_agents) = apply_scope.agents {
-            // `apply_scope.agents` is `Some` only when `is_any_agent_changed`, which also makes
-            // `apply_scope.db` true, so `updated_node` is guaranteed to be `Some` here.
-            let hostname = updated_node
+        // `apply_scope.agents` is `Some` only when `is_any_agent_changed`, which also makes
+        // `apply_scope.db` true, so `applied` is `Some` whenever there is anything to notify.
+        let completed_drafts = applied
+            .as_ref()
+            .map_or(&[][..], |(_, keys)| keys.as_slice());
+        if apply_scope.agents.is_some() || !completed_drafts.is_empty() {
+            let hostname = applied
                 .as_ref()
-                .and_then(|n| n.profile.as_ref().map(|p| p.hostname.clone()))
+                .and_then(|(n, _)| n.profile.as_ref().map(|p| p.hostname.clone()))
                 .unwrap_or_default();
 
             if hostname.is_empty() {
@@ -299,14 +321,22 @@ impl NodeControlMutation {
                     "Node ID {i} - Node's agents are not notified because the hostname is empty.",
                 );
             } else {
+                let mut updates = apply_scope
+                    .agents
+                    .as_ref()
+                    .map_or_else(Vec::new, |target| target.updates.clone());
+                for key in completed_drafts {
+                    if !updates.contains(&key.as_str()) {
+                        updates.push(key.as_str());
+                    }
+                }
+                let disables = apply_scope
+                    .agents
+                    .as_ref()
+                    .map_or(&[][..], |target| target.disables.as_slice());
                 let agent_manager = ctx.data::<SharedAgentManager>()?;
-                if let Err(e) = notify_agents(
-                    agent_manager,
-                    hostname.as_str(),
-                    &target_agents.updates,
-                    &target_agents.disables,
-                )
-                .await
+                if let Err(e) =
+                    notify_agents(agent_manager, hostname.as_str(), &updates, disables).await
                 {
                     warn_with_caller!(
                         ctx,
@@ -318,7 +348,7 @@ impl NodeControlMutation {
                     ctx,
                     "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
                     jiff::Timestamp::now(),
-                    target_agents.updates,
+                    updates,
                 );
             }
         }
@@ -348,6 +378,18 @@ impl NodeControlMutation {
     /// §5.11 refuse, which names another customer's detector or definition only to a System
     /// Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
     /// refused with "the node changed since it was read; reload and retry".
+    ///
+    /// Each Semi-supervised Engine agent's document being applied that differs from its stored
+    /// config is completed with the defaults of the detection model properties
+    /// (`detectionModelProperties`) and stored completed. If completion refuses one such
+    /// document, the whole apply is refused before anything is stored or any agent, network or
+    /// Time Series Generator is told. The refusal carries `extensions.code`:
+    /// `INVALID_DOCUMENT` for a document that is not TOML, a `detection_models` or an entry under
+    /// it that is not a table, or a value of the wrong type; `UNKNOWN_FIELD` for an unknown model,
+    /// a model of another engine or a key that is not an operator value of the model; and
+    /// `BOUND_VIOLATED` for a value outside its range. Its `field` is the dotted path of the
+    /// offending part, empty for a document that does not parse; its `value` is the offending
+    /// value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
     ///
     /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
     /// policy assigned to it is in use, naming the policies and their uses. It is also refused
@@ -915,7 +957,11 @@ async fn update_db(
             &new,
             &engine_write::document_writes(&documents, Slot::Config),
         )
-        .map_err(|e| engine_write::store_refusal(e, &old, &documents))?;
+        .map_err(|e| {
+            engine_write::completion_refusal(&e, &stored, &new)
+                .unwrap_or_else(|| engine_write::store_refusal(e, &old, &documents))
+        })?;
+    let completed_drafts = completed_empty_drafts(node, &stored, &updated);
 
     // Still under the lock: an assignment checks the policy's uses.
     sampling::refresh_data_stores(&store, &data_store_changes);
@@ -938,7 +984,40 @@ async fn update_db(
     Ok(AppliedNode {
         node: updated,
         generators,
+        completed_drafts,
     })
+}
+
+/// Returns the keys of the Semi-supervised Engine agents of `input` whose draft is empty and whose
+/// stored `config` differs between `stored`, read before the apply, and `updated`, the node the
+/// apply stored.
+///
+/// Completion turns an empty draft into a populated document, which the engine has to receive,
+/// although the draft alone looks like nothing to notify.
+fn completed_empty_drafts(
+    input: &NodeInput,
+    stored: &review_database::Node,
+    updated: &review_database::Node,
+) -> Vec<String> {
+    fn config_of<'a>(
+        node: &'a review_database::Node,
+        key: &str,
+    ) -> Option<&'a review_database::AgentConfig> {
+        node.agents
+            .iter()
+            .find(|agent| agent.key == key)
+            .and_then(|agent| agent.config.as_ref())
+    }
+
+    input
+        .agents
+        .iter()
+        .filter(|agent| {
+            agent.kind == AgentKind::SemiSupervised && agent.draft.as_deref() == Some("")
+        })
+        .filter(|agent| config_of(stored, &agent.key) != config_of(updated, &agent.key))
+        .map(|agent| agent.key.clone())
+        .collect()
 }
 
 /// A node an apply stored.
@@ -948,6 +1027,9 @@ struct AppliedNode {
     /// policy whose sensor or assignee is on the node, if the apply changed its applied customer
     /// or hostname.
     generators: Vec<review_database::ModelInstance>,
+    /// The keys of the Semi-supervised Engine agents whose empty draft the apply stored as a
+    /// completed `config` that differs from the stored one.
+    completed_drafts: Vec<String>,
 }
 
 /// Returns the customer and the hostname of `node`'s applied profile.

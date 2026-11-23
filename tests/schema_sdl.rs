@@ -726,10 +726,21 @@ fn schema_has_one_detection_event_type_and_no_replaced_shapes() {
         "confidenceMin",
         "confidenceMax",
         "\tlevel:",
-        "\tlearningMethod:",
     ] {
         assert!(!sdl.contains(removed), "{removed:?}: {REGENERATE}");
     }
+    // A detection event no longer carries a learning method; the only field of
+    // that name is the static property of a detection model.
+    assert!(
+        !definition(&sdl, "type DetectionEvent {").contains("learningMethod"),
+        "{REGENERATE}"
+    );
+    assert_eq!(sdl.matches("\tlearningMethod:").count(), 1, "{REGENERATE}");
+    assert!(
+        definition(&sdl, "type DetectionModelProperties {")
+            .contains("\n\tlearningMethod: LearningMethod!\n"),
+        "{REGENERATE}"
+    );
     for header in ["enum ThreatRole {", "enum EndpointRole {"] {
         assert!(sdl.contains(header), "{header}: {REGENERATE}");
     }

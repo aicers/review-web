@@ -11,6 +11,7 @@ mod logging_tests;
 mod category;
 mod cert;
 mod cluster;
+mod config_revision;
 mod core_component;
 mod customer_data_deletion {
     pub(super) use crate::customer_data_deletion::{
@@ -22,6 +23,7 @@ pub mod customer_access;
 mod customer_deletion_guard;
 mod customer_network;
 mod db_management;
+mod detection_model;
 mod engine_config;
 mod engine_document;
 mod engine_instance;
@@ -196,6 +198,7 @@ struct SubQueryOneA(
     cluster::ClusterQuery,
     customer_data_deletion::CustomerDataDeletionQuery,
     db_management::DbManagementQuery,
+    detection_model::DetectionModelQuery,
     engine_instance::EngineInstanceQuery,
     event::EventQuery,
     event::EventGroupQuery,
@@ -217,6 +220,7 @@ struct SubQueryOneB(
 
 #[derive(MergedObject, Default)]
 struct SubQueryTwoA(
+    config_revision::ConfigRevisionQuery,
     sampling::SamplingPolicyQuery,
     statistics::StatisticsQuery,
     status::StatusQuery,
