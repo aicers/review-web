@@ -1,8 +1,9 @@
 mod mtls_integration {
     use std::{
+        collections::BTreeSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::PathBuf,
-        sync::{Arc, Once, RwLock},
+        sync::{Arc, Mutex, Once, PoisonError, RwLock},
         time::Duration,
     };
 
@@ -62,6 +63,8 @@ mod mtls_integration {
     const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
+    /// Ports already given to a test server in this process.
+    static HANDED_OUT_PORTS: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
     struct StaticCertManager {
         cert_path: PathBuf,
         key_path: PathBuf,
@@ -515,6 +518,34 @@ mod mtls_integration {
         _backup_dir: tempfile::TempDir,
     }
 
+    /// Returns a free port on `ip` that no other test server in this process
+    /// has been given.
+    ///
+    /// The server binds the port itself, after the probe listener here is
+    /// closed. Tests run in parallel, so without the record a second test's
+    /// probe could be given the same port in that window, and one of the two
+    /// servers would fail to bind it.
+    fn unused_port(ip: IpAddr) -> anyhow::Result<u16> {
+        const MAX_ATTEMPTS: usize = 64;
+
+        let mut handed_out = HANDED_OUT_PORTS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Probes that returned a port already given out stay open until a
+        // fresh one is found, so the OS does not return them again.
+        let mut held = Vec::new();
+        for _ in 0..MAX_ATTEMPTS {
+            let listener =
+                std::net::TcpListener::bind(SocketAddr::new(ip, 0)).context("bind port")?;
+            let port = listener.local_addr().context("read port")?.port();
+            if handed_out.insert(port) {
+                return Ok(port);
+            }
+            held.push(listener);
+        }
+        anyhow::bail!("no unused port after {MAX_ATTEMPTS} attempts")
+    }
+
     fn start_test_server() -> anyhow::Result<TestServer> {
         INSTALL_CRYPTO_PROVIDER.call_once(|| {
             rustls::crypto::aws_lc_rs::default_provider()
@@ -523,13 +554,7 @@ mod mtls_integration {
         });
 
         let addr_ip = LOCALHOST_IP;
-        let port = {
-            let listener =
-                std::net::TcpListener::bind(SocketAddr::new(addr_ip, 0)).context("bind port")?;
-            let port = listener.local_addr().context("read port")?.port();
-            drop(listener);
-            port
-        };
+        let port = unused_port(addr_ip)?;
 
         let temp_root = tempfile::tempdir().context("create temp dir")?;
         let cert_dir = tempfile::tempdir().context("create cert temp dir")?;
