@@ -193,8 +193,7 @@ fn unknown_keys_are_refused_at_every_level() {
 
 #[test]
 fn the_former_raw_event_kind_key_is_an_unknown_key() {
-    // Split so that a search for the former key finds no reference.
-    let former = concat!("event", "_kind");
+    let former = "event_kind";
     let line = format!("{former} = \"http\"");
     for text in [
         with(VALID, "raw_event_kind", &line),

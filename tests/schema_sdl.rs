@@ -707,26 +707,24 @@ fn detection_models_cross_as_the_detection_model_enum() {
 #[test]
 fn schema_has_one_detection_event_type_and_no_replaced_shapes() {
     let sdl = rendered_sdl();
-    // Names of removed shapes are split with `concat!`, so a search for them
-    // finds no remaining reference.
     for removed in [
         "interface Event ",
-        concat!("enum Event", "Kind "),
-        concat!("enum Threat", "Level "),
-        concat!("type Event", "KindEventCounter "),
+        "enum EventKind ",
+        "enum ThreatLevel ",
+        "type EventKindEventCounter ",
         "type ThreatLevelEventCounter ",
         "type DnsCovertChannel ",
-        concat!("type Block", "listConn "),
-        concat!("type Http", "Threat "),
-        concat!("type Windows", "Threat "),
-        concat!("type Network", "Threat "),
-        concat!("type Extra", "Threat "),
-        concat!("type Tor", "Connection "),
+        "type BlocklistConn ",
+        "type HttpThreat ",
+        "type WindowsThreat ",
+        "type NetworkThreat ",
+        "type ExtraThreat ",
+        "type TorConnection ",
         "input ConfidenceInput ",
         "eventCountsByLevel",
         "eventCountsByKind",
-        concat!("confidence", "Min"),
-        concat!("confidence", "Max"),
+        "confidenceMin",
+        "confidenceMax",
         "\tlevel:",
         "\tlearningMethod:",
     ] {

@@ -4152,9 +4152,8 @@ mod filter_conditions {
         for field in [
             "kinds: [DNS_COVERT_CHANNEL]",
             "levels: [LOW]",
-            // Split so that a search for the removed names finds no reference.
-            concat!("confidence", "Min: 0.1"),
-            concat!("confidence", "Max: 0.9"),
+            "confidenceMin: 0.1",
+            "confidenceMax: 0.9",
         ] {
             for query in ["eventList", "eventListWithTriage"] {
                 let res = schema
