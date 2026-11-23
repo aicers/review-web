@@ -4,6 +4,13 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.62.0](https://github.com/aicers/review-web/compare/0.61.0...0.62.0) - 2026-11-23
+
+### Added
+
+- [**breaking**] check engine detection model settings by clustering model type and expose the stamped type on detection events ([#1270](https://github.com/aicers/review-web/pull/1270))
+- [**breaking**] check training definitions by clustering model type and expose the catalog ([#1268](https://github.com/aicers/review-web/pull/1268))
+
 ## [0.61.0](https://github.com/aicers/review-web/compare/0.60.1...0.61.0) - 2026-11-23
 
 ### Added
