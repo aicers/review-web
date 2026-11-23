@@ -1,12 +1,13 @@
-use review_database::SamplingInterval;
+use review_database::{ClusteringModelTypeRef, SamplingInterval};
 use serde_json::Value;
 
 use super::*;
 use crate::graphql::{
-    model_test_support::{TestModel, insert_engine_node},
+    model_test_support::{TestModel, http_url, insert_engine_node, insert_label_db},
     sampling_test_support::{
         OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, sensor_name,
     },
+    training_test_support::HTTP_URL_CSV,
 };
 
 const VALID: &str = r#"
@@ -20,6 +21,9 @@ sources = ["piglet.node2.example.com"]
 period = "5m"
 start = "2026-10-21T00:00:00Z"
 batch_size = 500000
+read_lag = "30s"
+stats = false
+timeseries = false
 
 [detectors.data_store]
 address = "10.0.0.5:38371"
@@ -38,7 +42,6 @@ period = "5m"
 start = "2026-10-21T00:00:00+09:00"
 batch_size = 500000
 read_lag = "30s"
-max_event_id_num = 25
 suspicious_tokens = "indicator-name"
 stats = false
 timeseries = true
@@ -47,15 +50,17 @@ timeseries = true
 address = "[::1]:38371"
 server_name = "001.giganto.node1.example.com"
 
-[detectors.labeldb]
+[detectors.detection_models.label_db_match]
+enabled = true
 event_range = 30
 min_events_ratio = 10
-generate_unlabeled_from_outliers = true
-limit_unlabeled_from_outliers = 5
 columns = [
   { column_ids = [15], db = "HttpUriThreat", min_score = 0.7 },
   { column_ids = [1, 2], db = "Other" },
 ]
+
+[detectors.detection_models.far_outlier]
+enabled = false
 
 [[detectors]]
 id = -2
@@ -65,6 +70,9 @@ sources = ["piglet.node2.example.com"]
 period = "1h 30m"
 start = "2026-10-21T00:00:00Z"
 batch_size = 1
+read_lag = "0s"
+stats = true
+timeseries = false
 
 [detectors.data_store]
 address = "10.0.0.5:38371"
@@ -142,12 +150,8 @@ fn every_optional_key_may_be_absent() {
     let detector = &document.detectors[0];
     assert_eq!(detector.id, 1);
     assert_eq!(detector.period.duration, Duration::from_mins(5));
-    assert_eq!(detector.read_lag, None);
-    assert_eq!(detector.max_event_id_num, None);
     assert_eq!(detector.suspicious_tokens, None);
-    assert_eq!(detector.stats, None);
-    assert_eq!(detector.timeseries, None);
-    assert_eq!(detector.labeldb, None);
+    assert_eq!(detector.detection_models, None);
     let without_cpus = without(VALID, "cpus");
     assert_eq!(
         EngineDocument::parse_and_validate(&without_cpus)
@@ -155,45 +159,6 @@ fn every_optional_key_may_be_absent() {
             .cpus,
         None
     );
-
-    // Each optional setting of a present label database, with its columns.
-    let full = EngineDocument::parse_and_validate(FULL).unwrap().detectors[0]
-        .labeldb
-        .clone()
-        .unwrap();
-    for (key, expected) in [
-        (
-            "event_range",
-            LabelDb {
-                event_range: None,
-                ..full.clone()
-            },
-        ),
-        (
-            "min_events_ratio",
-            LabelDb {
-                min_events_ratio: None,
-                ..full.clone()
-            },
-        ),
-        (
-            "generate_unlabeled_from_outliers",
-            LabelDb {
-                generate_unlabeled_from_outliers: None,
-                ..full.clone()
-            },
-        ),
-        (
-            "limit_unlabeled_from_outliers",
-            LabelDb {
-                limit_unlabeled_from_outliers: None,
-                ..full.clone()
-            },
-        ),
-    ] {
-        let document = EngineDocument::parse_and_validate(&without(FULL, key)).expect(key);
-        assert_eq!(document.detectors[0].labeldb, Some(expected), "{key}");
-    }
 }
 
 #[test]
@@ -204,13 +169,22 @@ fn every_key_of_the_schema_parses() {
         panic!("two detectors");
     };
     assert!(!first.enabled);
+    assert_eq!(first.read_lag.duration, Duration::from_secs(30));
+    assert!(!first.stats);
+    assert!(first.timeseries);
+    // The sections are kept as written, untyped.
+    let sections = first.detection_models.as_ref().unwrap();
     assert_eq!(
-        first.read_lag.as_ref().map(|lag| lag.duration),
-        Some(Duration::from_secs(30))
+        sections.keys().collect::<Vec<_>>(),
+        ["far_outlier", "label_db_match"]
     );
-    let labeldb = first.labeldb.as_ref().unwrap();
-    assert_eq!(labeldb.columns[0].min_score, Some(0.7));
-    assert_eq!(labeldb.columns[1].min_score, None);
+    assert_eq!(
+        sections["label_db_match"]["columns"][1]["db"].as_str(),
+        Some("Other")
+    );
+    assert_eq!(second.read_lag.duration, Duration::ZERO);
+    assert!(second.stats);
+    assert!(!second.timeseries);
     assert_eq!(second.id, -2);
     assert_eq!(second.period.duration, Duration::from_mins(90));
     assert_eq!(
@@ -251,6 +225,9 @@ fn every_required_key_must_be_present() {
         "period",
         "start",
         "batch_size",
+        "read_lag",
+        "stats",
+        "timeseries",
     ] {
         let (code, field, _, detector_id) = refused(&without(VALID, key));
         assert_eq!(code, "INVALID_DOCUMENT", "{key}");
@@ -277,34 +254,6 @@ fn every_required_key_must_be_present() {
         (
             "INVALID_DOCUMENT".to_string(),
             "detectors[0].data_store".to_string()
-        )
-    );
-    let no_columns = FULL.replace(
-        "columns = [\n  { column_ids = [15], db = \"HttpUriThreat\", min_score = 0.7 },\n  { \
-         column_ids = [1, 2], db = \"Other\" },\n]\n",
-        "",
-    );
-    assert_eq!(
-        code_and_field(&no_columns),
-        (
-            "INVALID_DOCUMENT".to_string(),
-            "detectors[0].labeldb.columns".to_string()
-        )
-    );
-    let no_column_ids = FULL.replace("{ column_ids = [1, 2], db", "{ db");
-    assert_eq!(
-        code_and_field(&no_column_ids),
-        (
-            "INVALID_DOCUMENT".to_string(),
-            "detectors[0].labeldb.columns[1].column_ids".to_string()
-        )
-    );
-    let no_db = FULL.replace(", db = \"Other\"", "");
-    assert_eq!(
-        code_and_field(&no_db),
-        (
-            "INVALID_DOCUMENT".to_string(),
-            "detectors[0].labeldb.columns[1].db".to_string()
         )
     );
 }
@@ -348,14 +297,19 @@ fn unknown_keys_are_refused_at_every_level() {
             "log_path",
         ),
         (
-            FULL.replace("event_range = 30", "event_range = 30\nprotocol = \"http\""),
-            "detectors[0].labeldb.protocol",
-            "protocol",
+            with(VALID, "max_event_id_num", "max_event_id_num = 25"),
+            "detectors[0].max_event_id_num",
+            "max_event_id_num",
         ),
         (
-            FULL.replace("db = \"Other\" }", "db = \"Other\", path = \"/x\" }"),
-            "detectors[0].labeldb.columns[1].path",
-            "path",
+            format!("{VALID}\n[detectors.labeldb]\nevent_range = 30\ncolumns = []\n"),
+            "detectors[0].labeldb",
+            "labeldb",
+        ),
+        (
+            with(VALID, "labeldb", "labeldb = { columns = [] }"),
+            "detectors[0].labeldb",
+            "labeldb",
         ),
         (format!("{VALID}\n[auth]\nkey = 1\n"), "auth", "auth"),
     ] {
@@ -364,8 +318,14 @@ fn unknown_keys_are_refused_at_every_level() {
         assert_eq!(refused_field, field, "{text}");
         assert_eq!(value, key, "{text}");
     }
-    let (_, _, _, detector_id) = refused(&with(VALID, "event_type", "event_type = \"http\""));
-    assert_eq!(detector_id, Value::from(1));
+    for (key, line) in [
+        ("event_type", "event_type = \"http\""),
+        ("max_event_id_num", "max_event_id_num = 25"),
+        ("labeldb", "labeldb = { columns = [] }"),
+    ] {
+        let (_, _, _, detector_id) = refused(&with(VALID, key, line));
+        assert_eq!(detector_id, Value::from(1), "{line}");
+    }
 }
 
 /// Detector starts that are refused, some of which jiff alone would take, each
@@ -437,12 +397,9 @@ fn values_outside_their_type_are_invalid() {
         ("enabled", "enabled = 1", "detectors[0].enabled"),
         ("batch_size", "batch_size = -1", "detectors[0].batch_size"),
         ("batch_size", "batch_size = 1.5", "detectors[0].batch_size"),
-        (
-            "max_event_id_num",
-            "max_event_id_num = 4294967296",
-            "detectors[0].max_event_id_num",
-        ),
         ("stats", "stats = \"no\"", "detectors[0].stats"),
+        ("timeseries", "timeseries = 1", "detectors[0].timeseries"),
+        ("read_lag", "read_lag = 30", "detectors[0].read_lag"),
         ("sources", "sources = \"piglet.a\"", "detectors[0].sources"),
         ("sources", "sources = [1]", "detectors[0].sources[0]"),
         ("period", "period = \"five minutes\"", "detectors[0].period"),
@@ -468,65 +425,26 @@ fn values_outside_their_type_are_invalid() {
         assert_eq!(code, "INVALID_DOCUMENT", "{line}");
         assert_eq!(refused_field, field, "{line}");
     }
-    for (replaced, by, field) in [
-        (
-            "event_range = 30",
-            "event_range = -30",
-            "detectors[0].labeldb.event_range",
-        ),
-        (
-            "min_events_ratio = 10",
-            "min_events_ratio = 1.5",
-            "detectors[0].labeldb.min_events_ratio",
-        ),
-        (
-            "limit_unlabeled_from_outliers = 5",
-            "limit_unlabeled_from_outliers = -5",
-            "detectors[0].labeldb.limit_unlabeled_from_outliers",
-        ),
-        (
-            "generate_unlabeled_from_outliers = true",
-            "generate_unlabeled_from_outliers = 1",
-            "detectors[0].labeldb.generate_unlabeled_from_outliers",
-        ),
-        (
-            "column_ids = [15]",
-            "column_ids = [-15]",
-            "detectors[0].labeldb.columns[0].column_ids[0]",
-        ),
-        (
-            "min_score = 0.7",
-            "min_score = \"high\"",
-            "detectors[0].labeldb.columns[0].min_score",
-        ),
-        (
-            "min_score = 0.7",
-            "min_score = 1e100",
-            "detectors[0].labeldb.columns[0].min_score",
-        ),
-        (
-            "min_score = 0.7",
-            "min_score = -1e39",
-            "detectors[0].labeldb.columns[0].min_score",
-        ),
+    // `detection_models` is a table; what it holds is the checker's.
+    for (line, value) in [
+        ("detection_models = 5", "5"),
+        ("detection_models = \"far_outlier\"", "\"far_outlier\""),
+        ("detection_models = [1]", "[1]"),
     ] {
-        let (code, refused_field, _, _) = refused(&FULL.replace(replaced, by));
-        assert_eq!(code, "INVALID_DOCUMENT", "{by}");
-        assert_eq!(refused_field, field, "{by}");
+        let (code, field, refused_value, detector_id) =
+            refused(&with(VALID, "detection_models", line));
+        assert_eq!(
+            (code.as_str(), field.as_str(), refused_value.as_str()),
+            ("INVALID_DOCUMENT", "detectors[0].detection_models", value),
+            "{line}"
+        );
+        assert_eq!(detector_id, Value::from(1), "{line}");
     }
-}
-
-#[test]
-fn a_min_score_up_to_the_largest_f32_is_accepted() {
-    for (by, expected) in [
-        ("min_score = 3.4028235e38", f32::MAX),
-        ("min_score = -3.4028235e38", f32::MIN),
-        ("min_score = 1", 1.0),
+    for line in [
+        "detection_models = { label_db_match = 5, foo = { bar = 1 } }",
+        "detection_models = {}",
     ] {
-        let document =
-            EngineDocument::parse_and_validate(&FULL.replace("min_score = 0.7", by)).expect(by);
-        let labeldb = document.detectors[0].labeldb.as_ref().unwrap();
-        assert_eq!(labeldb.columns[0].min_score, Some(expected), "{by}");
+        EngineDocument::parse_and_validate(&with(VALID, "detection_models", line)).expect(line);
     }
 }
 
@@ -564,12 +482,6 @@ fn bounds_are_accepted_at_their_limit_and_refused_past_it() {
             "batch_size = 5000001",
             "detectors[0].batch_size",
         ),
-        (
-            "max_event_id_num",
-            "max_event_id_num = 100",
-            "max_event_id_num = 101",
-            "detectors[0].max_event_id_num",
-        ),
     ] {
         EngineDocument::parse_and_validate(&with(VALID, key, at)).expect(at);
         let (code, refused_field, value, detector_id) = refused(&with(VALID, key, past));
@@ -590,7 +502,8 @@ fn ids_models_and_sources_are_listed_once_each() {
         format!(
             "{VALID}\n[[detectors]]\nid = {id}\nenabled = true\nmodel = \"{model}\"\nsources = \
              [\"piglet.node2.example.com\"]\nperiod = \"5m\"\nstart = \
-             \"2026-10-21T00:00:00Z\"\nbatch_size = 1\n\n[detectors.data_store]\naddress = \
+             \"2026-10-21T00:00:00Z\"\nbatch_size = 1\nread_lag = \"0s\"\nstats = \
+             false\ntimeseries = false\n\n[detectors.data_store]\naddress = \
              \"10.0.0.5:38371\"\nserver_name = \"001.giganto.node1.example.com\"\n"
         )
     };
@@ -679,6 +592,46 @@ fn kept_pairs_come_from_documents_that_parse() {
     );
 }
 
+#[test]
+fn kept_pairs_come_from_completed_documents_and_not_from_the_old_shape() {
+    let on =
+        |server_name: &str, text: &str| text.replace("001.giganto.node1.example.com", server_name);
+    // The document the database write stores for an `http_url` model.
+    let completed = complete_engine_document(
+        AgentKind::Unsupervised,
+        &on("completed.example.com", VALID),
+        &|_| Some(http_url(1)),
+        CompletionMode::Apply,
+    )
+    .unwrap();
+    assert!(completed.contains("[detectors.detection_models.label_db_match]"));
+    assert!(completed.contains("[detectors.detection_models.far_outlier]"));
+    let old_shapes = [
+        format!(
+            "{}\n[detectors.labeldb]\ncolumns = []\n",
+            on("old-label-table.example.com", VALID)
+        ),
+        with(
+            &on("max-event-id-num.example.com", VALID),
+            "max_event_id_num",
+            "max_event_id_num = 25",
+        ),
+        without(&on("no-read-lag.example.com", VALID), "read_lag"),
+        without(&on("no-stats.example.com", VALID), "stats"),
+        without(&on("no-timeseries.example.com", VALID), "timeseries"),
+    ];
+    let pairs = kept_pairs(
+        std::iter::once(completed.as_str()).chain(old_shapes.iter().map(String::as_str)),
+    );
+    assert_eq!(
+        pairs,
+        HashSet::from([(
+            "completed.example.com".to_string(),
+            "10.0.0.5:38371".parse().unwrap()
+        )])
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Detectors of a timeseries model
 
@@ -725,6 +678,9 @@ sources = {sources}
 period = "15m"
 start = "2026-10-21T00:00:00Z"
 batch_size = 1000
+read_lag = "1m"
+stats = false
+timeseries = false
 {extra}
 
 [detectors.data_store]
@@ -744,6 +700,7 @@ server_name = "{}"
             vec!["10.0.0.5".parse().unwrap()],
         )]);
         EngineDocument::parse_and_validate(text)?.check_stored(
+            text,
             &self.policies.store,
             &DocumentTarget {
                 instance: &self.instance,
@@ -767,10 +724,16 @@ server_name = "{}"
 fn a_timeseries_detector_reads_policies_of_the_trained_shape() {
     let f = Detectors::new();
     let [p1, p2] = f.policies.assigned.map(|id| id.to_string());
-    f.check(&f.document(TIMESERIES_MODEL, std::slice::from_ref(&p1), "stats = true"))
-        .unwrap();
-    f.check(&f.document(TIMESERIES_MODEL, &[p2, p1], "timeseries = false"))
-        .unwrap();
+    f.check(
+        &f.document(TIMESERIES_MODEL, std::slice::from_ref(&p1), "")
+            .replace("stats = false", "stats = true"),
+    )
+    .unwrap();
+    f.check(
+        &f.document(TIMESERIES_MODEL, &[p2, p1], "")
+            .replace("timeseries = false", "timeseries = true"),
+    )
+    .unwrap();
     // A new policy of the same shape is accepted too.
     let p3 = f
         .policies
@@ -912,4 +875,481 @@ fn a_multidimension_detector_refuses_a_policy() {
         "",
     ))
     .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Detection model sections
+
+/// A model of `http_url` version 1 trained with the `http_url` format.
+const URL_MODEL: &str = "url-model";
+/// A model stamped `http_url` version 0, an earlier version.
+const URL_V0_MODEL: &str = "url-v0-model";
+/// A custom model.
+const CUSTOM_MODEL: &str = "custom-model";
+/// A model of a catalog id with no current catalog entry.
+const UNKNOWN_TYPE_MODEL: &str = "unknown-type-model";
+/// A model of `http_url` whose trained definition has no `[csv]` format.
+const NO_FORMAT_MODEL: &str = "no-format-model";
+/// A model of `http_url` of another engine instance.
+const ELSEWHERE_MODEL: &str = "elsewhere-model";
+/// A stored label DB.
+const LABEL_DB: &str = "HttpUriThreat";
+/// The prefix of every path the sections of detector 0 are refused at.
+const SECTIONS: &str = "detectors[0].detection_models";
+
+/// A [`Detectors`] fixture whose instance also holds a model of each
+/// clustering model type case, with a stored label DB [`LABEL_DB`].
+fn sections_fixture() -> Detectors {
+    let f = Detectors::new();
+    let store = &f.policies.store;
+    for (name, model_type, trained_definition) in [
+        (URL_MODEL, http_url(1), HTTP_URL_CSV),
+        (URL_V0_MODEL, http_url(0), HTTP_URL_CSV),
+        (CUSTOM_MODEL, ClusteringModelTypeRef::Custom, HTTP_URL_CSV),
+        (
+            UNKNOWN_TYPE_MODEL,
+            ClusteringModelTypeRef::Catalog {
+                id: "no_such_type".to_string(),
+                version: 1,
+            },
+            HTTP_URL_CSV,
+        ),
+        (NO_FORMAT_MODEL, http_url(1), "[model]\neps = 0.5\n"),
+    ] {
+        TestModel {
+            instance: f.instance.clone(),
+            clustering_model_type: model_type,
+            trained_definition: trained_definition.to_string(),
+            ..TestModel::new(name, POLICY_CUSTOMER)
+        }
+        .replace(store);
+    }
+    TestModel {
+        clustering_model_type: http_url(1),
+        trained_definition: HTTP_URL_CSV.to_string(),
+        ..TestModel::new(ELSEWHERE_MODEL, POLICY_CUSTOMER)
+    }
+    .replace(store);
+    insert_label_db(store, LABEL_DB);
+    f
+}
+
+impl Detectors {
+    /// Returns a document with one detector of `model` reading a sensor of
+    /// the customer, followed by `sections`, header tables of its
+    /// `detection_models`.
+    fn with_sections(&self, model: &str, sections: &str) -> String {
+        format!(
+            "{}\n{sections}",
+            self.document(model, &[sensor_name("gen-a.example.com")], "")
+        )
+    }
+}
+
+/// Returns a `label_db_match` section holding `columns`.
+fn label_db_match(columns: &str) -> String {
+    format!("[detectors.detection_models.label_db_match]\ncolumns = {columns}\n")
+}
+
+/// Returns a `label_db_match` section with the value `line`.
+fn label_db_match_value(line: &str) -> String {
+    format!("[detectors.detection_models.label_db_match]\n{line}\n")
+}
+
+/// Returns a `columns` list of one entry naming the stored label DB, with
+/// `cells` after its `db`.
+fn column(column_ids: &str, cells: &str) -> String {
+    format!("[{{ column_ids = {column_ids}, db = \"{LABEL_DB}\"{cells} }}]")
+}
+
+#[test]
+fn missing_sections_and_values_are_accepted() {
+    let f = sections_fixture();
+    for (model, sections) in [
+        (URL_MODEL, String::new()),
+        (URL_MODEL, "[detectors.detection_models]\n".to_string()),
+        (CUSTOM_MODEL, "[detectors.detection_models]\n".to_string()),
+        (CUSTOM_MODEL, String::new()),
+        (
+            URL_MODEL,
+            label_db_match(&format!("[{{ column_ids = [15], db = \"{LABEL_DB}\" }}]")),
+        ),
+        (
+            URL_MODEL,
+            "[detectors.detection_models.far_outlier]\n".to_string(),
+        ),
+        (
+            URL_MODEL,
+            "[detectors.detection_models.label_db_match]\n\n\
+             [detectors.detection_models.far_outlier]\nenabled = false\n"
+                .to_string(),
+        ),
+        // An earlier version of the type allows what the current entry
+        // allows.
+        (
+            URL_V0_MODEL,
+            format!(
+                "{}\n[detectors.detection_models.far_outlier]\n",
+                label_db_match(&column("[0]", ""))
+            ),
+        ),
+    ] {
+        let text = f.with_sections(model, &sections);
+        f.check(&text).expect(&text);
+    }
+    // An inline table is checked as a header table is.
+    let inline = f.document(
+        URL_MODEL,
+        &[sensor_name("gen-a.example.com")],
+        "detection_models = {}",
+    );
+    f.check(&inline).expect(&inline);
+}
+
+#[test]
+fn values_at_their_bounds_are_accepted() {
+    let f = sections_fixture();
+    for line in [
+        "event_range = 1",
+        "event_range = 100",
+        "min_events_ratio = 0",
+        "min_events_ratio = 100",
+        "enabled = false",
+    ] {
+        f.check(&f.with_sections(URL_MODEL, &label_db_match_value(line)))
+            .expect(line);
+    }
+    for cells in [", min_score = 1.0", ", min_score = 0.001"] {
+        f.check(&f.with_sections(URL_MODEL, &label_db_match(&column("[0, 15]", cells))))
+            .expect(cells);
+    }
+}
+
+/// Checks that `text` is refused with `code`, `field` and `value`, carrying
+/// the detector id 7.
+#[track_caller]
+fn assert_refused(f: &Detectors, text: &str, code: &str, field: &str, value: &str) {
+    let ((refused_code, refused_field, refused_value, detector_id), _) = f.refused(text);
+    assert_eq!(
+        (
+            refused_code.as_str(),
+            refused_field.as_str(),
+            refused_value.as_str()
+        ),
+        (code, field, value),
+        "{text}"
+    );
+    assert_eq!(detector_id, Value::from(7), "{text}");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one case per refusal row
+fn every_section_refusal_has_its_code_field_and_value() {
+    let f = sections_fixture();
+    let entry = |cell: &str| format!("{SECTIONS}.label_db_match.columns[0].{cell}");
+    let value_path = |key: &str| format!("{SECTIONS}.label_db_match.{key}");
+    let cases: Vec<(String, (&str, String, &str))> = vec![
+        // INVALID_DOCUMENT, with the value
+        (
+            "[detectors.detection_models]\nlabel_db_match = 5\n".to_string(),
+            (
+                "INVALID_DOCUMENT",
+                format!("{SECTIONS}.label_db_match"),
+                "5",
+            ),
+        ),
+        (
+            label_db_match("[5]"),
+            (
+                "INVALID_DOCUMENT",
+                format!("{SECTIONS}.label_db_match.columns[0]"),
+                "5",
+            ),
+        ),
+        (
+            "[detectors.detection_models.far_outlier]\nenabled = 1\n".to_string(),
+            (
+                "INVALID_DOCUMENT",
+                format!("{SECTIONS}.far_outlier.enabled"),
+                "1",
+            ),
+        ),
+        (
+            label_db_match_value("enabled = 1"),
+            ("INVALID_DOCUMENT", value_path("enabled"), "1"),
+        ),
+        (
+            label_db_match_value("event_range = \"x\""),
+            ("INVALID_DOCUMENT", value_path("event_range"), "\"x\""),
+        ),
+        (
+            label_db_match("[{ column_ids = \"x\", db = \"d\" }]"),
+            ("INVALID_DOCUMENT", entry("column_ids"), "\"x\""),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = 1 }]"),
+            ("INVALID_DOCUMENT", entry("db"), "1"),
+        ),
+        (
+            label_db_match(&column("[1]", ", min_score = \"high\"")),
+            ("INVALID_DOCUMENT", entry("min_score"), "\"high\""),
+        ),
+        // UNKNOWN_FIELD, with no value
+        (
+            "[detectors.detection_models.foo]\n".to_string(),
+            ("UNKNOWN_FIELD", format!("{SECTIONS}.foo"), ""),
+        ),
+        (
+            "[detectors.detection_models.port_scan]\nenabled = true\n".to_string(),
+            ("UNKNOWN_FIELD", format!("{SECTIONS}.port_scan"), ""),
+        ),
+        (
+            label_db_match_value("protocol = \"http\""),
+            ("UNKNOWN_FIELD", value_path("protocol"), ""),
+        ),
+        (
+            label_db_match(&column("[1]", ", path = \"/x\"")),
+            ("UNKNOWN_FIELD", entry("path"), ""),
+        ),
+        // FIELD_NOT_ALLOWED, with no value
+        (
+            label_db_match(&format!("[{{ db = \"{LABEL_DB}\" }}]")),
+            ("FIELD_NOT_ALLOWED", entry("column_ids"), ""),
+        ),
+        (
+            label_db_match("[{ column_ids = [1] }]"),
+            ("FIELD_NOT_ALLOWED", entry("db"), ""),
+        ),
+        // BOUND_VIOLATED, with the value
+        (
+            label_db_match_value("event_range = 0"),
+            ("BOUND_VIOLATED", value_path("event_range"), "0"),
+        ),
+        (
+            label_db_match_value("event_range = 101"),
+            ("BOUND_VIOLATED", value_path("event_range"), "101"),
+        ),
+        (
+            label_db_match_value("min_events_ratio = -1"),
+            ("BOUND_VIOLATED", value_path("min_events_ratio"), "-1"),
+        ),
+        (
+            label_db_match_value("min_events_ratio = 101"),
+            ("BOUND_VIOLATED", value_path("min_events_ratio"), "101"),
+        ),
+        (
+            label_db_match(&column("[1]", ", min_score = 0.0")),
+            ("BOUND_VIOLATED", entry("min_score"), "0.0"),
+        ),
+        (
+            label_db_match(&column("[1]", ", min_score = 1.5")),
+            ("BOUND_VIOLATED", entry("min_score"), "1.5"),
+        ),
+        (
+            label_db_match(&column("[]", "")),
+            ("BOUND_VIOLATED", entry("column_ids"), "[]"),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = \"\" }]"),
+            ("BOUND_VIOLATED", entry("db"), "\"\""),
+        ),
+        (
+            label_db_match(&column("[1, -1]", "")),
+            ("BOUND_VIOLATED", entry("column_ids"), "-1"),
+        ),
+        // The column ids against the model's format, and the label DB.
+        (
+            label_db_match(&column("[1, 33]", "")),
+            ("BOUND_VIOLATED", entry("column_ids"), "33"),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = \"Missing\" }]"),
+            ("NOT_FOUND", entry("db"), "Missing"),
+        ),
+    ];
+    for (sections, (code, field, value)) in cases {
+        assert_refused(
+            &f,
+            &f.with_sections(URL_MODEL, &sections),
+            code,
+            &field,
+            value,
+        );
+    }
+    // The last index of the format is accepted.
+    assert_eq!(format_len(HTTP_URL_CSV), 33);
+    f.check(&f.with_sections(URL_MODEL, &label_db_match(&column("[32]", ""))))
+        .unwrap();
+}
+
+#[test]
+fn a_section_the_model_type_does_not_allow_is_refused() {
+    let f = sections_fixture();
+    for (model, section) in [
+        (CUSTOM_MODEL, "far_outlier"),
+        (CUSTOM_MODEL, "label_db_match"),
+        (UNKNOWN_TYPE_MODEL, "far_outlier"),
+        (UNKNOWN_TYPE_MODEL, "label_db_match"),
+    ] {
+        let text = f.with_sections(
+            model,
+            &format!("[detectors.detection_models.{section}]\nenabled = true\n"),
+        );
+        assert_refused(
+            &f,
+            &text,
+            "FIELD_NOT_ALLOWED",
+            &format!("{SECTIONS}.{section}"),
+            "",
+        );
+    }
+}
+
+#[test]
+fn a_model_without_a_format_accepts_no_column_id() {
+    let f = sections_fixture();
+    assert_refused(
+        &f,
+        &f.with_sections(NO_FORMAT_MODEL, &label_db_match(&column("[0]", ""))),
+        "BOUND_VIOLATED",
+        &format!("{SECTIONS}.label_db_match.columns[0].column_ids"),
+        "0",
+    );
+    f.check(&f.with_sections(NO_FORMAT_MODEL, &label_db_match("[]")))
+        .unwrap();
+}
+
+#[test]
+fn column_ids_come_before_the_label_db_and_entries_in_order() {
+    let f = sections_fixture();
+    let ((code, field, _, _), _) = f.refused(&f.with_sections(
+        URL_MODEL,
+        &label_db_match("[{ column_ids = [40], db = \"Missing\" }]"),
+    ));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        (
+            "BOUND_VIOLATED",
+            "detectors[0].detection_models.label_db_match.columns[0].column_ids"
+        )
+    );
+    let ((code, field, _, _), _) = f.refused(&f.with_sections(
+        URL_MODEL,
+        &label_db_match(&format!(
+            "[{{ column_ids = [1], db = \"Missing\" }}, {{ column_ids = [40], db = \"{LABEL_DB}\" }}]"
+        )),
+    ));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        (
+            "NOT_FOUND",
+            "detectors[0].detection_models.label_db_match.columns[0].db"
+        )
+    );
+}
+
+#[test]
+fn sections_are_checked_after_the_model_and_before_the_sources() {
+    let f = sections_fixture();
+    // A model of another instance is refused as such, whatever its sections.
+    let ((code, field, _, _), _) = f.refused(&f.with_sections(
+        ELSEWHERE_MODEL,
+        "[detectors.detection_models.far_outlier]\n",
+    ));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("MODEL_NOT_OF_INSTANCE", "detectors[0].model")
+    );
+    // A section is refused before a source of another customer.
+    let text = format!(
+        "{}\n[detectors.detection_models.foo]\n",
+        f.document(URL_MODEL, &["piglet.nobody.example.com".to_string()], "")
+    );
+    let ((code, field, _, _), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("UNKNOWN_FIELD", "detectors[0].detection_models.foo")
+    );
+}
+
+#[test]
+fn a_later_detector_section_waits_for_the_checks_to_reach_it() {
+    let f = sections_fixture();
+    let first = f.with_sections(URL_MODEL, "");
+    let second = |model: &str, sections: &str| {
+        f.with_sections(model, sections)
+            .replace("id = 7", "id = 8")
+            .replace("period = \"15m\"", "period = \"30m\"")
+    };
+    // The first detector's own refusal comes before the second's section.
+    let unknown_indicator = first.replace(
+        "timeseries = false\n",
+        "timeseries = false\nsuspicious_tokens = \"nope\"\n",
+    );
+    let text = format!(
+        "{unknown_indicator}{}",
+        second(CUSTOM_MODEL, "[detectors.detection_models.far_outlier]\n")
+    );
+    let ((code, field, _, detector_id), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("INDICATOR_NOT_ALLOWED", "detectors[0].suspicious_tokens")
+    );
+    assert_eq!(detector_id, Value::from(7));
+    // The second detector's model of another instance is refused as such,
+    // not by the section the completion refused for want of its type.
+    let text = format!(
+        "{first}{}",
+        second(
+            ELSEWHERE_MODEL,
+            "[detectors.detection_models.far_outlier]\n"
+        )
+    );
+    let ((code, field, _, detector_id), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("MODEL_NOT_OF_INSTANCE", "detectors[1].model")
+    );
+    assert_eq!(detector_id, Value::from(8));
+    // Once reached, the second detector's section is refused there.
+    let text = format!(
+        "{first}{}",
+        second(CUSTOM_MODEL, "[detectors.detection_models.far_outlier]\n")
+    );
+    let ((code, field, value, detector_id), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "FIELD_NOT_ALLOWED",
+            "detectors[1].detection_models.far_outlier",
+            ""
+        )
+    );
+    assert_eq!(detector_id, Value::from(8));
+}
+
+#[test]
+fn detectors_not_written_as_an_array_of_tables_are_left_to_the_database_write() {
+    let f = sections_fixture();
+    // The completion refuses the document as a whole, which the database
+    // write does on Apply; the checker still checks what it parsed.
+    let text = |model: &str, columns: &str| {
+        format!(
+            "detectors = [{{ id = 7, enabled = true, model = \"{model}\", sources = \
+             [{source:?}], period = \"15m\", start = \"2026-10-21T00:00:00Z\", batch_size = \
+             1000, read_lag = \"1m\", stats = false, timeseries = false, data_store = {{ \
+             address = \"{OWN_ADDRESS}\", server_name = \"{}\" }}, detection_models = {{ \
+             label_db_match = {{ columns = {columns} }} }} }}]\n",
+            f.policies.server_name,
+            source = sensor_name("gen-a.example.com"),
+        )
+    };
+    f.check(&text(URL_MODEL, "[]")).unwrap();
+    assert_refused(
+        &f,
+        &text(URL_MODEL, &column("[33]", "")),
+        "BOUND_VIOLATED",
+        &format!("{SECTIONS}.label_db_match.columns[0].column_ids"),
+        "33",
+    );
 }

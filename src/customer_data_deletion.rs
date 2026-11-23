@@ -8765,6 +8765,9 @@ sources = ["piglet.other.example"]
 period = "1m"
 start = "2026-10-14T00:00:00Z"
 batch_size = 100
+read_lag = "0s"
+stats = false
+timeseries = false
 [detectors.data_store]
 address = "10.0.0.5:38371"
 server_name = "{server_name}"

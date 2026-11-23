@@ -210,12 +210,20 @@ impl NodeControlMutation {
     /// before this apply, and any refusal refuses the whole apply. Refusals carry
     /// `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
     /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
-    /// `MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
-    /// `INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+    /// `MODEL_NOT_OF_INSTANCE`, `NOT_FOUND`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN`
+    /// and `INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
     /// `CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
     /// §5.11 refuse, which names another customer's detector or definition only to a System
     /// Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
     /// refused with "the node changed since it was read; reload and retry".
+    ///
+    /// A detector's `detection_models` sections are checked against the detection model properties
+    /// (`detectionModelProperties`) and the clustering model type of the detector's model. A
+    /// section of a model that type does not allow is refused with `FIELD_NOT_ALLOWED`; a
+    /// `label_db_match` column id that indexes no column of the model's trained format, with
+    /// `BOUND_VIOLATED`; and a label DB that is not stored, with `NOT_FOUND`. A missing section of
+    /// an allowed model, and a missing value that has a default, are accepted: Apply stores the
+    /// document completed with them.
     ///
     /// Each Semi-supervised Engine agent's document being applied that differs from its stored
     /// config is completed with the defaults of the detection model properties
@@ -372,12 +380,20 @@ impl NodeControlMutation {
     /// before this apply, and any refusal refuses the whole apply. Refusals carry
     /// `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
     /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
-    /// `MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
-    /// `INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+    /// `MODEL_NOT_OF_INSTANCE`, `NOT_FOUND`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN`
+    /// and `INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
     /// `CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
     /// §5.11 refuse, which names another customer's detector or definition only to a System
     /// Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
     /// refused with "the node changed since it was read; reload and retry".
+    ///
+    /// A detector's `detection_models` sections are checked against the detection model properties
+    /// (`detectionModelProperties`) and the clustering model type of the detector's model. A
+    /// section of a model that type does not allow is refused with `FIELD_NOT_ALLOWED`; a
+    /// `label_db_match` column id that indexes no column of the model's trained format, with
+    /// `BOUND_VIOLATED`; and a label DB that is not stored, with `NOT_FOUND`. A missing section of
+    /// an allowed model, and a missing value that has a default, are accepted: Apply stores the
+    /// document completed with them.
     ///
     /// Each Semi-supervised Engine agent's document being applied that differs from its stored
     /// config is completed with the defaults of the detection model properties

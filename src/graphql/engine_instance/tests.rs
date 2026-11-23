@@ -405,6 +405,9 @@ sources = ["{sensor}"]
 period = "5m"
 start = "2026-10-21T00:00:00Z"
 batch_size = 500000
+read_lag = "0s"
+stats = false
+timeseries = false
 
 [detectors.data_store]
 address = "{OWN_ADDRESS}"

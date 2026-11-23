@@ -5,7 +5,13 @@
 //! engine agent's draft and Apply makes its config; the engine reads it in
 //! remote mode. Every table refuses unknown keys, so no path, event kind, CSV
 //! setting nor any other key outside the schema is accepted. The types follow
-//! `REconverge`'s `DetectorConfig`, `StateConfig` and `LabelDbConfig`.
+//! `REconverge`'s `DetectorConfig` and `StateConfig`.
+//!
+//! A detector's `detection_models` table holds one section per detection
+//! model the clustering model type of its model allows. The parse takes it as
+//! an untyped table; its sections are checked against review-database's
+//! detection model property table, the runtime source of what they may hold,
+//! by [`EngineDocument::check_stored`].
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -14,13 +20,16 @@ use std::{
 };
 
 use async_graphql::{ErrorExtensions, Result};
-use review_database::{EngineDetectorRef, EngineDocumentRefs, ModelInstance, Store};
+use review_database::{
+    AgentKind, CellErrorKind, CompletionMode, DetectionModelsSectionError, EngineDetectorRef,
+    EngineDocumentRefs, ModelDigest, ModelInstance, Store, complete_engine_document,
+};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use toml::de::{DeTable, DeValue};
 
 use super::{
     customer_access::{customer_source_names, model_by_name},
-    model::{MULTIFIELD_KIND, TIMESERIES_KIND},
+    model::TIMESERIES_KIND,
     refusal::{RefusalCode, refusal},
     sampling::{check_policy_sources, trained_shape},
     toml_refusal::parse_refusal,
@@ -32,12 +41,20 @@ use super::{
 const MAX_CPUS: usize = 64;
 /// The most events a detector reads in one round.
 const MAX_BATCH_SIZE: usize = 5_000_000;
-/// The most event ids a cluster keeps.
-const MAX_EVENT_ID_NUM: u32 = 100;
 /// The shortest period of a detector.
 const MIN_PERIOD: Duration = Duration::from_mins(1);
 /// The longest read lag of a detector.
 const MAX_READ_LAG: Duration = Duration::from_hours(1);
+/// The key of a detector's table of detection model sections.
+const DETECTION_MODELS: &str = "detection_models";
+/// The section of the detection model that matches label DBs.
+const LABEL_DB_MATCH: &str = "label_db_match";
+/// The list of `LABEL_DB_MATCH` whose entries name columns and a label DB.
+const COLUMNS: &str = "columns";
+/// The cell of a `COLUMNS` entry listing indices into the model's format.
+const COLUMN_IDS: &str = "column_ids";
+/// The cell of a `COLUMNS` entry naming a label DB.
+const DB: &str = "db";
 
 /// An engine document.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -61,36 +78,16 @@ pub(crate) struct Detector {
     #[serde(deserialize_with = "rfc3339")]
     pub(crate) start: String,
     pub(crate) batch_size: usize,
-    pub(crate) read_lag: Option<TextDuration>,
-    pub(crate) max_event_id_num: Option<u32>,
+    pub(crate) read_lag: TextDuration,
     /// The name of a model indicator, never a path.
     pub(crate) suspicious_tokens: Option<String>,
-    pub(crate) stats: Option<bool>,
-    pub(crate) timeseries: Option<bool>,
+    pub(crate) stats: bool,
+    pub(crate) timeseries: bool,
     pub(crate) data_store: DataStore,
-    pub(crate) labeldb: Option<LabelDb>,
-}
-
-/// The `[detectors.labeldb]` table, `REconverge`'s `LabelDbConfig` without the
-/// `protocol` its model decides.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LabelDb {
-    pub(crate) event_range: Option<usize>,
-    pub(crate) min_events_ratio: Option<usize>,
-    pub(crate) generate_unlabeled_from_outliers: Option<bool>,
-    pub(crate) limit_unlabeled_from_outliers: Option<usize>,
-    pub(crate) columns: Vec<LabelColumn>,
-}
-
-/// One entry of `labeldb.columns`.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LabelColumn {
-    pub(crate) column_ids: Vec<usize>,
-    pub(crate) db: String,
-    #[serde(default, deserialize_with = "optional_f32")]
-    pub(crate) min_score: Option<f32>,
+    /// The detection model sections, by section name, kept untyped so that
+    /// every document the database write completes parses: their contents
+    /// are checked by [`EngineDocument::check_stored`], never by the parse.
+    pub(crate) detection_models: Option<toml::Table>,
 }
 
 /// A duration written as `humantime` text, such as `5m`, with its text.
@@ -119,23 +116,6 @@ fn rfc3339<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Erro
         ))
     })?;
     Ok(text)
-}
-
-/// Deserializes an `f32`, refusing a finite number too large for one, which
-/// a derived `f32` field would take as infinity.
-fn optional_f32<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
-    let Some(value) = Option::<f64>::deserialize(deserializer)? else {
-        return Ok(None);
-    };
-    // Narrowing rounds to the nearest `f32`, which loses no more than the
-    // precision a score of the engine's own `f32` has; only a finite value
-    // past `f32::MAX` turns infinite, and that one is refused below.
-    #[allow(clippy::cast_possible_truncation)]
-    let narrowed = value as f32;
-    if value.is_finite() && narrowed.is_infinite() {
-        return Err(D::Error::custom(format!("{value} is too large for f32")));
-    }
-    Ok(Some(narrowed))
 }
 
 /// The engine instance a document is checked for, and what the rules that
@@ -254,13 +234,11 @@ impl EngineDocument {
                     detector.period.text.clone(),
                 ));
             }
-            if let Some(read_lag) = &detector.read_lag
-                && read_lag.duration > MAX_READ_LAG
-            {
+            if detector.read_lag.duration > MAX_READ_LAG {
                 return Err(refused(
                     "read_lag",
                     "read_lag is longer than 1 hour".to_string(),
-                    read_lag.text.clone(),
+                    detector.read_lag.text.clone(),
                 ));
             }
             if detector.batch_size > MAX_BATCH_SIZE {
@@ -268,15 +246,6 @@ impl EngineDocument {
                     "batch_size",
                     format!("batch_size is larger than {MAX_BATCH_SIZE}"),
                     detector.batch_size.to_string(),
-                ));
-            }
-            if let Some(max_event_id_num) = detector.max_event_id_num
-                && max_event_id_num > MAX_EVENT_ID_NUM
-            {
-                return Err(refused(
-                    "max_event_id_num",
-                    format!("max_event_id_num is larger than {MAX_EVENT_ID_NUM}"),
-                    max_event_id_num.to_string(),
                 ));
             }
         }
@@ -312,8 +281,22 @@ impl EngineDocument {
 
     /// Checks the rules that read the store, with the engine configuration
     /// lock held, detector by detector in document order: the applied
-    /// profile, the model, `labeldb`, the sources, the Data Store and the
-    /// indicator.
+    /// profile, the model, the detection model sections, the sources, the
+    /// Data Store and the indicator. `text` is the document `self` was parsed
+    /// from.
+    ///
+    /// The detection model sections are checked as the database write's
+    /// completion of `text` in [`CompletionMode::Apply`] checks them, with
+    /// the clustering model type of each model of the instance, and the
+    /// completed document is discarded: a section may lack any value that has
+    /// a default, and a detector any section its model's type allows, since
+    /// the write fills them. A refusal of that completion for a detector is
+    /// returned only when the checks reach it, after its model check, so no
+    /// model of another instance decides one; a refusal of the document as a
+    /// whole is left to the database write. Then each `columns` entry of
+    /// `label_db_match` must name, in `column_ids`, indices into the `format`
+    /// of the `[csv]` table of the model's trained definition (none if it has
+    /// no such list), and, in `db`, a stored label DB.
     ///
     /// A detector of a timeseries model reads sampling policies of the
     /// customer, as [`check_policy_sources`] checks them, each of the shape
@@ -324,11 +307,18 @@ impl EngineDocument {
     /// # Errors
     ///
     /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-    /// `FIELD_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+    /// `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+    /// `BOUND_VIOLATED`, `NOT_FOUND`, `SOURCES_INCOMPATIBLE`,
     /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` or
     /// `INDICATOR_NOT_ALLOWED`, or an error if the store cannot be read.
-    pub(crate) fn check_stored(&self, store: &Store, target: &DocumentTarget<'_>) -> Result<()> {
+    pub(crate) fn check_stored(
+        &self,
+        text: &str,
+        store: &Store,
+        target: &DocumentTarget<'_>,
+    ) -> Result<()> {
         let mut customer_sources = None;
+        let mut completion = None;
         for (i, detector) in self.detectors.iter().enumerate() {
             let Some(customer_id) = target.customer_id else {
                 let source = detector.sources.first().cloned().unwrap_or_default();
@@ -349,19 +339,19 @@ impl EngineDocument {
                 return Err(model_not_of_instance(i, detector));
             };
 
-            if detector.labeldb.is_some() && model.kind != MULTIFIELD_KIND {
-                return Err(detector_refusal(
-                    RefusalCode::FieldNotAllowed,
-                    format!(
-                        "labeldb is only for a multidimension model, and {:?} is not one",
-                        detector.model
-                    ),
-                    i,
-                    "labeldb",
-                    String::new(),
-                    detector,
-                ));
+            let refused = match &completion {
+                Some(refused) => refused,
+                None => completion.insert(self.completion_refusal(text, store, target.instance)?),
+            };
+            if let Some(refused @ DetectionModelsSectionError::Detector(of)) = refused
+                && of.index == i
+            {
+                let (code, field, value) = completion_parts(refused);
+                let id = detector.id;
+                return Err(refusal(code, refused.to_string(), &field, value)
+                    .extend_with(|_, extensions| extensions.set("detectorId", id)));
             }
+            check_label_columns(store, i, detector, &model)?;
 
             if model.kind == TIMESERIES_KIND {
                 let shape =
@@ -430,6 +420,41 @@ impl EngineDocument {
         }
         Ok(())
     }
+
+    /// Returns the refusal of a detector by the database write's completion
+    /// of `text`, the text of `self`, in [`CompletionMode::Apply`], or `None`
+    /// if it completes or refuses the document as a whole.
+    ///
+    /// The clustering model type of a model is that of its record when the
+    /// model is of `instance`, and none for any other name, so the refusal of
+    /// a detector whose model is not of the instance is never returned before
+    /// that detector's model check. A document whose `detectors` the parse
+    /// takes but the completion does not, such as an inline array of tables,
+    /// is left to the database write, which refuses it on Apply.
+    fn completion_refusal(
+        &self,
+        text: &str,
+        store: &Store,
+        instance: &ModelInstance,
+    ) -> Result<Option<DetectionModelsSectionError>> {
+        let mut types = HashMap::new();
+        for detector in &self.detectors {
+            if let Some(model) = model_by_name(store, &detector.model)?
+                .filter(|model| model.instance.as_ref() == Some(instance))
+            {
+                types.insert(detector.model.as_str(), model.clustering_model_type);
+            }
+        }
+        let model_type = |name: &str| types.get(name).cloned();
+        Ok(complete_engine_document(
+            AgentKind::Unsupervised,
+            text,
+            &model_type,
+            CompletionMode::Apply,
+        )
+        .err()
+        .filter(|refused| matches!(refused, DetectionModelsSectionError::Detector(_))))
+    }
 }
 
 /// Returns the `(server_name, address)` pairs of the detectors of each of
@@ -451,6 +476,145 @@ pub(crate) fn kept_pairs<'a>(
                 .map(|detector| detector.data_store.pair())
         })
         .collect()
+}
+
+/// Returns the code, `field` and `value` of the refusal of `refused`, a
+/// completion error of an Unsupervised Engine document.
+///
+/// `field` is the dotted path of the offence from the document root, with
+/// list positions, as [`DetectorError::path`] gives it; it is empty for a
+/// document that does not parse and for a `detectors` that is not an array of
+/// tables. `value` is the offending value as text, as [`DetectorError::value`]
+/// gives it, for a value of the wrong type, out of its range or empty, and
+/// empty otherwise.
+///
+/// [`DetectorError::path`]: review_database::DetectorError::path
+/// [`DetectorError::value`]: review_database::DetectorError::value
+pub(crate) fn completion_parts(
+    refused: &DetectionModelsSectionError,
+) -> (RefusalCode, String, String) {
+    match refused {
+        DetectionModelsSectionError::Detector(detector) => (
+            section_code(&detector.error),
+            detector.path(),
+            detector.value.clone().unwrap_or_default(),
+        ),
+        other => (section_code(other), String::new(), String::new()),
+    }
+}
+
+/// Returns the refusal code of a completion error of an Unsupervised Engine
+/// document, by what it rejects.
+fn section_code(error: &DetectionModelsSectionError) -> RefusalCode {
+    // No wildcard arm: an error added to review-database must be mapped.
+    match error {
+        DetectionModelsSectionError::InvalidToml(_)
+        | DetectionModelsSectionError::DetectorsNotAnArrayOfTables
+        | DetectionModelsSectionError::ModelNotAString
+        | DetectionModelsSectionError::NotATable
+        | DetectionModelsSectionError::SectionNotATable { .. }
+        | DetectionModelsSectionError::EntryNotATable { .. }
+        | DetectionModelsSectionError::TypeMismatch { .. } => RefusalCode::InvalidDocument,
+        DetectionModelsSectionError::UnknownModel { .. }
+        | DetectionModelsSectionError::ModelOfAnotherEngine { .. }
+        | DetectionModelsSectionError::UnknownKey { .. } => RefusalCode::UnknownField,
+        DetectionModelsSectionError::DisallowedModel { .. } => RefusalCode::FieldNotAllowed,
+        DetectionModelsSectionError::OutOfRange { .. } => RefusalCode::BoundViolated,
+        DetectionModelsSectionError::Cell(cell) => match cell.kind {
+            CellErrorKind::TypeMismatch { .. } => RefusalCode::InvalidDocument,
+            CellErrorKind::Unknown => RefusalCode::UnknownField,
+            CellErrorKind::Missing => RefusalCode::FieldNotAllowed,
+            CellErrorKind::OutOfRange { .. } | CellErrorKind::Empty => RefusalCode::BoundViolated,
+        },
+        // Never nested; a nested one is located by its own entry.
+        DetectionModelsSectionError::Detector(detector) => section_code(&detector.error),
+    }
+}
+
+/// Refuses a `columns` entry of the `label_db_match` section of detector `i`
+/// whose `column_ids` lists an index outside the `format` of `model`'s
+/// trained definition, or whose `db` names no stored label DB, entry by entry
+/// and the column ids of an entry before its label DB.
+///
+/// The section has passed the completion check, so its entries are tables
+/// whose `column_ids` are lists of integers of at least 0 and whose `db` are
+/// strings; anything else is left to that check.
+fn check_label_columns(
+    store: &Store,
+    i: usize,
+    detector: &Detector,
+    model: &ModelDigest,
+) -> Result<()> {
+    let Some(columns) = detector
+        .detection_models
+        .as_ref()
+        .and_then(|sections| sections.get(LABEL_DB_MATCH))
+        .and_then(toml::Value::as_table)
+        .and_then(|section| section.get(COLUMNS))
+        .and_then(toml::Value::as_array)
+    else {
+        return Ok(());
+    };
+    let mut columns_of_format = None;
+    let label_dbs = store.label_db_map();
+    for (j, entry) in columns.iter().enumerate() {
+        let Some(entry) = entry.as_table() else {
+            continue;
+        };
+        let path =
+            |cell: &str| format!("{DETECTION_MODELS}.{LABEL_DB_MATCH}.{COLUMNS}[{j}].{cell}");
+        let count = *columns_of_format.get_or_insert_with(|| format_len(&model.trained_definition));
+        let ids = entry
+            .get(COLUMN_IDS)
+            .and_then(toml::Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        for id in ids.iter().filter_map(toml::Value::as_integer) {
+            if !usize::try_from(id).is_ok_and(|id| id < count) {
+                return Err(detector_refusal(
+                    RefusalCode::BoundViolated,
+                    format!(
+                        "column id {id} is not an index into the {count} columns of the format \
+                         model {:?} was trained with",
+                        model.name
+                    ),
+                    i,
+                    &path(COLUMN_IDS),
+                    id.to_string(),
+                    detector,
+                ));
+            }
+        }
+        if let Some(db) = entry.get(DB).and_then(toml::Value::as_str)
+            && label_dbs
+                .get(db)
+                .map_err(|e| format!("cannot read label DB {db:?}: {e:#}"))?
+                .is_none()
+        {
+            return Err(detector_refusal(
+                RefusalCode::NotFound,
+                format!("{db:?} is not a label DB"),
+                i,
+                &path(DB),
+                db.to_string(),
+                detector,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Returns the length of the `format` list of the `[csv]` table of
+/// `definition`, a trained definition, or 0 if it has no such list.
+fn format_len(definition: &str) -> usize {
+    definition
+        .parse::<toml::Table>()
+        .ok()
+        .as_ref()
+        .and_then(|table| table.get("csv"))
+        .and_then(toml::Value::as_table)
+        .and_then(|csv| csv.get("format"))
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len)
 }
 
 /// Returns a refusal of the key `key` of detector `i`, with its `detectorId`.
