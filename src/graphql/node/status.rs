@@ -495,6 +495,8 @@ mod tests {
                                         "config": review_database::complete_engine_document(
                                             review_database::AgentKind::SemiSupervised,
                                             "my_val=2",
+                                            &|_| None,
+                                            review_database::CompletionMode::Apply,
                                         )
                                         .unwrap(),
                                         "draft": "my_val=2"

@@ -5897,6 +5897,7 @@ mod tests {
                     log_kind: None,
                     sources: vec![used.to_string()],
                     indicator: None,
+                    clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
                     definition: String::new(),
                 })
                 .unwrap();
@@ -6010,6 +6011,7 @@ mod tests {
                 log_kind: None,
                 sources: vec![policy.to_string()],
                 indicator: None,
+                clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
                 definition: String::new(),
             })
             .unwrap();

@@ -16,12 +16,13 @@ use std::{
 
 use async_graphql::{Context, Error, ErrorExtensions, Result};
 use review_database::{
-    Agent, AgentConfig, AgentKind, DetectionModelsSectionError, EngineDocumentError,
-    EngineDocumentWrite, ModelInstance, Node, NodeProfile, NodeUpdate, Referrer, Store,
-    complete_engine_document,
+    Agent, AgentConfig, AgentKind, CellErrorKind, ClusteringModelTypeRef, CompletionMode,
+    DetectionModelsSectionError, DetectorError, EngineDocumentError, EngineDocumentWrite,
+    ModelInstance, Node, NodeProfile, NodeUpdate, Referrer, Store, complete_engine_document,
 };
 
 use crate::graphql::{
+    customer_access::model_by_name,
     engine_document::{
         Detector, DocumentTarget, EngineDocument, duplicate_id, duplicate_model,
         indicator_not_allowed, kept_pairs, model_not_of_instance, retired_id,
@@ -480,31 +481,50 @@ pub(super) fn store_refusal(
     mapped.unwrap_or_else(|| error.into())
 }
 
-/// Maps a refusal of a node write that completion of a Semi-supervised Engine
-/// document caused, or returns `None` for any other error.
+/// Maps a refusal of a node write that completion of an engine document
+/// caused, or returns `None` for any other error.
 ///
 /// The store names the refused agent only in a context message, which is not
-/// parsed: the agent is found by completing again the `config` of each
-/// Semi-supervised Engine agent of `new` whose `config` the write changes
-/// from `stored`, in `new`'s order, and taking the first whose error equals
-/// the store's. Should none match, which needs `stored` to have changed
-/// under the write, every Semi-supervised Engine agent of `new` is tried in
-/// the same way; should none of them match either, the error is left to the
-/// caller.
+/// parsed: the agent is found by completing again, in
+/// [`CompletionMode::Apply`], the `config` of each Semi-supervised or
+/// Unsupervised Engine agent of `new` whose `config` the write changes from
+/// `stored`, in `new`'s order, and taking the first whose error equals the
+/// store's. Should none match, which needs `stored` to have changed under the
+/// write, every such agent of `new` is tried in the same way; should none of
+/// them match either, the error is left to the caller.
+///
+/// The clustering model type of a model an Unsupervised Engine document
+/// names is that of the stored model record of that name, and none when
+/// there is no record or it cannot be read. The completed documents only
+/// attribute the refusal; none is stored.
 pub(super) fn completion_refusal(
     error: &anyhow::Error,
+    store: &Store,
     stored: &Node,
     new: &NodeUpdate,
 ) -> Option<Error> {
     let refused = error.downcast_ref::<DetectionModelsSectionError>()?;
+    let model_type = |name: &str| -> Option<ClusteringModelTypeRef> {
+        model_by_name(store, name)
+            .ok()
+            .flatten()
+            .map(|model| model.clustering_model_type)
+    };
     let fails_alike = |agent: &&Agent| {
-        agent.kind == AgentKind::SemiSupervised
-            && agent.config.as_ref().is_some_and(|config| {
-                complete_engine_document(AgentKind::SemiSupervised, config.as_ref())
-                    .err()
-                    .as_ref()
-                    == Some(refused)
-            })
+        matches!(
+            agent.kind,
+            AgentKind::SemiSupervised | AgentKind::Unsupervised
+        ) && agent.config.as_ref().is_some_and(|config| {
+            complete_engine_document(
+                agent.kind,
+                config.as_ref(),
+                &model_type,
+                CompletionMode::Apply,
+            )
+            .err()
+            .as_ref()
+                == Some(refused)
+        })
     };
     let changes_config = |agent: &&Agent| {
         stored
@@ -521,17 +541,26 @@ pub(super) fn completion_refusal(
         .filter(changes_config)
         .find(fails_alike)
         .or_else(|| new.agents.iter().find(fails_alike))?;
-    let document = agent.config.as_ref().map_or("", AsRef::as_ref);
-    Some(detection_models_refusal(refused, &agent.key, document))
+    Some(if agent.kind == AgentKind::Unsupervised {
+        unsupervised_refusal(refused, &agent.key)
+    } else {
+        let document = agent.config.as_ref().map_or("", AsRef::as_ref);
+        detection_models_refusal(refused, &agent.key, document)
+    })
 }
 
-/// Returns the refusal of `refused`, the completion error of the document
-/// `document` of agent `agent_key`, with the extension `agentKey`.
+/// Returns the refusal of `refused`, the completion error of the
+/// Semi-supervised Engine document `document` of agent `agent_key`, with the
+/// extension `agentKey`.
 ///
 /// `field` is the dotted path of the offending part, empty for a document
 /// that does not parse. `value` is the parser's message for such a
 /// document, the offending value as TOML for a value of the wrong type or
 /// out of range, and empty otherwise.
+///
+/// The errors that only an Unsupervised Engine document yields map as
+/// [`unsupervised_refusal`] maps them; completion of a Semi-supervised
+/// Engine document never returns one.
 pub(super) fn detection_models_refusal(
     refused: &DetectionModelsSectionError,
     agent_key: &str,
@@ -578,10 +607,78 @@ pub(super) fn detection_models_refusal(
             format!("{SECTION}.{section}.{key}"),
             value.clone(),
         ),
+        DetectionModelsSectionError::EntryNotATable { .. }
+        | DetectionModelsSectionError::Cell(_)
+        | DetectionModelsSectionError::DetectorsNotAnArrayOfTables
+        | DetectionModelsSectionError::ModelNotAString
+        | DetectionModelsSectionError::DisallowedModel { .. }
+        | DetectionModelsSectionError::Detector(_) => {
+            return unsupervised_refusal(refused, agent_key);
+        }
     };
     let agent_key = agent_key.to_string();
     refusal(code, refused.to_string(), &field, value)
         .extend_with(|_, extensions| extensions.set("agentKey", agent_key.as_str()))
+}
+
+/// Returns the refusal of `refused`, the completion error of the
+/// Unsupervised Engine document of agent `agent_key`, with the extension
+/// `agentKey`.
+///
+/// `field` is the dotted path of the offence from the document root, with
+/// list positions, as [`DetectorError::path`] gives it; it is empty for a
+/// document that does not parse and for a `detectors` that is not an array
+/// of tables. `value` is the offending value as text, as
+/// [`DetectorError::value`] gives it, for a value of the wrong type, out of
+/// its range or empty, and empty otherwise.
+pub(super) fn unsupervised_refusal(
+    refused: &DetectionModelsSectionError,
+    agent_key: &str,
+) -> Error {
+    let (code, field, value) = match refused {
+        DetectionModelsSectionError::Detector(detector) => (
+            detector_code(detector),
+            detector.path(),
+            detector.value.clone().unwrap_or_default(),
+        ),
+        other => (section_code(other), String::new(), String::new()),
+    };
+    let agent_key = agent_key.to_string();
+    refusal(code, refused.to_string(), &field, value)
+        .extend_with(|_, extensions| extensions.set("agentKey", agent_key.as_str()))
+}
+
+/// Returns the refusal code of the rejection of a `[[detectors]]` entry.
+fn detector_code(detector: &DetectorError) -> RefusalCode {
+    section_code(&detector.error)
+}
+
+/// Returns the refusal code of a completion error of an Unsupervised Engine
+/// document, by what it rejects.
+fn section_code(error: &DetectionModelsSectionError) -> RefusalCode {
+    // No wildcard arm: an error added to review-database must be mapped.
+    match error {
+        DetectionModelsSectionError::InvalidToml(_)
+        | DetectionModelsSectionError::DetectorsNotAnArrayOfTables
+        | DetectionModelsSectionError::ModelNotAString
+        | DetectionModelsSectionError::NotATable
+        | DetectionModelsSectionError::SectionNotATable { .. }
+        | DetectionModelsSectionError::EntryNotATable { .. }
+        | DetectionModelsSectionError::TypeMismatch { .. } => RefusalCode::InvalidDocument,
+        DetectionModelsSectionError::UnknownModel { .. }
+        | DetectionModelsSectionError::ModelOfAnotherEngine { .. }
+        | DetectionModelsSectionError::UnknownKey { .. } => RefusalCode::UnknownField,
+        DetectionModelsSectionError::DisallowedModel { .. } => RefusalCode::FieldNotAllowed,
+        DetectionModelsSectionError::OutOfRange { .. } => RefusalCode::BoundViolated,
+        DetectionModelsSectionError::Cell(cell) => match cell.kind {
+            CellErrorKind::TypeMismatch { .. } => RefusalCode::InvalidDocument,
+            CellErrorKind::Unknown => RefusalCode::UnknownField,
+            CellErrorKind::Missing => RefusalCode::FieldNotAllowed,
+            CellErrorKind::OutOfRange { .. } | CellErrorKind::Empty => RefusalCode::BoundViolated,
+        },
+        // Never nested; a nested one is located by its own entry.
+        DetectionModelsSectionError::Detector(detector) => detector_code(detector),
+    }
 }
 
 /// Returns the value at `detection_models.<section>.<key>` of `document`,

@@ -5,8 +5,9 @@ use std::collections::HashSet;
 use std::io::Write;
 
 use review_database::{
-    EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, ModelInstance, ModelMethod,
-    ModelOwner, NewTrainingDefinition, NodeUpdate, Store, TrainedWith, types::ModelBatchInfo,
+    ClusteringModelTypeRef, EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite,
+    ModelInstance, ModelMethod, ModelOwner, NewTrainingDefinition, NodeUpdate, Store, TrainedWith,
+    TrainingRead, types::ModelBatchInfo,
 };
 use serde::Serialize;
 
@@ -38,6 +39,10 @@ pub(crate) struct TestModel<'a> {
     pub(crate) trained_at: jiff::Timestamp,
     /// The sources of the definition that trained the model.
     pub(crate) trained_sources: Vec<String>,
+    /// The clustering model type the upload names.
+    pub(crate) clustering_model_type: ClusteringModelTypeRef,
+    /// What the upload says the training read.
+    pub(crate) training_read: TrainingRead,
 }
 
 impl<'a> TestModel<'a> {
@@ -53,6 +58,8 @@ impl<'a> TestModel<'a> {
             rounds: &[],
             trained_at: jiff::Timestamp::now(),
             trained_sources: Vec::new(),
+            clustering_model_type: ClusteringModelTypeRef::Custom,
+            training_read: TrainingRead::default(),
         }
     }
 
@@ -80,6 +87,10 @@ impl<'a> TestModel<'a> {
                 })
                 .collect(),
             scores: review_database::types::ModelScores::new(),
+            log_kind: None,
+            clustering_model_type: self.clustering_model_type,
+            training_read: self.training_read,
+            detection_model_states: Vec::new(),
         };
         let owner = ModelOwner {
             customer_id: self.customer_id,
@@ -89,7 +100,6 @@ impl<'a> TestModel<'a> {
             run_id: 1,
             definition: String::new(),
             sources: self.trained_sources,
-            log_kind: None,
         };
         store
             .replace_model(model, owner, self.trained_at, trained)
@@ -217,6 +227,7 @@ pub(crate) fn insert_definition(
             log_kind: None,
             sources: vec![],
             indicator: Some(indicator.to_string()),
+            clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
             definition: String::new(),
         })
         .expect("insert training definition");

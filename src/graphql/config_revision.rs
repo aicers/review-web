@@ -170,7 +170,13 @@ mod tests {
     }
 
     fn completed(document: &str) -> String {
-        complete_engine_document(AgentKind::SemiSupervised, document).expect("completes")
+        complete_engine_document(
+            AgentKind::SemiSupervised,
+            document,
+            &|_| None,
+            review_database::CompletionMode::Apply,
+        )
+        .expect("completes")
     }
 
     /// Returns the `applied_at` of revision `revision` as GraphQL writes it.

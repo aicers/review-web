@@ -668,6 +668,8 @@ fn detection_models_cross_as_the_detection_model_enum() {
             "DOMAIN_GENERATION_ALGORITHM",
             "DNS_COVERT_CHANNEL",
             "UNUSUAL_DESTINATION_PATTERN",
+            "LABEL_DB_MATCH",
+            "FAR_OUTLIER",
         ],
         "{REGENERATE}"
     );

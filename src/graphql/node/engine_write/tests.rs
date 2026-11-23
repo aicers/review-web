@@ -1416,20 +1416,11 @@ async fn node_writes_wait_for_the_engine_configuration_lock() {
 }
 
 fn definition_text(source: &str, server_name: &str) -> String {
-    format!(
-        r#"raw_event_kind = "http"
-method = "multidimension"
-sources = ["{source}"]
-window_start = "2026-10-14T00:00:00Z"
-window_end = "2026-10-21T00:00:00Z"
-
-[data_store]
-address = "{OWN_ADDRESS}"
-server_name = "{server_name}"
-
-[csv]
-format = [{{ data_type = "utf8", weight = 1.0 }}]
-"#
+    crate::graphql::training_test_support::http_url_definition(
+        &[source],
+        server_name,
+        OWN_ADDRESS,
+        "",
     )
 }
 
@@ -1586,6 +1577,7 @@ async fn a_customer_change_is_refused_while_a_definition_lists_the_nodes_source(
             log_kind: None,
             sources: vec![f.sensor_a.clone()],
             indicator: None,
+            clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
             definition: String::new(),
         })
         .unwrap();
@@ -1676,6 +1668,7 @@ async fn a_new_node_or_a_hostname_change_is_refused_for_a_listed_name() {
             log_kind: None,
             sources: vec![f.sensor_a.clone(), f.logs_a.clone()],
             indicator: None,
+            clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
             definition: String::new(),
         })
         .unwrap();
@@ -1742,6 +1735,7 @@ impl Fixture {
                     log_kind: None,
                     sources: sources.iter().map(ToString::to_string).collect(),
                     indicator: None,
+                    clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
                     definition: String::new(),
                 })
                 .expect("insert training definition"),
@@ -1846,5 +1840,58 @@ async fn an_applied_removal_of_the_sensor_or_log_collector_does_not_lift_the_app
             f.assert_apply_refused(&node, holder, "customer_id", source)
                 .await;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Refusals of the database write's completion of an Unsupervised document
+
+/// Returns `document`, one detector written as `[[detectors]]`, with the
+/// detector written as an inline array of tables instead.
+fn inline_detectors(document: &str) -> String {
+    let table: toml::Table = toml::from_str(document).expect("a valid document");
+    let detectors = table.get("detectors").expect("a detector").to_string();
+    format!("detectors = {detectors}\n")
+}
+
+#[tokio::test]
+async fn a_completion_refusal_of_an_unsupervised_document_refuses_the_whole_apply() {
+    let f = fixture().await;
+    // review-web's own checker takes an inline array of detectors, which the
+    // database write's completion refuses.
+    let document = inline_detectors(&f.valid());
+    for mutation in ["applyNode", "applyNodeDraft"] {
+        f.seed(&f.engine_a, Some(&document));
+        let node = f.node(f.engine_a.node_id);
+        let query = if mutation == "applyNode" {
+            apply(&node)
+        } else {
+            apply_draft(&node)
+        };
+        let res = f.sec(&query, &[A]).await;
+        let (message, extensions) = single_error(&res);
+        assert_eq!(
+            message, "`detectors` is not an array of tables",
+            "{mutation}"
+        );
+        assert_eq!(
+            extensions,
+            json!({
+                "code": "INVALID_DOCUMENT",
+                "field": "",
+                "value": "",
+                "agentKey": ENGINE_KEY,
+            }),
+            "{mutation}"
+        );
+        assert_eq!(f.agent(&f.engine_a).config, None, "{mutation}");
+        assert_eq!(f.refs(&f.engine_a), Default::default(), "{mutation}");
+        assert_eq!(
+            f.store()
+                .config_revision(&f.engine_a)
+                .expect("read revision"),
+            None,
+            "{mutation}"
+        );
     }
 }

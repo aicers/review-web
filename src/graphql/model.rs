@@ -10,6 +10,7 @@ use super::{
     CutoffRate, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, Role, RoleGuard,
     SeriesBudget, check_series_budget,
     cluster::TimeCount,
+    clustering_model_type::{ClusteringModelTypeRef, TrainingRead},
     customer_access, customer_deletion_guard, fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
     training::{self, ModelDetectorUse, ModelRun, TrainingDefinition, TrainingDefinitionState},
@@ -552,10 +553,23 @@ impl ModelDigest {
         model_method(&self.inner.kind)
     }
 
-    /// The event kind the model was trained on, such as `http`, a Sysmon kind
-    /// or a log kind.
+    /// The Giganto kind name of the raw events the model was trained on,
+    /// such as `http` or a Sysmon kind. A prefix model's is `log`, the log
+    /// being named by its definition's `log_kind`.
     async fn raw_event_kind(&self) -> &str {
         &self.inner.raw_event_kind
+    }
+
+    /// The clustering model type the current result was trained as, as the
+    /// engine reported it with the model.
+    async fn clustering_model_type(&self) -> ClusteringModelTypeRef<'_> {
+        (&self.inner.clustering_model_type).into()
+    }
+
+    /// What the training of the current result read, as the engine reported
+    /// it with the model.
+    async fn training_read(&self) -> TrainingRead<'_> {
+        (&self.inner.training_read).into()
     }
 
     /// The customer the model belongs to.

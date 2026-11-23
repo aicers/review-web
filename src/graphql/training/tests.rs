@@ -2,8 +2,9 @@
 //! lifecycle mutations.
 
 use review_database::{
-    EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, ModelInstance, NodeUpdate,
-    RunState, SamplingInterval, Store, TrainingDefinitionUpdate, types::ModelScores,
+    ClusteringModelTypeRef, EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite,
+    ModelInstance, NodeUpdate, RunState, SamplingInterval, Store, TrainingDefinitionUpdate,
+    types::ModelScores,
 };
 use serde_json::{Value, json};
 
@@ -19,6 +20,7 @@ use crate::graphql::{
         PolicyShape, SENSOR_KEY, generator_config, insert_assigned_policy,
         insert_generator_node_with, insert_policy, sensor_name, timeseries_definition,
     },
+    training_test_support::{http_url_definition, prefix_definition, window_end, window_start},
 };
 
 const A: u32 = 1;
@@ -141,22 +143,15 @@ async fn fixture() -> Fixture {
 }
 
 fn definition_text(sources: &[&str], server_name: &str, address: &str, extra: &str) -> String {
-    format!(
-        r#"raw_event_kind = "http"
-method = "multidimension"
-sources = {sources}
-window_start = "2026-10-14T00:00:00Z"
-window_end = "2026-10-21T00:00:00Z"
-{extra}
+    http_url_definition(sources, server_name, address, extra)
+}
 
-[data_store]
-address = "{address}"
-server_name = "{server_name}"
-
-[csv]
-format = [{{ data_type = "utf8", weight = 1.0 }}]
-"#,
-        sources = serde_json::to_string(sources).unwrap(),
+/// Returns the `http_url` definition `text` as a custom one.
+fn custom(text: &str) -> String {
+    text.replacen(
+        "type = \"http_url\"\ntype_version = 1\n",
+        "type = \"custom\"\n",
+        1,
     )
 }
 
@@ -249,9 +244,38 @@ fn lookup_key(instance: &ModelInstance, hostname: &str) -> String {
 }
 
 /// Accepts the model upload of the run `run_id` that `instance` performs,
-/// creating or replacing the multidimension model `name`.
+/// creating or replacing the `http_url` version 1 model `name`.
 fn complete(store: &Store, run_id: RunId, instance: &ModelInstance, name: &str) {
     complete_as(store, run_id, instance, name, ("Multifield", "http"));
+}
+
+/// Returns the clustering model type `http_url` at `version`.
+fn http_url(version: u32) -> ClusteringModelTypeRef {
+    ClusteringModelTypeRef::Catalog {
+        id: "http_url".to_string(),
+        version,
+    }
+}
+
+/// Returns a format 3 upload of the model `name` of the record kind and
+/// event kind `kinds`, trained as `http_url` version 1.
+fn upload(name: &str, (kind, raw_event_kind): (&str, &str)) -> review_database::Model {
+    review_database::Model {
+        id: 0,
+        name: name.to_string(),
+        version: 1,
+        kind: kind.to_string(),
+        serialized_classifier: vec![1, 2, 3],
+        max_event_id_num: 25,
+        raw_event_kind: raw_event_kind.to_string(),
+        classification_id: 0,
+        batch_info: vec![],
+        scores: ModelScores::new(),
+        log_kind: None,
+        clustering_model_type: http_url(1),
+        training_read: review_database::TrainingRead::default(),
+        detection_model_states: vec![],
+    }
 }
 
 /// Accepts the model upload of the run `run_id` that `instance` performs,
@@ -265,22 +289,7 @@ fn complete_as(
     (kind, raw_event_kind): (&str, &str),
 ) {
     store
-        .complete_run(
-            run_id,
-            instance,
-            review_database::Model {
-                id: 0,
-                name: name.to_string(),
-                version: 1,
-                kind: kind.to_string(),
-                serialized_classifier: vec![1, 2, 3],
-                max_event_id_num: 25,
-                raw_event_kind: raw_event_kind.to_string(),
-                classification_id: 0,
-                batch_info: vec![],
-                scores: ModelScores::new(),
-            },
-        )
+        .complete_run(run_id, instance, upload(name, (kind, raw_event_kind)))
         .expect("complete the run");
 }
 
@@ -312,15 +321,18 @@ fn stored(store: &Store, name: &str) -> Option<review_database::TrainingDefiniti
 /// Stores the text of the definition `name` directly, bypassing validation.
 fn store_text(store: &Store, name: &str, text: &str) {
     let document = TrainingDocument::parse(text).expect("a parsable text");
+    let (raw_event_kind, log_kind) = document.record_kinds();
     store
         .update_training_definition(
             name,
             TrainingDefinitionUpdate {
                 method: document.method.into(),
-                raw_event_kind: document.raw_event_kind.clone(),
-                log_kind: None,
+                raw_event_kind,
+                log_kind,
                 sources: document.sources.clone(),
                 indicator: document.suspicious_tokens.clone(),
+                clustering_model_type: review_database::check_training_definition(text)
+                    .unwrap_or(ClusteringModelTypeRef::Custom),
                 definition: text.to_string(),
             },
         )
@@ -466,19 +478,24 @@ async fn update_stores_the_parsed_fields_and_the_text() {
     .await;
     let model_id = model_on(&f.store(), "host", A, &f.engine_a);
     insert_indicator(&f.store(), "ind-a", model_id);
-    let text = definition_text(&[&f.logs_a], &f.server_name, OWN_ADDRESS, "")
-        .replace("raw_event_kind = \"http\"", "raw_event_kind = \"conn\"")
-        .replace(
-            "window_end = \"2026-10-21T00:00:00Z\"",
-            "window_end = \"2026-10-21T00:00:00Z\"\nsuspicious_tokens = \"ind-a\"",
-        );
+    let text = custom(&definition_text(
+        &[&f.logs_a],
+        &f.server_name,
+        OWN_ADDRESS,
+        "suspicious_tokens = \"ind-a\"\nmax_data_len = 20",
+    ));
     let res = f.sec(&update("def", &text), &[A]).await;
     assert_eq!(data(res), json!({ "updateTrainingDefinition": "def" }));
 
     let definition = stored(&f.store(), "def").expect("stored");
-    assert_eq!(definition.raw_event_kind, "conn");
+    assert_eq!(definition.raw_event_kind, "http");
+    assert_eq!(definition.log_kind, None);
     assert_eq!(definition.sources, std::slice::from_ref(&f.logs_a));
     assert_eq!(definition.indicator.as_deref(), Some("ind-a"));
+    assert_eq!(
+        definition.clustering_model_type,
+        ClusteringModelTypeRef::Custom
+    );
     assert_eq!(definition.definition, text);
 }
 
@@ -493,15 +510,25 @@ async fn validation_refusals_carry_their_codes() {
     let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
     assert_eq!(
         refused(&res),
-        ("UNKNOWN_FIELD".into(), "name".into(), "name".into())
+        ("UNKNOWN_FIELD".into(), "name".into(), "def".into())
     );
+    // A catalog type fixes its method.
     let text = f
         .definition(&[&f.sensor_a], OWN_ADDRESS, "")
         .replace("multidimension", "timeseries");
     let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
     assert_eq!(
         refused(&res),
-        ("FIELD_NOT_ALLOWED".into(), "csv".into(), String::new())
+        ("FIELD_FIXED".into(), "method".into(), "timeseries".into())
+    );
+    // A custom definition holds only the keys of its method.
+    let text = custom(&f.definition(&[&f.sensor_a], OWN_ADDRESS, ""))
+        .replace("multidimension", "timeseries");
+    let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
+    let (code, field, _) = refused(&res);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("FIELD_NOT_ALLOWED", "csv")
     );
     assert!(stored(&f.store(), "def").is_none());
 }
@@ -564,7 +591,12 @@ async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_deliver
     assert_eq!(data(res), json!({ "insertTrainingDefinition": "series" }));
     let stored = stored(&f.store(), "series").expect("stored");
     assert_eq!(stored.method, review_database::ModelMethod::Timeseries);
-    assert_eq!(stored.raw_event_kind, "timeseries");
+    // The record names the kind as the engine records a time-series model's,
+    // while the text keeps `timeseries`.
+    assert_eq!(stored.raw_event_kind, "periodic_time_series");
+    assert_eq!(stored.log_kind, None);
+    assert_eq!(stored.clustering_model_type, ClusteringModelTypeRef::Custom);
+    assert_eq!(stored.definition, text);
 
     let res = f
         .sec(
@@ -694,7 +726,7 @@ async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
         run_id,
         &f.engine_a,
         "series",
-        (TIMESERIES_KIND, "timeseries"),
+        (TIMESERIES_KIND, "periodic_time_series"),
     );
     let model = model_by_name(&f.store(), "series").unwrap().unwrap();
     assert_eq!(model.kind, TIMESERIES_KIND);
@@ -757,10 +789,14 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 kind: TIMESERIES_KIND.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                raw_event_kind: "timeseries".to_string(),
+                raw_event_kind: "periodic_time_series".to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
+                log_kind: None,
+                clustering_model_type: ClusteringModelTypeRef::Custom,
+                training_read: review_database::TrainingRead::default(),
+                detection_model_states: vec![],
             },
             review_database::ModelOwner {
                 customer_id: A,
@@ -771,7 +807,6 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 run_id: 1,
                 definition: text,
                 sources: Vec::new(),
-                log_kind: None,
             },
         )
         .unwrap();
@@ -906,7 +941,7 @@ async fn only_a_system_administrator_overrides_the_address() {
     f.define(&f.engine_a, "override", &text).await;
 
     // A Security Administrator keeps the stored override unchanged.
-    let kept = f.definition(&[&f.sensor_a2], OVERRIDE, "eps = 3.0");
+    let kept = f.definition(&[&f.sensor_a2], OVERRIDE, "max_event_id_num = 35");
     let res = f.sec(&update("override", &kept), &[A]).await;
     assert_eq!(data(res), json!({ "updateTrainingDefinition": "override" }));
     // But cannot move it, nor set one on another definition.
@@ -1072,11 +1107,11 @@ async fn update_refusals_of_the_store() {
     );
     complete(&f.store(), run_id, &f.engine_a, "def");
 
-    let conn = text.replace("raw_event_kind = \"http\"", "raw_event_kind = \"conn\"");
-    let res = f.sys(&update("def", &conn)).await;
+    let prefix = prefix_definition(&[&f.logs_a], "syslog", &f.server_name, OWN_ADDRESS, "");
+    let res = f.sys(&update("def", &prefix)).await;
     assert_eq!(
         refused(&res),
-        ("FIELD_FIXED".into(), "raw_event_kind".into(), "conn".into())
+        ("FIELD_FIXED".into(), "method".into(), "prefix".into())
     );
     let (_, extensions) = single_error(&res);
     assert_eq!(extensions["definition"], "def");
@@ -1089,7 +1124,7 @@ async fn update_judges_the_kept_pair_against_the_definition_read_under_the_lock(
     f.define(&f.engine_a, "def", &stored_text).await;
     let pause = f.relay.pause_next_lookup();
 
-    let request = f.definition(&[&f.sensor_a], OVERRIDE, "eps = 3.0");
+    let request = f.definition(&[&f.sensor_a], OVERRIDE, "max_event_id_num = 35");
     let query = update("def", &request);
     let (res, ()) = tokio::join!(f.sec(&query, &[A]), async {
         pause.entered.notified().await;
@@ -1359,19 +1394,23 @@ async fn train_refuses_a_stored_definition_that_does_not_parse() {
     let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
     f.define(&f.engine_a, "def", &text).await;
 
-    // A key outside the schema, stored bypassing validation, is reported as
-    // a stored text that does not parse rather than as `UNKNOWN_FIELD`.
+    // A key outside the schema inside `[data_store]`, which the clustering
+    // model type check does not read, stored bypassing validation, is
+    // reported as a stored text that does not parse rather than as
+    // `UNKNOWN_FIELD`.
     let document = TrainingDocument::parse(&text).unwrap();
+    let (raw_event_kind, log_kind) = document.record_kinds();
     f.store()
         .update_training_definition(
             "def",
             TrainingDefinitionUpdate {
                 method: document.method.into(),
-                raw_event_kind: document.raw_event_kind.clone(),
-                log_kind: None,
+                raw_event_kind,
+                log_kind,
                 sources: document.sources.clone(),
                 indicator: None,
-                definition: format!("unknown_key = 1\n{text}"),
+                clustering_model_type: http_url(1),
+                definition: text.replace("[data_store]\n", "[data_store]\nunknown_key = 1\n"),
             },
         )
         .unwrap();
@@ -1390,10 +1429,10 @@ async fn train_relays_the_text_read_under_the_lock() {
     f.define(
         &f.engine_a,
         "def",
-        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "eps = 5.0"),
+        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "max_event_id_num = 40"),
     )
     .await;
-    let changed = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "eps = 2.0");
+    let changed = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "max_event_id_num = 30");
 
     let guard = f.schema.hold_engine_config_lock().await;
     let query = train("def");
@@ -1900,14 +1939,14 @@ async fn a_clone_is_built_from_the_snapshot_read_under_the_lock() {
     f.define(
         &f.engine_a,
         "src",
-        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "eps = 5.0"),
+        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "max_event_id_num = 40"),
     )
     .await;
     f.train_to_completion("src", &f.engine_a).await;
     store_text(
         &f.store(),
         "src",
-        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "eps = 2.0"),
+        &f.definition(&[&f.sensor_a], OWN_ADDRESS, "max_event_id_num = 30"),
     );
 
     let guard = f.schema.hold_engine_config_lock().await;
@@ -1930,7 +1969,7 @@ async fn a_clone_is_built_from_the_snapshot_read_under_the_lock() {
     });
     assert!(res.errors.is_empty(), "{res:?}");
     let target = TrainingDocument::parse(&stored(&f.store(), "dst").unwrap().definition).unwrap();
-    assert_eq!(target.eps, Some(2.0));
+    assert_eq!(target.max_event_id_num, Some(30));
     let source = model_by_name(&f.store(), "src").unwrap().unwrap();
     assert_eq!(source.trained_run_id, retrained);
 }
@@ -2197,10 +2236,10 @@ async fn a_cross_customer_clone_run_is_hidden_from_the_source_customer() {
 #[tokio::test]
 async fn the_trained_definition_is_a_snapshot() {
     let f = fixture().await;
-    let first = f.definition(&[&f.sensor_a], OWN_ADDRESS, "eps = 5.0");
+    let first = f.definition(&[&f.sensor_a], OWN_ADDRESS, "max_event_id_num = 40");
     f.define(&f.engine_a, "snap", &first).await;
     let first_run = f.train_to_completion("snap", &f.engine_a).await;
-    let second = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "eps = 2.0");
+    let second = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "max_event_id_num = 30");
     let res = f.sec(&update("snap", &second), &[A]).await;
     assert!(res.errors.is_empty(), "{res:?}");
 
@@ -2253,7 +2292,7 @@ async fn the_trained_definition_is_a_snapshot() {
         ..TrainingDocument::parse(&first).unwrap()
     };
     assert_eq!(cloned, expected);
-    assert_eq!(cloned.eps, Some(5.0));
+    assert_eq!(cloned.max_event_id_num, Some(40));
     complete(&f.store(), clone_run, &f.engine_a, "snap-clone");
 
     // (c) A retrain makes the edited definition the trained one.
@@ -2561,7 +2600,7 @@ async fn writers_wait_for_the_engine_config_lock() {
             model_by_name(&store, "orphan").unwrap().unwrap().instance,
         )
     };
-    let edited = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "eps = 4.0");
+    let edited = f.definition(&[&f.sensor_a2], OWN_ADDRESS, "max_event_id_num = 45");
     let queries = [
         insert(&f.engine_a2, "new", &text),
         update("upd", &edited),
@@ -2699,4 +2738,571 @@ async fn a_customer_being_deleted_keeps_its_definitions_runs_and_models() {
     assert_eq!(data(res), json!({ "insertTrainingDefinition": "new-a" }));
     let res = f.sys(&remove_model("free-a")).await;
     assert_eq!(data(res), json!({ "removeModel": "free-a" }));
+}
+
+// ---------------------------------------------------------------------------
+// Clustering model types, log kinds and the Data Store's retention
+
+const DAY: i64 = 24 * 60 * 60;
+
+/// Returns midnight UTC `days` days before today.
+fn days_ago(days: i64) -> String {
+    let midnight = jiff::Timestamp::now().as_second().div_euclid(DAY) * DAY;
+    jiff::Timestamp::from_second(midnight - days * DAY)
+        .expect("a recent day is a time")
+        .to_string()
+}
+
+/// Returns `text` with its window from `start` to `end`.
+fn with_window(text: &str, start: &str, end: &str) -> String {
+    text.replacen(
+        &format!("window_start = \"{}\"", window_start()),
+        &format!("window_start = \"{start}\""),
+        1,
+    )
+    .replacen(
+        &format!("window_end = \"{}\"", window_end()),
+        &format!("window_end = \"{end}\""),
+        1,
+    )
+}
+
+/// Sets the top-level `retention` of the draft of the Data Store at
+/// `hostname`, or removes it.
+fn set_retention(store: &Store, hostname: &str, retention: Option<&str>) {
+    let key = format!("giganto1@{hostname}");
+    let mut map = store.node_map();
+    let node = map
+        .iter(review_database::event::Direction::Forward, None)
+        .map(|node| node.expect("read node"))
+        .find(|node| node.external_services.iter().any(|s| s.key == key))
+        .expect("the Data Store's node");
+    let old = NodeUpdate::from(node.clone());
+    let mut new = NodeUpdate::from(node.clone());
+    for service in &mut new.external_services {
+        if service.key == key {
+            let draft = service
+                .draft
+                .as_ref()
+                .map_or_default(|draft| draft.as_ref().to_string());
+            let mut lines: Vec<String> = draft
+                .lines()
+                .filter(|line| !line.starts_with("retention ="))
+                .map(ToString::to_string)
+                .collect();
+            if let Some(retention) = retention {
+                lines.push(format!("retention = \"{retention}\""));
+            }
+            service.draft = Some(format!("{}\n", lines.join("\n")).try_into().expect("TOML"));
+        }
+    }
+    map.update(node.id, &old, &new)
+        .expect("update the Data Store");
+}
+
+async fn clustering_model_type_of(f: &Fixture, name: &str) -> Value {
+    let res = f
+        .sys(&format!(
+            "{{ trainingDefinition(name: {}) {{ clusteringModelType {{ id version }} }} }}",
+            gql(name)
+        ))
+        .await;
+    data(res)["trainingDefinition"]["clusteringModelType"].clone()
+}
+
+#[tokio::test]
+async fn a_definition_stores_and_shows_the_clustering_model_type_it_names() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "catalog", &text).await;
+    assert_eq!(
+        stored(&f.store(), "catalog").unwrap().clustering_model_type,
+        http_url(1)
+    );
+    assert_eq!(
+        clustering_model_type_of(&f, "catalog").await,
+        json!({ "id": "http_url", "version": "1" })
+    );
+
+    f.define(&f.engine_a, "custom", &custom(&text)).await;
+    assert_eq!(
+        stored(&f.store(), "custom").unwrap().clustering_model_type,
+        ClusteringModelTypeRef::Custom
+    );
+    assert_eq!(
+        clustering_model_type_of(&f, "custom").await,
+        json!({ "id": "custom", "version": null })
+    );
+
+    // An update stores the type of the new text.
+    let res = f.sys(&update("custom", &text)).await;
+    assert_eq!(data(res), json!({ "updateTrainingDefinition": "custom" }));
+    assert_eq!(
+        clustering_model_type_of(&f, "custom").await,
+        json!({ "id": "http_url", "version": "1" })
+    );
+}
+
+#[tokio::test]
+async fn insert_and_update_refuse_with_the_type_check_refusal() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &text).await;
+    let six_days = {
+        let end: jiff::Timestamp = window_end().parse().unwrap();
+        let start = end - jiff::SignedDuration::from_secs(7 * DAY - 1);
+        with_window(&text, &start.to_string(), window_end())
+    };
+    let cases = [
+        (
+            text.replace("type = \"http_url\"", "type = \"no_such_type\""),
+            ("UNKNOWN_MODEL_TYPE", "type", "no_such_type"),
+        ),
+        (
+            text.replace("type_version = 1", "type_version = 0"),
+            ("MODEL_TYPE_VERSION_MISMATCH", "type_version", "0"),
+        ),
+        (
+            text.replace("eps = 5.0", "eps = 4.0"),
+            ("FIELD_FIXED", "eps", "4.0"),
+        ),
+        (
+            text.replace("max_event_id_num = 50\n", ""),
+            ("FIELD_NOT_ALLOWED", "max_event_id_num", ""),
+        ),
+        (
+            text.replace("batch_size = 1000000", "batch_size = 9999"),
+            ("BOUND_VIOLATED", "batch_size", "9999"),
+        ),
+        (six_days, ("BOUND_VIOLATED", "window_end", window_end())),
+        (
+            text.replace(
+                "raw_event_kind = \"http\"",
+                "raw_event_kind = \"http\"\nevent_kind = \"http\"",
+            ),
+            ("UNKNOWN_FIELD", "event_kind", "http"),
+        ),
+    ];
+    for (definition, (code, field, value)) in cases {
+        let expected = (code.to_string(), field.to_string(), value.to_string());
+        let res = f.sec(&insert(&f.engine_a, "new", &definition), &[A]).await;
+        assert_eq!(refused(&res), expected, "insert: {definition}");
+        let res = f.sec(&update("def", &definition), &[A]).await;
+        assert_eq!(refused(&res), expected, "update: {definition}");
+    }
+    assert!(stored(&f.store(), "new").is_none());
+    assert_eq!(stored(&f.store(), "def").unwrap().definition, text);
+}
+
+#[tokio::test]
+async fn access_and_deletion_are_answered_before_the_definition_is_checked() {
+    use crate::graphql::customer_deletion_guard::test_support::{assert_locked, put_running_job};
+
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &text).await;
+    // Refused for its type, were it checked.
+    let stale = text.replace("type_version = 1", "type_version = 0");
+    store_text(&f.store(), "def", &stale);
+
+    forbidden(&f.sec(&insert(&f.engine_a, "new", &stale), &[B]).await);
+    forbidden(&f.sec(&update("def", &stale), &[B]).await);
+    forbidden(&f.sec(&train("def"), &[B]).await);
+
+    put_running_job(&f.store(), A, &["engine-a.example.com"]);
+    assert_locked(&f.sys(&insert(&f.engine_a, "new", &stale)).await);
+    assert_locked(&f.sys(&update("def", &stale)).await);
+    assert_locked(&f.sys(&train("def")).await);
+    assert_eq!(f.store().model_runs("def").unwrap(), []);
+}
+
+#[tokio::test]
+async fn training_refuses_a_definition_stored_at_an_earlier_type_version_first() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &text).await;
+    // A definition stored before the catalog moved on, which also holds a
+    // fixed value the type no longer has.
+    let stale = text
+        .replace("type_version = 1", "type_version = 0")
+        .replace("eps = 5.0", "eps = 4.0");
+    store_text(&f.store(), "def", &stale);
+    let res = f.sys(&train("def")).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "MODEL_TYPE_VERSION_MISMATCH".into(),
+            "type_version".into(),
+            "0".into()
+        )
+    );
+    assert_eq!(f.store().model_runs("def").unwrap(), []);
+    assert_eq!(f.relay.calls(), Vec::new());
+}
+
+#[tokio::test]
+async fn a_clone_of_a_model_of_an_earlier_type_version_keeps_its_type() {
+    let f = fixture().await;
+    let trained = f
+        .definition(&[&f.sensor_a], OWN_ADDRESS, "")
+        .replace("type_version = 1", "type_version = 0");
+    f.store()
+        .replace_model(
+            review_database::Model {
+                clustering_model_type: http_url(0),
+                ..upload("old", ("Multifield", "http"))
+            },
+            review_database::ModelOwner {
+                customer_id: A,
+                instance: f.engine_a.clone(),
+            },
+            jiff::Timestamp::now(),
+            review_database::TrainedWith {
+                run_id: 1,
+                definition: trained,
+                sources: vec![f.sensor_a.clone()],
+            },
+        )
+        .unwrap();
+    let res = f
+        .sys(&clone(
+            "old",
+            "copy",
+            &f.engine_a2,
+            (&f.server_name, OWN_ADDRESS),
+            &[&f.sensor_a2],
+            "",
+        ))
+        .await;
+    assert!(res.errors.is_empty(), "{res:?}");
+    let target = stored(&f.store(), "copy").expect("the target definition");
+    assert_eq!(target.clustering_model_type, http_url(0));
+    assert_eq!(target.raw_event_kind, "http");
+    assert!(
+        target.definition.contains("type_version = 0"),
+        "{}",
+        target.definition
+    );
+    assert_eq!(
+        clustering_model_type_of(&f, "copy").await,
+        json!({ "id": "http_url", "version": "0" })
+    );
+}
+
+#[tokio::test]
+async fn the_window_is_bounded_by_the_data_stores_retention() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    set_retention(&f.store(), STORE_HOST, Some("100d"));
+    let res = f
+        .sys(&insert(
+            &f.engine_a,
+            "long",
+            &with_window(&text, &days_ago(96), &days_ago(1)),
+        ))
+        .await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "long" }));
+
+    let too_long = with_window(&text, &days_ago(102), &days_ago(1));
+    for res in [
+        f.sys(&insert(&f.engine_a, "longer", &too_long)).await,
+        f.sys(&update("long", &too_long)).await,
+    ] {
+        assert_eq!(
+            refused(&res),
+            ("BOUND_VIOLATED".into(), "window_end".into(), days_ago(1))
+        );
+    }
+    let too_old = with_window(&text, &days_ago(102), &days_ago(95));
+    for res in [
+        f.sys(&insert(&f.engine_a, "older", &too_old)).await,
+        f.sys(&update("long", &too_old)).await,
+    ] {
+        assert_eq!(
+            refused(&res),
+            (
+                "BOUND_VIOLATED".into(),
+                "window_start".into(),
+                days_ago(102)
+            )
+        );
+    }
+
+    // With no retention, or one that does not parse, the bound is 90 days.
+    for retention in [None, Some("a while")] {
+        set_retention(&f.store(), STORE_HOST, retention);
+        let res = f
+            .sys(&insert(
+                &f.engine_a,
+                "longer",
+                &with_window(&text, &days_ago(92), &days_ago(1)),
+            ))
+            .await;
+        assert_eq!(
+            refused(&res),
+            ("BOUND_VIOLATED".into(), "window_end".into(), days_ago(1)),
+            "{retention:?}"
+        );
+        let res = f
+            .sys(&insert(
+                &f.engine_a,
+                "ninety",
+                &with_window(&text, &days_ago(89), &days_ago(-1)),
+            ))
+            .await;
+        assert_eq!(data(res), json!({ "insertTrainingDefinition": "ninety" }));
+        let res = f.sys(&remove_definition("ninety")).await;
+        assert!(res.errors.is_empty(), "{res:?}");
+    }
+    assert!(stored(&f.store(), "longer").is_none());
+    assert!(stored(&f.store(), "older").is_none());
+
+    // At training start, a stored window whose start has aged past the
+    // retention is refused.
+    set_retention(&f.store(), STORE_HOST, Some("100d"));
+    store_text(&f.store(), "long", &too_old);
+    let res = f.sys(&train("long")).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "BOUND_VIOLATED".into(),
+            "window_start".into(),
+            days_ago(102)
+        )
+    );
+    assert_eq!(f.store().model_runs("long").unwrap(), []);
+}
+
+#[tokio::test]
+async fn a_prefix_definition_stores_log_and_its_log_kind() {
+    let f = fixture().await;
+    for (name, log_kind) in [("syslog", "syslog"), ("log", "log")] {
+        let text = prefix_definition(&[&f.logs_a], log_kind, &f.server_name, OWN_ADDRESS, "");
+        f.define(&f.engine_a, name, &text).await;
+        let definition = stored(&f.store(), name).expect("stored");
+        assert_eq!(definition.method, review_database::ModelMethod::Prefix);
+        assert_eq!(definition.raw_event_kind, "log");
+        assert_eq!(definition.log_kind.as_deref(), Some(log_kind));
+        assert_eq!(
+            definition.clustering_model_type,
+            ClusteringModelTypeRef::Custom
+        );
+        assert_eq!(definition.definition, text);
+    }
+    let res = f
+        .sys("{ trainingDefinition(name: \"syslog\") { rawEventKind } }")
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "rawEventKind": "log" } })
+    );
+    let multi = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "multi", &multi).await;
+    let definition = stored(&f.store(), "multi").expect("stored");
+    assert_eq!(definition.raw_event_kind, "http");
+    assert_eq!(definition.log_kind, None);
+}
+
+#[tokio::test]
+async fn prefix_and_log_kind_refusals() {
+    let f = fixture().await;
+    let prefix = prefix_definition(&[&f.logs_a], "syslog", &f.server_name, OWN_ADDRESS, "");
+    let multi = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    let cases = [
+        (
+            prefix.replace("log_kind = \"syslog\"\n", ""),
+            ("FIELD_NOT_ALLOWED", "log_kind", ""),
+        ),
+        (
+            prefix.replace("raw_event_kind = \"log\"", "raw_event_kind = \"http\""),
+            ("EVENT_KIND_NOT_ALLOWED", "raw_event_kind", "http"),
+        ),
+        (
+            prefix.replace("log_kind = \"syslog\"", "log_kind = \"\""),
+            ("EVENT_KIND_NOT_ALLOWED", "log_kind", ""),
+        ),
+        (
+            prefix.replace("log_kind = \"syslog\"", "log_kind = \"http\""),
+            ("EVENT_KIND_NOT_ALLOWED", "log_kind", "http"),
+        ),
+        (
+            multi.replace(
+                "raw_event_kind = \"http\"",
+                "raw_event_kind = \"http\"\nlog_kind = \"syslog\"",
+            ),
+            ("FIELD_NOT_ALLOWED", "log_kind", "syslog"),
+        ),
+        (
+            timeseries_definition(&[1], &f.server_name, OWN_ADDRESS, "log_kind = \"syslog\""),
+            ("FIELD_NOT_ALLOWED", "log_kind", "syslog"),
+        ),
+        (
+            timeseries_definition(&[1], &f.server_name, OWN_ADDRESS, "").replace(
+                "raw_event_kind = \"timeseries\"",
+                "raw_event_kind = \"periodic_time_series\"",
+            ),
+            (
+                "EVENT_KIND_NOT_ALLOWED",
+                "raw_event_kind",
+                "periodic_time_series",
+            ),
+        ),
+    ];
+    for (text, (code, field, value)) in cases {
+        let res = f.sys(&insert(&f.engine_a, "def", &text)).await;
+        assert_eq!(
+            refused(&res),
+            (code.to_string(), field.to_string(), value.to_string()),
+            "{text}"
+        );
+    }
+    assert!(stored(&f.store(), "def").is_none());
+}
+
+#[tokio::test]
+async fn a_prefix_log_kind_is_fixed_once_its_first_model_exists() {
+    let f = fixture().await;
+    let text =
+        |log_kind: &str| prefix_definition(&[&f.logs_a], log_kind, &f.server_name, OWN_ADDRESS, "");
+    f.define(&f.engine_a, "logs", &text("syslog")).await;
+
+    // Before a run, the log kind may change.
+    let res = f.sys(&update("logs", &text("apache-access"))).await;
+    assert_eq!(data(res), json!({ "updateTrainingDefinition": "logs" }));
+    let definition = stored(&f.store(), "logs").unwrap();
+    assert_eq!(definition.log_kind.as_deref(), Some("apache-access"));
+    assert_eq!(definition.definition, text("apache-access"));
+
+    // While the first run is active, the update is refused for the run.
+    let run_id = f.train("logs").await;
+    let res = f.sys(&update("logs", &text("nginx"))).await;
+    assert_eq!(
+        refused(&res),
+        ("RUN_IN_PROGRESS".into(), "name".into(), run_id.to_string())
+    );
+    let definition = stored(&f.store(), "logs").unwrap();
+    assert_eq!(definition.log_kind.as_deref(), Some("apache-access"));
+    assert_eq!(definition.definition, text("apache-access"));
+
+    // Once its model is committed, the log kind is fixed.
+    f.store()
+        .complete_run(
+            run_id,
+            &f.engine_a,
+            review_database::Model {
+                log_kind: Some("apache-access".to_string()),
+                clustering_model_type: ClusteringModelTypeRef::Custom,
+                ..upload("logs", ("Prefix", "log"))
+            },
+        )
+        .expect("complete the run");
+    let res = f.sys(&update("logs", &text("nginx"))).await;
+    assert_eq!(
+        refused(&res),
+        ("FIELD_FIXED".into(), "log_kind".into(), "nginx".into())
+    );
+    let (_, extensions) = single_error(&res);
+    assert_eq!(extensions["definition"], "logs");
+    let definition = stored(&f.store(), "logs").unwrap();
+    assert_eq!(definition.log_kind.as_deref(), Some("apache-access"));
+    assert_eq!(definition.definition, text("apache-access"));
+}
+
+#[tokio::test]
+async fn a_custom_timeseries_run_completes_with_a_periodic_time_series_upload() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let policy =
+        insert_assigned_policy(&f.store(), "series", A, &generator, PolicyShape::default());
+    let text = timeseries_definition(&[policy], &f.server_name, OWN_ADDRESS, "");
+    f.define(&f.engine_a, "series", &text).await;
+    let definition = stored(&f.store(), "series").unwrap();
+    assert_eq!(definition.raw_event_kind, "periodic_time_series");
+    assert_eq!(definition.log_kind, None);
+    assert_eq!(definition.definition, text);
+
+    let run_id = f.train("series").await;
+    f.store()
+        .complete_run(
+            run_id,
+            &f.engine_a,
+            review_database::Model {
+                clustering_model_type: ClusteringModelTypeRef::Custom,
+                ..upload("series", (TIMESERIES_KIND, "periodic_time_series"))
+            },
+        )
+        .expect("complete the run");
+    assert_eq!(f.run_state(run_id), Some(RunState::Succeeded));
+    let res = f
+        .sys("{ trainingDefinition(name: \"series\") { state rawEventKind model { rawEventKind clusteringModelType { id version } } } }")
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": {
+            "state": "READY",
+            "rawEventKind": "periodic_time_series",
+            "model": {
+                "rawEventKind": "periodic_time_series",
+                "clusteringModelType": { "id": "custom", "version": null },
+            },
+        } })
+    );
+}
+
+#[tokio::test]
+async fn a_model_shows_its_clustering_model_type_and_training_read() {
+    // Above 2^53, where a JSON number would lose precision.
+    const WIDE: u64 = (1 << 53) + 1;
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &text).await;
+    let run_id = f.train("def").await;
+    let first = 1_773_586_804_123_456_789_i64;
+    let last = 1_774_191_604_000_000_001_i64;
+    let day = 1_773_532_800_000_000_000_i64;
+    f.store()
+        .complete_run(
+            run_id,
+            &f.engine_a,
+            review_database::Model {
+                training_read: review_database::TrainingRead {
+                    first,
+                    last,
+                    days: vec![
+                        review_database::TrainingReadDay {
+                            start: day,
+                            count: WIDE,
+                        },
+                        review_database::TrainingReadDay {
+                            start: day + DAY * 1_000_000_000,
+                            count: 0,
+                        },
+                    ],
+                },
+                ..upload("def", ("Multifield", "http"))
+            },
+        )
+        .expect("complete the run");
+    let res = f
+        .sys("{ trainingDefinition(name: \"def\") { model { clusteringModelType { id version } trainingRead { first last days { start count } } } } }")
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "model": {
+            "clusteringModelType": { "id": "http_url", "version": "1" },
+            "trainingRead": {
+                "first": "2026-03-15T15:00:04.123456789Z",
+                "last": "2026-03-22T15:00:04.000000001Z",
+                "days": [
+                    { "start": "2026-03-15T00:00:00Z", "count": WIDE.to_string() },
+                    { "start": "2026-03-16T00:00:00Z", "count": "0" },
+                ],
+            },
+        } } })
+    );
 }

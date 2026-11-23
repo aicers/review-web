@@ -740,20 +740,11 @@ server_name = "{server_name}"
     }
 
     fn training_definition(server_name: &str) -> String {
-        format!(
-            r#"raw_event_kind = "http"
-method = "multidimension"
-sources = ["piglet.b.example.com"]
-window_start = "2026-10-14T00:00:00Z"
-window_end = "2026-10-21T00:00:00Z"
-
-[data_store]
-address = "10.0.0.5:38371"
-server_name = "{server_name}"
-
-[csv]
-format = [{{ data_type = "utf8", weight = 1.0 }}]
-"#
+        crate::graphql::training_test_support::http_url_definition(
+            &["piglet.b.example.com"],
+            server_name,
+            "10.0.0.5:38371",
+            "",
         )
     }
 
@@ -817,6 +808,10 @@ format = [{{ data_type = "utf8", weight = 1.0 }}]
                     log_kind: None,
                     sources: vec!["piglet.b.example.com".to_string()],
                     indicator: None,
+                    clustering_model_type: review_database::ClusteringModelTypeRef::Catalog {
+                        id: "http_url".to_string(),
+                        version: 1,
+                    },
                     definition: training_definition(OWN),
                 })
                 .unwrap();

@@ -227,23 +227,13 @@ pub(super) fn timeseries_definition(
     address: &str,
     extra: &str,
 ) -> String {
-    let sources = sources
-        .iter()
-        .map(|id| format!("\"{id}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        r#"raw_event_kind = "timeseries"
-method = "timeseries"
-sources = [{sources}]
-window_start = "2026-10-14T00:00:00Z"
-window_end = "2026-10-21T00:00:00Z"
-{extra}
-
-[data_store]
-address = "{address}"
-server_name = "{server_name}"
-"#
+    let sources: Vec<String> = sources.iter().map(ToString::to_string).collect();
+    let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+    crate::graphql::training_test_support::custom_timeseries_definition(
+        &sources,
+        server_name,
+        address,
+        extra,
     )
 }
 
@@ -266,6 +256,7 @@ pub(super) fn use_policy(
             log_kind: None,
             sources: vec![id.to_string()],
             indicator: None,
+            clustering_model_type: review_database::ClusteringModelTypeRef::Custom,
             definition: String::new(),
         })
         .expect("insert training definition");

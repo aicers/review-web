@@ -190,6 +190,8 @@ fn finished_status() -> review_database::DetectorStatus {
                 reason: Some("read failed".to_string()),
             },
         ],
+        detection_models: vec![],
+        excluded: vec![],
         reported_at: time("2026-10-21T00:05:01Z"),
     }
 }
@@ -203,6 +205,8 @@ fn first_status(state: review_database::DetectorState) -> review_database::Detec
         reason: None,
         events: 0,
         sources: vec![],
+        detection_models: vec![],
+        excluded: vec![],
         reported_at: time("2026-10-21T00:00:01Z"),
     }
 }

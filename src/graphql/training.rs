@@ -22,9 +22,11 @@ use review_database::{
 };
 use tracing::warn;
 
+use self::definition::check_type;
 pub(crate) use self::definition::{TrainingDocument, is_customer_indicator, sources_of};
 use super::{
     Role, RoleGuard, SharedAgentManager,
+    clustering_model_type::ClusteringModelTypeRef,
     customer_access::{
         is_member, is_system_admin, load_accessible_model_by_name, model_by_name, users_customers,
     },
@@ -147,22 +149,36 @@ impl TrainingMutation {
     /// `agentKey` of node `nodeId`, returning the name.
     ///
     /// `definition` is the TOML document of review-protocol's
-    /// `TrainModelRequest::definition`. Scope is the customer of the
-    /// instance's node; an instance of none of the caller's customers is
-    /// refused with `Forbidden`.
+    /// `TrainModelRequest::definition`. It names its clustering model type
+    /// in `type`, a catalog id with its version in `type_version` or
+    /// `custom`, and is first checked against that type, its method's key
+    /// table and the rules of a custom definition, as `clusteringModelTypes`,
+    /// `trainingDefinitionKeys` and `customTrainingDefaults` publish them;
+    /// the type is stored as the definition's `clusteringModelType`. Scope
+    /// is the customer of the instance's node; an instance of none of the
+    /// caller's customers is refused with `Forbidden`.
     ///
     /// Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
-    /// `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
+    /// `UNKNOWN_FIELD`, `UNKNOWN_MODEL_TYPE`, `MODEL_TYPE_VERSION_MISMATCH`,
+    /// `FIELD_FIXED`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
     /// `BOUND_VIOLATED`, `EVENT_KIND_NOT_ALLOWED`, `SOURCE_NOT_ALLOWED`,
     /// `SOURCES_INCOMPATIBLE`, `DATA_STORE_NOT_INSTALLED`,
     /// `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED` for the
     /// definition; `NAME_TAKEN`, `NAME_INVALID` and `INSTANCE_NOT_ELIGIBLE`.
     ///
-    /// A `timeseries` definition takes event kind `timeseries`, neither
-    /// `[csv]` nor a field only the prefix method reads, and as sources the
-    /// IDs of sampling policies of the customer that are assigned, of one
-    /// kind, column, interval, period and offset, and kept in the Data Store
-    /// `[data_store]` names, which their generators still write to.
+    /// The window may span at most the `retention` of the Data Store
+    /// `[data_store]` names, in its draft (90 days when it states none), and
+    /// may not start earlier than that before now; otherwise it is refused
+    /// with `BOUND_VIOLATED` on `window_end` or `window_start`.
+    ///
+    /// A `prefix` definition takes raw event kind `log` and names the log it
+    /// reads in `log_kind`, which is neither empty nor the name of another
+    /// raw event kind, such as `http`, or is refused with
+    /// `EVENT_KIND_NOT_ALLOWED`. A `timeseries` definition takes event kind
+    /// `timeseries`, and as sources the IDs of sampling policies of the
+    /// customer that are assigned, of one kind, column, interval, period and
+    /// offset, and kept in the Data Store `[data_store]` names, which their
+    /// generators still write to.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the instance's customer is unfinished, also while it is stopped.
@@ -187,7 +203,7 @@ impl TrainingMutation {
                 instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
             check_customers(&store, [customer_id])?;
         }
-        let document = TrainingDocument::parse_and_validate(&definition)?;
+        let (document, clustering_model_type) = TrainingDocument::check(&definition)?;
         let addrs = data_store_addrs(ctx, &document.data_store.server_name).await;
 
         let _lock = lock_engine_config(ctx).await?;
@@ -205,16 +221,19 @@ impl TrainingMutation {
             ShapeReference::FirstSource,
             system_admin,
         )?;
+        document.check_retention(&store, jiff::Timestamp::now())?;
+        let (raw_event_kind, log_kind) = document.record_kinds();
         store
             .insert_training_definition(NewTrainingDefinition {
                 name: name.clone(),
                 customer_id: target.customer_id,
                 instance: target.instance,
                 method: document.method.into(),
-                raw_event_kind: document.raw_event_kind.clone(),
-                log_kind: None,
+                raw_event_kind,
+                log_kind,
                 sources: document.sources.clone(),
                 indicator: document.suspicious_tokens.clone(),
+                clustering_model_type,
                 definition,
             })
             .map_err(|e| store_refusal(e, StoreWrite::InsertDefinition, Some(&document)))?;
@@ -228,10 +247,14 @@ impl TrainingMutation {
     /// validated for that customer. A definition of none of the caller's
     /// customers is refused with `Forbidden`.
     ///
+    /// The definition is checked, and its clustering model type stored, as
+    /// `insertTrainingDefinition` does.
+    ///
     /// Refusals carry `extensions.code`: the codes of the definition, as
     /// `insertTrainingDefinition` lists them; `NOT_FOUND`, `RUN_IN_PROGRESS`
-    /// while a run of the definition is active, and `FIELD_FIXED` when the
-    /// method or the event kind would change after the model exists.
+    /// while a run of the definition is active, and `FIELD_FIXED`, with the
+    /// submitted value, when the method, the raw event kind or a `prefix`
+    /// definition's `log_kind` would change after the model exists.
     ///
     /// Once its timeseries model exists, a timeseries definition's sources
     /// must have the shape of the policies the model was trained on, which
@@ -257,7 +280,7 @@ impl TrainingMutation {
             let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
             check_customers(&store, [stored.customer_id])?;
         }
-        let document = TrainingDocument::parse_and_validate(&definition)?;
+        let (document, clustering_model_type) = TrainingDocument::check(&definition)?;
         let addrs = data_store_addrs(ctx, &document.data_store.server_name).await;
 
         let _lock = lock_engine_config(ctx).await?;
@@ -275,15 +298,18 @@ impl TrainingMutation {
             shape,
             system_admin,
         )?;
+        document.check_retention(&store, jiff::Timestamp::now())?;
+        let (raw_event_kind, log_kind) = document.record_kinds();
         store
             .update_training_definition(
                 &name,
                 TrainingDefinitionUpdate {
                     method: document.method.into(),
-                    raw_event_kind: document.raw_event_kind.clone(),
-                    log_kind: None,
+                    raw_event_kind,
+                    log_kind,
                     sources: document.sources.clone(),
                     indicator: document.suspicious_tokens.clone(),
+                    clustering_model_type,
                     definition,
                 },
             )
@@ -318,14 +344,19 @@ impl TrainingMutation {
     /// returning the run id.
     ///
     /// Scope is the definition's customer. The stored definition is checked
-    /// again for its customer's sources and an installed Data Store, and the
-    /// definition text the run starts with is relayed to the instance. A
+    /// against its clustering model type first, as `insertTrainingDefinition`
+    /// checks it, so that one stored at an earlier type version is refused
+    /// with `MODEL_TYPE_VERSION_MISMATCH`; then again for its customer's
+    /// sources, an installed Data Store and the Data Store's retention; and
+    /// the definition text the run starts with is relayed to the instance. A
     /// retrain of a timeseries model keeps the shape of the policies it was
     /// trained on, as `updateTrainingDefinition` does.
     ///
-    /// Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
-    /// the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
-    /// `SOURCES_INCOMPATIBLE` and `DATA_STORE_NOT_INSTALLED`;
+    /// Refusals carry `extensions.code`: `NOT_FOUND`; the codes of the
+    /// clustering model type check, as `insertTrainingDefinition` lists
+    /// them; `INVALID_DOCUMENT` if the stored definition does not parse;
+    /// `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+    /// `DATA_STORE_NOT_INSTALLED` and `BOUND_VIOLATED`;
     /// `INSTANCE_NOT_ELIGIBLE`,
     /// `INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
     /// stored, `ENGINE_REFUSED` with the engine's reason in `value` or
@@ -349,6 +380,7 @@ impl TrainingMutation {
             let Some(hostname) = applied_hostname(&store, instance.node_id)? else {
                 return Err(no_hostname(instance));
             };
+            check_type(&stored.definition)?;
             let document = TrainingDocument::parse(&stored.definition).map_err(|_| {
                 refusal(
                     RefusalCode::InvalidDocument,
@@ -364,6 +396,7 @@ impl TrainingMutation {
                 &HashSet::from([document.data_store.pair()]),
                 system_admin,
             )?;
+            document.check_retention(&store, jiff::Timestamp::now())?;
             let started = store
                 .start_training_run(&name)
                 .map_err(|e| store_refusal(e, StoreWrite::StartTraining, None))?;
@@ -461,13 +494,21 @@ impl TrainingMutation {
     ///
     /// The target's definition is the source's trained definition, the one
     /// that produced its classifier, with `dataStore`, `sources` and
-    /// `suspiciousTokens` replaced. Left out, `suspiciousTokens` keeps the
-    /// trained definition's indicator for a clone within a customer and
-    /// clears it for a clone to another customer; null clears it. The
-    /// target keeps the source's classifier, so a timeseries target's
-    /// sources must have the shape of the policies the source was trained
-    /// on, and while none of those is stored, the shape is unknown and any
-    /// source is refused with `SOURCES_INCOMPATIBLE`.
+    /// `suspiciousTokens` replaced. It is not checked against a clustering
+    /// model type: the target keeps the source's classifier, so its
+    /// `clusteringModelType` is the source model's, which may be an earlier
+    /// catalog version. Nor is its window checked against the Data Store's
+    /// retention, since a clone reads no raw events. Its record's raw event
+    /// kind and log kind are those its text gives, as
+    /// `insertTrainingDefinition` stores them.
+    ///
+    /// Left out, `suspiciousTokens` keeps the trained definition's indicator
+    /// for a clone within a customer and clears it for a clone to another
+    /// customer; null clears it. The target keeps the source's classifier,
+    /// so a timeseries target's sources must have the shape of the policies
+    /// the source was trained on, and while none of those is stored, the
+    /// shape is unknown and any source is refused with
+    /// `SOURCES_INCOMPATIBLE`.
     ///
     /// The caller must belong to the source's customer and the target
     /// instance's, or is refused with `Forbidden`; a clone to another
@@ -576,6 +617,7 @@ impl TrainingMutation {
                 trained_shape(&store, &source, &model.trained_sources)?,
                 system_admin,
             )?;
+            let (raw_event_kind, log_kind) = document.record_kinds();
             let run = store
                 .start_clone_run(
                     &source,
@@ -585,10 +627,11 @@ impl TrainingMutation {
                         customer_id: target.customer_id,
                         instance: target.instance,
                         method: document.method.into(),
-                        raw_event_kind: document.raw_event_kind.clone(),
-                        log_kind: None,
+                        raw_event_kind,
+                        log_kind,
                         sources: document.sources.clone(),
                         indicator: document.suspicious_tokens.clone(),
+                        clustering_model_type: model.clustering_model_type.clone(),
                         definition: document.to_text()?,
                     },
                 )
@@ -1179,6 +1222,12 @@ fn store_refusal(
                     "raw_event_kind",
                     document.map_or_default(|d| d.raw_event_kind.clone()),
                 ),
+                database::FixedField::LogKind => (
+                    "log_kind",
+                    document
+                        .and_then(|d| d.log_kind.clone())
+                        .unwrap_or_default(),
+                ),
             };
             refusal(RefusalCode::FieldFixed, message, field, value)
                 .extend_with(|_, extensions| extensions.set("definition", name.as_str()))
@@ -1337,9 +1386,20 @@ impl TrainingDefinition {
         self.inner.method.into()
     }
 
-    /// The event kind the definition trains on.
+    /// The Giganto kind name of the raw events the definition trains on,
+    /// such as `http`. A prefix definition's is `log`, the log being named by
+    /// the definition's `log_kind`; a timeseries definition's is
+    /// `periodic_time_series`.
     async fn raw_event_kind(&self) -> &str {
         &self.inner.raw_event_kind
+    }
+
+    /// The clustering model type the definition trains as: the type its
+    /// `type` and `type_version` name, or, for a definition created by a
+    /// clone, the type of the source model, which may be an earlier catalog
+    /// version.
+    async fn clustering_model_type(&self) -> ClusteringModelTypeRef<'_> {
+        (&self.inner.clustering_model_type).into()
     }
 
     /// The source names the definition reads events of; for the timeseries

@@ -801,6 +801,95 @@ type ClusterTrend {
 	longestDownSpan: StringNumber!
 }
 
+"""
+How a clustering model type groups raw events.
+"""
+enum ClusteringApproach {
+	"""
+	Groups raw events by the leading tokens of their prefix columns.
+	"""
+	PREFIX
+	"""
+	Groups raw events around centroids of their feature vectors.
+	"""
+	CENTROID
+}
+
+"""
+A clustering model type: a fixed recipe for training a clustering model on
+one raw event kind.
+"""
+type ClusteringModelType {
+	"""
+	The snake-case identifier, never changed; a definition names it in
+	`type`.
+	"""
+	id: String!
+	"""
+	The current version, raised whenever the fixed values or the allowed
+	detection models change; a definition names it in `type_version`.
+	"""
+	version: StringNumber!
+	"""
+	The position in the catalog.
+	"""
+	order: StringNumber!
+	"""
+	The kind of the raw events the model reads.
+	"""
+	rawEventKind: RawEventKind!
+	"""
+	The clustering method.
+	"""
+	method: ModelMethod!
+	"""
+	How the model groups raw events.
+	"""
+	approach: ClusteringApproach!
+	"""
+	The top-level definition keys the type fixes, with their values, in
+	catalog order. `csv` is one entry, its value an inline table.
+	"""
+	fixedValues: [TrainingValue!]!
+	"""
+	The definition values the operator sets, in catalog order.
+	"""
+	operatorValues: [TrainingOperatorValue!]!
+	"""
+	The shortest training window, from `window_start` to `window_end`, in
+	seconds; null when the type sets no minimum.
+	"""
+	minWindowSeconds: Int
+	"""
+	The detection models allowed to run on the model, in detection model
+	number order.
+	"""
+	detectionModels: [DetectionModel!]!
+	"""
+	What the type groups and what its limits are, in English.
+	"""
+	descriptionEn: String!
+	"""
+	What the type groups and what its limits are, in Korean.
+	"""
+	descriptionKo: String!
+}
+
+"""
+The clustering model type a training definition or a model names.
+"""
+type ClusteringModelTypeRef {
+	"""
+	The catalog id of the type, or `custom` for a definition whose every
+	value the operator set.
+	"""
+	id: String!
+	"""
+	The catalog version of the type; null for `custom`.
+	"""
+	version: StringNumber
+}
+
 type ColumnTimeSeries {
 	"""
 	The column index of the time series in string within the representable
@@ -1174,7 +1263,7 @@ enum DeployDisposition {
 """
 What a detection model found, as its own detail.
 """
-union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail
+union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail | LabelDbMatchDetail | FarOutlierDetail
 
 type DetectionEvent {
 	"""
@@ -1348,6 +1437,8 @@ enum DetectionModel {
 	DOMAIN_GENERATION_ALGORITHM
 	DNS_COVERT_CHANNEL
 	UNUSUAL_DESTINATION_PATTERN
+	LABEL_DB_MATCH
+	FAR_OUTLIER
 }
 
 type DetectionModelEventCounter {
@@ -2170,6 +2261,56 @@ enum FailurePolicy {
 	HOLD
 }
 
+"""
+The detail of a `FarOutlier` detection event, one field per form of the
+measure; exactly one is non-null.
+"""
+type FarOutlierDetail {
+	"""
+	The prefix-approach form; non-null exactly for that form.
+	"""
+	prefix: FarOutlierPrefixDetail
+}
+
+"""
+The prefix-approach form of a `FarOutlier` detail, measured against the
+best prefix.
+"""
+type FarOutlierPrefixDetail {
+	"""
+	The cluster of the best prefix; null when there is no cluster prefix.
+	"""
+	nearestClusterId: StringNumber
+	"""
+	The signature of the best prefix's cluster; null when there is no
+	cluster prefix.
+	"""
+	nearestSignature: String
+	"""
+	The number of leading tokens of the outlier's pattern equal to the
+	best prefix's, which is also the 0-based position where they diverge.
+	"""
+	matchedTokens: StringNumber!
+	"""
+	The best prefix's length in tokens.
+	"""
+	prefixLen: StringNumber!
+	"""
+	The outlier's token at the position `matchedTokens` names; null when
+	the pattern has no token there.
+	"""
+	divergedToken: String
+	"""
+	The number of the round's raw events with this pattern.
+	"""
+	patternCount: StringNumber!
+	"""
+	The number of this pattern's detection events dropped by the
+	per-pattern cap.
+	"""
+	truncatedInPattern: StringNumber!
+}
+
 type FileCreateBody {
 	agentName: String!
 	agentId: String!
@@ -2590,6 +2731,41 @@ enum LabelDbKind {
 	REGEX
 }
 
+"""
+The detail of a `LabelDbMatch` detection event: the label DB rule a raw
+event matched.
+"""
+type LabelDbMatchDetail {
+	"""
+	The name of the label DB that holds the matched rule.
+	"""
+	labelDb: String!
+	"""
+	The matched rule's id within `labelDb`.
+	"""
+	ruleId: StringNumber!
+	"""
+	The matched rule's name.
+	"""
+	ruleName: String!
+	"""
+	The signature that matched.
+	"""
+	matchedTo: String!
+	"""
+	The cluster of the round that the raw event belongs to.
+	"""
+	clusterId: StringNumber!
+	"""
+	The rule's confidence, 0–1; null when the rule has none.
+	"""
+	ruleConfidence: Float
+	"""
+	How well the rule matched, 0–1.
+	"""
+	matchScore: Float!
+}
+
 type LabelDbOutput {
 	name: String!
 	version: String!
@@ -2803,10 +2979,21 @@ type ModelDigest {
 	"""
 	method: ModelMethod!
 	"""
-	The event kind the model was trained on, such as `http`, a Sysmon kind
-	or a log kind.
+	The Giganto kind name of the raw events the model was trained on,
+	such as `http` or a Sysmon kind. A prefix model's is `log`, the log
+	being named by its definition's `log_kind`.
 	"""
 	rawEventKind: String!
+	"""
+	The clustering model type the current result was trained as, as the
+	engine reported it with the model.
+	"""
+	clusteringModelType: ClusteringModelTypeRef!
+	"""
+	What the training of the current result read, as the engine reported
+	it with the model.
+	"""
+	trainingRead: TrainingRead!
 	"""
 	The customer the model belongs to.
 	"""
@@ -3643,22 +3830,36 @@ type Mutation {
 	`agentKey` of node `nodeId`, returning the name.
 	
 	`definition` is the TOML document of review-protocol's
-	`TrainModelRequest::definition`. Scope is the customer of the
-	instance's node; an instance of none of the caller's customers is
-	refused with `Forbidden`.
+	`TrainModelRequest::definition`. It names its clustering model type
+	in `type`, a catalog id with its version in `type_version` or
+	`custom`, and is first checked against that type, its method's key
+	table and the rules of a custom definition, as `clusteringModelTypes`,
+	`trainingDefinitionKeys` and `customTrainingDefaults` publish them;
+	the type is stored as the definition's `clusteringModelType`. Scope
+	is the customer of the instance's node; an instance of none of the
+	caller's customers is refused with `Forbidden`.
 	
 	Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
-	`UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
+	`UNKNOWN_FIELD`, `UNKNOWN_MODEL_TYPE`, `MODEL_TYPE_VERSION_MISMATCH`,
+	`FIELD_FIXED`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
 	`BOUND_VIOLATED`, `EVENT_KIND_NOT_ALLOWED`, `SOURCE_NOT_ALLOWED`,
 	`SOURCES_INCOMPATIBLE`, `DATA_STORE_NOT_INSTALLED`,
 	`ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED` for the
 	definition; `NAME_TAKEN`, `NAME_INVALID` and `INSTANCE_NOT_ELIGIBLE`.
 	
-	A `timeseries` definition takes event kind `timeseries`, neither
-	`[csv]` nor a field only the prefix method reads, and as sources the
-	IDs of sampling policies of the customer that are assigned, of one
-	kind, column, interval, period and offset, and kept in the Data Store
-	`[data_store]` names, which their generators still write to.
+	The window may span at most the `retention` of the Data Store
+	`[data_store]` names, in its draft (90 days when it states none), and
+	may not start earlier than that before now; otherwise it is refused
+	with `BOUND_VIOLATED` on `window_end` or `window_start`.
+	
+	A `prefix` definition takes raw event kind `log` and names the log it
+	reads in `log_kind`, which is neither empty nor the name of another
+	raw event kind, such as `http`, or is refused with
+	`EVENT_KIND_NOT_ALLOWED`. A `timeseries` definition takes event kind
+	`timeseries`, and as sources the IDs of sampling policies of the
+	customer that are assigned, of one kind, column, interval, period and
+	offset, and kept in the Data Store `[data_store]` names, which their
+	generators still write to.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the instance's customer is unfinished, also while it is stopped.
@@ -3672,10 +3873,14 @@ type Mutation {
 	validated for that customer. A definition of none of the caller's
 	customers is refused with `Forbidden`.
 	
+	The definition is checked, and its clustering model type stored, as
+	`insertTrainingDefinition` does.
+	
 	Refusals carry `extensions.code`: the codes of the definition, as
 	`insertTrainingDefinition` lists them; `NOT_FOUND`, `RUN_IN_PROGRESS`
-	while a run of the definition is active, and `FIELD_FIXED` when the
-	method or the event kind would change after the model exists.
+	while a run of the definition is active, and `FIELD_FIXED`, with the
+	submitted value, when the method, the raw event kind or a `prefix`
+	definition's `log_kind` would change after the model exists.
 	
 	Once its timeseries model exists, a timeseries definition's sources
 	must have the shape of the policies the model was trained on, which
@@ -3704,14 +3909,19 @@ type Mutation {
 	returning the run id.
 	
 	Scope is the definition's customer. The stored definition is checked
-	again for its customer's sources and an installed Data Store, and the
-	definition text the run starts with is relayed to the instance. A
+	against its clustering model type first, as `insertTrainingDefinition`
+	checks it, so that one stored at an earlier type version is refused
+	with `MODEL_TYPE_VERSION_MISMATCH`; then again for its customer's
+	sources, an installed Data Store and the Data Store's retention; and
+	the definition text the run starts with is relayed to the instance. A
 	retrain of a timeseries model keeps the shape of the policies it was
 	trained on, as `updateTrainingDefinition` does.
 	
-	Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
-	the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
-	`SOURCES_INCOMPATIBLE` and `DATA_STORE_NOT_INSTALLED`;
+	Refusals carry `extensions.code`: `NOT_FOUND`; the codes of the
+	clustering model type check, as `insertTrainingDefinition` lists
+	them; `INVALID_DOCUMENT` if the stored definition does not parse;
+	`SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+	`DATA_STORE_NOT_INSTALLED` and `BOUND_VIOLATED`;
 	`INSTANCE_NOT_ELIGIBLE`,
 	`INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
 	stored, `ENGINE_REFUSED` with the engine's reason in `value` or
@@ -3744,13 +3954,21 @@ type Mutation {
 	
 	The target's definition is the source's trained definition, the one
 	that produced its classifier, with `dataStore`, `sources` and
-	`suspiciousTokens` replaced. Left out, `suspiciousTokens` keeps the
-	trained definition's indicator for a clone within a customer and
-	clears it for a clone to another customer; null clears it. The
-	target keeps the source's classifier, so a timeseries target's
-	sources must have the shape of the policies the source was trained
-	on, and while none of those is stored, the shape is unknown and any
-	source is refused with `SOURCES_INCOMPATIBLE`.
+	`suspiciousTokens` replaced. It is not checked against a clustering
+	model type: the target keeps the source's classifier, so its
+	`clusteringModelType` is the source model's, which may be an earlier
+	catalog version. Nor is its window checked against the Data Store's
+	retention, since a clone reads no raw events. Its record's raw event
+	kind and log kind are those its text gives, as
+	`insertTrainingDefinition` stores them.
+	
+	Left out, `suspiciousTokens` keeps the trained definition's indicator
+	for a clone within a customer and clears it for a clone to another
+	customer; null clears it. The target keeps the source's classifier,
+	so a timeseries target's sources must have the shape of the policies
+	the source was trained on, and while none of those is stored, the
+	shape is unknown and any source is refused with
+	`SOURCES_INCOMPATIBLE`.
 	
 	The caller must belong to the source's customer and the target
 	instance's, or is refused with `Forbidden`; a clone to another
@@ -4604,12 +4822,13 @@ type OperatorValue {
 	"""
 	valueType: OperatorValueType!
 	"""
-	The default, written as a TOML value.
+	The default, written as a TOML value; `[]` for a `TABLE_LIST`.
 	"""
 	defaultValue: String!
 	"""
-	The inclusive lower bound, written as a TOML value; null unless the
-	value is a ranged integer or float.
+	The lower bound, written as a TOML value; null unless the value is a
+	ranged integer or float. It is inclusive unless `minExclusive` is
+	true.
 	"""
 	min: String
 	"""
@@ -4617,6 +4836,81 @@ type OperatorValue {
 	value is a ranged integer or float.
 	"""
 	max: String
+	"""
+	Whether `min` is excluded: true exactly for a float range that
+	excludes its lower bound.
+	"""
+	minExclusive: Boolean!
+	"""
+	The cells of each entry; non-null exactly for a `TABLE_LIST`.
+	"""
+	cells: [OperatorValueCell!]
+}
+
+"""
+A cell of the entries of a `TABLE_LIST` operator value.
+"""
+type OperatorValueCell {
+	"""
+	The key of the cell in an entry.
+	"""
+	name: String!
+	"""
+	The type of the cell.
+	"""
+	valueType: OperatorValueCellType!
+	"""
+	The default, written as a TOML value; null when the cell has none, and
+	then every entry must hold the cell.
+	"""
+	defaultValue: String
+	"""
+	The lower bound, written as a TOML value; null unless the cell is a
+	ranged integer, float or integer list. For an `INTEGER_LIST` it bounds
+	each element. It is inclusive unless `minExclusive` is true.
+	"""
+	min: String
+	"""
+	The inclusive upper bound, written as a TOML value; null unless the
+	cell is a ranged integer, float or integer list. For an
+	`INTEGER_LIST` it bounds each element.
+	"""
+	max: String
+	"""
+	Whether `min` is excluded: true exactly for a float range that
+	excludes its lower bound.
+	"""
+	minExclusive: Boolean!
+}
+
+"""
+The type of a cell of a `TABLE_LIST` operator value's entries.
+"""
+enum OperatorValueCellType {
+	"""
+	A boolean.
+	"""
+	BOOLEAN
+	"""
+	A 64-bit signed integer.
+	"""
+	INTEGER
+	"""
+	A 64-bit float.
+	"""
+	FLOAT
+	"""
+	A list of strings.
+	"""
+	STRING_LIST
+	"""
+	A non-empty list of 64-bit signed integers.
+	"""
+	INTEGER_LIST
+	"""
+	A non-empty string.
+	"""
+	NON_EMPTY_STRING
 }
 
 """
@@ -4639,6 +4933,10 @@ enum OperatorValueType {
 	A list of strings.
 	"""
 	STRING_LIST
+	"""
+	A list of tables, each with the cells `cells` lists.
+	"""
+	TABLE_LIST
 }
 
 type Outlier {
@@ -5010,6 +5308,26 @@ type Query {
 		"""
 		trendiOrder: Int,		start: DateTime,		end: DateTime
 	): TimeSeriesResult!
+	"""
+	Every clustering model type of the catalog, in catalog order.
+	"""
+	clusteringModelTypes: [ClusteringModelType!]!
+	"""
+	The keys a training definition of `method` holds, one row per key of
+	the method's key table, in its order. A `[csv]` part is a row of its
+	own, dotted, such as `csv.format`. Keys the method does not define
+	yet are not listed.
+	"""
+	trainingDefinitionKeys(method: ModelMethod!): [TrainingDefinitionKey!]!
+	"""
+	The defaults of a custom training definition of `method`, in key
+	table order, for the keys that have one.
+	
+	`csv` is listed, as one entry, only for `MULTIDIMENSION` with a
+	`rawEventKind` that has a `[csv]` default: the `[csv]` of the first
+	`MULTIDIMENSION` catalog type that reads that kind.
+	"""
+	customTrainingDefaults(method: ModelMethod!, rawEventKind: RawEventKind): [TrainingValue!]!
 	"""
 	Returns persisted deletion results; null means no persisted job exists.
 	"""
@@ -6964,9 +7282,19 @@ type TrainingDefinition {
 	"""
 	method: ModelMethod!
 	"""
-	The event kind the definition trains on.
+	The Giganto kind name of the raw events the definition trains on,
+	such as `http`. A prefix definition's is `log`, the log being named by
+	the definition's `log_kind`; a timeseries definition's is
+	`periodic_time_series`.
 	"""
 	rawEventKind: String!
+	"""
+	The clustering model type the definition trains as: the type its
+	`type` and `type_version` name, or, for a definition created by a
+	clone, the type of the source model, which may be an earlier catalog
+	version.
+	"""
+	clusteringModelType: ClusteringModelTypeRef!
 	"""
 	The source names the definition reads events of; for the timeseries
 	method, the IDs of the sampling policies it reads the series of.
@@ -7014,6 +7342,26 @@ type TrainingDefinition {
 }
 
 """
+A row of a method's training definition key table.
+"""
+type TrainingDefinitionKey {
+	"""
+	The key, dotted from the top level, such as `batch_size` or
+	`csv.format`.
+	"""
+	key: String!
+	"""
+	Whether a definition of the method holds the key.
+	"""
+	status: TrainingKeyStatus!
+	"""
+	What an absent key means, or how the engine fills a value shorter than
+	it needs, in one English line; null when neither applies.
+	"""
+	description: String
+}
+
+"""
 The state of a training definition (RFC 0006 §5.10).
 """
 enum TrainingDefinitionState {
@@ -7041,6 +7389,147 @@ enum TrainingDefinitionState {
 	The definition has no instance.
 	"""
 	NO_INSTANCE
+}
+
+"""
+Whether a training definition of a method holds a key.
+"""
+enum TrainingKeyStatus {
+	"""
+	The key must be present.
+	"""
+	REQUIRED
+	"""
+	The key may be absent, with the meaning the row's description states.
+	"""
+	ABSENT_MEANS
+	"""
+	The method does not use the key; a present key is refused.
+	"""
+	REJECTED
+	"""
+	The key must be present in a definition of a catalog type and absent
+	from a custom one: `type_version`.
+	"""
+	CATALOG_TYPE_ONLY
+}
+
+"""
+A value of a training definition that the operator sets for a clustering
+model type.
+"""
+type TrainingOperatorValue {
+	"""
+	The top-level key in the training definition.
+	"""
+	name: String!
+	"""
+	The type of the value.
+	"""
+	valueType: TrainingValueType!
+	"""
+	Whether the key may be absent, absence then being its value.
+	"""
+	optional: Boolean!
+	"""
+	The inclusive lower bound, written as a TOML value; null unless the
+	value is a ranged `INTEGER` or `FLOAT`.
+	"""
+	min: String
+	"""
+	The inclusive upper bound, written as a TOML value; null unless the
+	value is a ranged `INTEGER` or `FLOAT`.
+	"""
+	max: String
+	"""
+	The default, written as a TOML value; null when there is none.
+	"""
+	defaultValue: String
+}
+
+"""
+A summary of the raw events the training of a model read.
+"""
+type TrainingRead {
+	"""
+	The time of the first raw event read.
+	"""
+	first: DateTime!
+	"""
+	The time of the last raw event read.
+	"""
+	last: DateTime!
+	"""
+	The number of raw events read on each day, in the order the model
+	records them.
+	"""
+	days: [TrainingReadDay!]!
+}
+
+"""
+The number of raw events the training of a model read on one day.
+"""
+type TrainingReadDay {
+	"""
+	The start of the day.
+	"""
+	start: DateTime!
+	"""
+	The number of raw events read on the day.
+	"""
+	count: StringNumber!
+}
+
+"""
+A key of a training definition and its value.
+"""
+type TrainingValue {
+	"""
+	The top-level key in the training definition.
+	"""
+	key: String!
+	"""
+	The value, written as a TOML value; a table is an inline table.
+	"""
+	value: String!
+}
+
+"""
+The type of a value of a training definition.
+"""
+enum TrainingValueType {
+	"""
+	A string.
+	"""
+	STRING
+	"""
+	An RFC 3339 timestamp with an offset, written as a string.
+	"""
+	TIMESTAMP
+	"""
+	An integer.
+	"""
+	INTEGER
+	"""
+	A float; an integer of the same value is also taken.
+	"""
+	FLOAT
+	"""
+	A list of strings.
+	"""
+	STRING_LIST
+	"""
+	A list of integers.
+	"""
+	INTEGER_LIST
+	"""
+	A table.
+	"""
+	TABLE
+	"""
+	A list of tables.
+	"""
+	TABLE_LIST
 }
 
 """

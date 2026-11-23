@@ -32,9 +32,12 @@ pub(crate) enum RefusalCode {
     DuplicateEntry,
     /// The instance received the request and refused it.
     EngineRefused,
-    /// An event kind the method does not take.
+    /// An event or log kind the method, or the definition's clustering model
+    /// type, does not take.
     EventKindNotAllowed,
-    /// A change of method or event kind after the model exists.
+    /// A change of method, raw event kind or log kind after the model
+    /// exists, or a value that differs from the one the definition's
+    /// clustering model type fixes.
     FieldFixed,
     /// A field the method forbids or requires.
     FieldNotAllowed,
@@ -61,6 +64,9 @@ pub(crate) enum RefusalCode {
     /// A model delete refused by the guard, or a definition removal refused
     /// because it has a model.
     ModelInUse,
+    /// A training definition whose `type_version` is absent or not the
+    /// current version of its clustering model type.
+    ModelTypeVersionMismatch,
     /// A document naming a model that does not exist or belongs to another
     /// instance.
     ModelNotOfInstance,
@@ -85,6 +91,9 @@ pub(crate) enum RefusalCode {
     SourcesIncompatible,
     /// A key outside the schema, at any level.
     UnknownField,
+    /// A training definition `type` that is neither a clustering model type
+    /// of the catalog nor `custom`.
+    UnknownModelType,
 }
 
 impl RefusalCode {
@@ -112,6 +121,7 @@ impl RefusalCode {
             Self::InstanceUnreachable => "INSTANCE_UNREACHABLE",
             Self::InvalidDocument => "INVALID_DOCUMENT",
             Self::ModelInUse => "MODEL_IN_USE",
+            Self::ModelTypeVersionMismatch => "MODEL_TYPE_VERSION_MISMATCH",
             Self::ModelNotOfInstance => "MODEL_NOT_OF_INSTANCE",
             Self::NameInvalid => "NAME_INVALID",
             Self::NameTaken => "NAME_TAKEN",
@@ -121,6 +131,7 @@ impl RefusalCode {
             Self::SourceNotAllowed => "SOURCE_NOT_ALLOWED",
             Self::SourcesIncompatible => "SOURCES_INCOMPATIBLE",
             Self::UnknownField => "UNKNOWN_FIELD",
+            Self::UnknownModelType => "UNKNOWN_MODEL_TYPE",
         }
     }
 }

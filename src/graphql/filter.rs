@@ -51,6 +51,8 @@ pub(super) enum DetectionModel {
     DomainGenerationAlgorithm,
     DnsCovertChannel,
     UnusualDestinationPattern,
+    LabelDbMatch,
+    FarOutlier,
 }
 
 /// The kind of the raw event a detection event is about.
