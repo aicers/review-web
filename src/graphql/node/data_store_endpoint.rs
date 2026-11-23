@@ -159,7 +159,9 @@ mod tests {
         backend::DataStoreReadEndpoint,
         graphql::{
             AgentManager, SharedAgentManager, TestSchema,
-            customer::NetworksTargetAgentLookupKeysPair,
+            customer::{
+                NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
+            },
         },
     };
 
@@ -238,14 +240,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the endpoint read only")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the endpoint read only")
         }

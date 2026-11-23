@@ -23,12 +23,7 @@ impl NetworksTargetAgentLookupKeysPair {
     ) -> Self {
         Self {
             networks,
-            target_agent_lookup_keys: agent_lookup_keys
-                .into_iter()
-                .filter(|agent_lookup_key| {
-                    agent_lookup_key_service_token(agent_lookup_key) == Some(target_agent)
-                })
-                .collect(),
+            target_agent_lookup_keys: target_agent_lookup_keys(agent_lookup_keys, target_agent),
         }
     }
 
@@ -41,6 +36,52 @@ impl NetworksTargetAgentLookupKeysPair {
     pub fn networks(&self) -> &database::HostNetworkGroup {
         &self.networks
     }
+}
+
+/// The items of an allowlist or a blocklist, in stored order, with the lookup
+/// keys of the agents they are sent to.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworkListItemsTargetAgentLookupKeysPair {
+    items: Vec<database::NetworkListEntry>,
+    target_agent_lookup_keys: Vec<String>,
+}
+
+impl NetworkListItemsTargetAgentLookupKeysPair {
+    /// Creates a pair of `items` and those of `agent_lookup_keys` that address
+    /// `target_agent`.
+    #[must_use]
+    pub fn new(
+        items: Vec<database::NetworkListEntry>,
+        agent_lookup_keys: Vec<String>,
+        target_agent: &str,
+    ) -> Self {
+        Self {
+            items,
+            target_agent_lookup_keys: target_agent_lookup_keys(agent_lookup_keys, target_agent),
+        }
+    }
+
+    /// Returns the items of the list, in stored order.
+    #[must_use]
+    pub fn items(&self) -> &[database::NetworkListEntry] {
+        &self.items
+    }
+
+    /// Returns the lookup keys of the agents the items are sent to.
+    #[must_use]
+    pub fn target_agent_lookup_keys(&self) -> &[String] {
+        &self.target_agent_lookup_keys
+    }
+}
+
+/// Returns those of `agent_lookup_keys` whose service token is `target_agent`.
+fn target_agent_lookup_keys(agent_lookup_keys: Vec<String>, target_agent: &str) -> Vec<String> {
+    agent_lookup_keys
+        .into_iter()
+        .filter(|agent_lookup_key| {
+            agent_lookup_key_service_token(agent_lookup_key) == Some(target_agent)
+        })
+        .collect()
 }
 
 #[derive(Clone, InputObject)]
@@ -211,11 +252,11 @@ pub async fn send_agent_specific_customer_networks(
 /// Returns an error if the broadcast fails.
 pub(super) async fn send_agent_specific_allow_networks(
     ctx: &Context<'_>,
-    networks: &[NetworksTargetAgentLookupKeysPair],
+    items: &[NetworkListItemsTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
-        .send_agent_specific_allow_networks(networks)
+        .send_agent_specific_allow_networks(items)
         .await
         .map_err(Into::into)
 }
@@ -227,11 +268,11 @@ pub(super) async fn send_agent_specific_allow_networks(
 /// Returns an error if the broadcast fails.
 pub(super) async fn send_agent_specific_block_networks(
     ctx: &Context<'_>,
-    networks: &[NetworksTargetAgentLookupKeysPair],
+    items: &[NetworkListItemsTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
-        .send_agent_specific_block_networks(networks)
+        .send_agent_specific_block_networks(items)
         .await
         .map_err(Into::into)
 }
@@ -240,7 +281,7 @@ pub(super) async fn send_agent_specific_block_networks(
 mod tests {
     use review_database as database;
 
-    use super::NetworksTargetAgentLookupKeysPair;
+    use super::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair};
 
     #[test]
     fn network_target_agent_lookup_keys_pair_filters_mtls_service_tokens() {
@@ -258,6 +299,34 @@ mod tests {
         assert_eq!(pair.target_agent_lookup_keys(), &agent_lookup_keys[..2]);
 
         let pair = NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, "piglet");
+        assert_eq!(pair.target_agent_lookup_keys().len(), 0);
+    }
+
+    #[test]
+    fn network_list_items_target_agent_lookup_keys_pair_filters_mtls_service_tokens() {
+        let items = vec![database::NetworkListEntry {
+            id: (1 << 53) + 1,
+            name: "office".to_string(),
+            group: database::HostNetworkGroup::new(vec![], vec![], vec![]),
+        }];
+        let agent_lookup_keys = vec![
+            "001.hog.node-01.customer.internal".to_string(),
+            "001.reconverge.node-01.customer.internal".to_string(),
+            "002.hog.node-01.customer.internal".to_string(),
+        ];
+        let pair = NetworkListItemsTargetAgentLookupKeysPair::new(
+            items.clone(),
+            agent_lookup_keys.clone(),
+            "hog",
+        );
+        assert_eq!(pair.items(), items.as_slice());
+        assert_eq!(
+            pair.target_agent_lookup_keys(),
+            [agent_lookup_keys[0].clone(), agent_lookup_keys[2].clone()]
+        );
+
+        let pair =
+            NetworkListItemsTargetAgentLookupKeysPair::new(items, agent_lookup_keys, "piglet");
         assert_eq!(pair.target_agent_lookup_keys().len(), 0);
     }
 }

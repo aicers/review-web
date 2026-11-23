@@ -102,7 +102,10 @@ use tracing::warn;
 use vinum::signal;
 
 pub use self::cert::ParsedCertificate;
-pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
+pub use self::customer::{
+    NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
+    get_customer_networks,
+};
 pub(crate) use self::customer_deletion_guard::{data_store_in_use_message, data_stores_in_use};
 pub use self::network_list::{get_allow_networks, get_block_networks};
 pub(crate) use self::node::listed_rows;
@@ -959,7 +962,7 @@ impl AgentManager for MockAgentManager {
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[customer::NetworksTargetAgentLookupKeysPair],
+        _networks: &[customer::NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),
@@ -969,7 +972,7 @@ impl AgentManager for MockAgentManager {
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[customer::NetworksTargetAgentLookupKeysPair],
+        _networks: &[customer::NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),

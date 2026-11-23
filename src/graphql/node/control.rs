@@ -20,8 +20,9 @@ use crate::backend::{DeployError, DeployOutcome};
 use crate::graphql::{
     SharedPackageDeployer,
     customer::{
-        NetworksTargetAgentLookupKeysPair, send_agent_specific_allow_networks,
-        send_agent_specific_block_networks, send_agent_specific_customer_networks,
+        NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
+        send_agent_specific_allow_networks, send_agent_specific_block_networks,
+        send_agent_specific_customer_networks,
     },
     customer_deletion_guard, get_allow_networks, get_block_networks, get_customer_networks,
     network_list::lock_network_lists,
@@ -1001,16 +1002,13 @@ async fn send_customer_change(
     customer_id: u32,
     agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
-    let pair = |networks| {
+    let network_list = {
+        let store = crate::graphql::get_store(ctx)?;
         NetworksTargetAgentLookupKeysPair::new(
-            networks,
+            get_customer_networks(&store, customer_id)?,
             agent_lookup_keys.clone(),
             SEMI_SUPERVISED_AGENT,
         )
-    };
-    let network_list = {
-        let store = crate::graphql::get_store(ctx)?;
-        pair(get_customer_networks(&store, customer_id)?)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_caller!(ctx, "Failed to broadcast internal networks: {e:?}");
@@ -1035,6 +1033,13 @@ async fn send_customer_change(
             .and_then(|(node, _, _)| node.profile)
             .map(|profile| profile.customer_id);
         if stored_customer_id == Some(customer_id) {
+            let pair = |items| {
+                NetworkListItemsTargetAgentLookupKeysPair::new(
+                    items,
+                    agent_lookup_keys.clone(),
+                    SEMI_SUPERVISED_AGENT,
+                )
+            };
             Some((
                 pair(get_allow_networks(&store, customer_id)?),
                 pair(get_block_networks(&store, customer_id)?),
@@ -1084,10 +1089,10 @@ mod tests {
     };
     use crate::graphql::{
         AgentManager, Role, SharedAgentManager, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair,
+        customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
         gen_agent_lookup_key,
         push_test_support::{
-            Push, PushKind, RecordingAgentManager as PushRecordingAgentManager, group,
+            ItemsPush, PushKind, RecordingAgentManager as PushRecordingAgentManager, group,
             paused_schema,
         },
     };
@@ -3216,14 +3221,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
@@ -3314,14 +3319,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast allow networks")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast block networks")
         }
@@ -4236,27 +4241,57 @@ mod tests {
         let (agent_manager, pushes) = PushRecordingAgentManager::boxed();
         let schema = TestSchema::new_with_params(agent_manager, None).await;
 
-        // Customer 1 has an allowlist and a blocklist; customer 2 has none.
-        let allowlist = group(&[], &["10.0.0.0/8"], &[]);
-        let blocklist = group(&["192.0.2.1"], &[], &[]);
+        // Customer 1 has internal networks, an allowlist and a blocklist;
+        // customer 2 has none.
+        let allowlist = vec![
+            review_database::NetworkListEntry {
+                id: (1 << 53) + 1,
+                name: "partner".to_string(),
+                group: group(&["198.51.100.1"], &[], &[]),
+            },
+            review_database::NetworkListEntry {
+                id: 1,
+                name: "office".to_string(),
+                group: group(&[], &["10.0.0.0/8"], &[]),
+            },
+        ];
+        let blocklist = vec![review_database::NetworkListEntry {
+            id: 1,
+            name: "scanner".to_string(),
+            group: group(&["192.0.2.1"], &[], &[]),
+        }];
         schema
             .store()
             .network_lists_map()
+            .replace(1, 1, allowlist.clone(), blocklist.clone())
+            .unwrap();
+        schema
+            .store()
+            .customer_networks_map()
             .replace(
                 1,
                 1,
-                vec![review_database::NetworkListEntry {
-                    id: 1,
-                    name: "office".to_string(),
-                    group: allowlist.clone(),
-                }],
-                vec![review_database::NetworkListEntry {
-                    id: 1,
-                    name: "scanner".to_string(),
-                    group: blocklist.clone(),
-                }],
+                vec![
+                    review_database::OwnedNetwork {
+                        name: "lab".to_string(),
+                        network_type: review_database::event::NetworkType::Intranet,
+                        group: group(&["192.168.0.1"], &["172.16.0.0/12"], &[]),
+                    },
+                    review_database::OwnedNetwork {
+                        name: "dmz".to_string(),
+                        network_type: review_database::event::NetworkType::Gateway,
+                        group: group(&[], &["10.0.0.0/8"], &[("10.1.0.1", "10.1.0.9")]),
+                    },
+                ],
             )
             .unwrap();
+        let internal = schema
+            .store()
+            .customer_networks_map()
+            .get(1)
+            .unwrap()
+            .unwrap()
+            .merged_group();
 
         // Seed nodes whose profile (customer 0) differs from their profile_draft (customers 1
         // and 2) so that applyNodeDraft promotes a customer_id change and broadcasts the new
@@ -4343,24 +4378,33 @@ mod tests {
 
         let host_a = vec!["001.hog.host-a".to_string()];
         let host_b = vec!["001.hog.host-b".to_string()];
-        let empty = review_database::HostNetworkGroup::default();
+        // The internal networks are one merged group, as before.
+        assert_eq!(
+            internal,
+            group(
+                &["192.168.0.1"],
+                &["10.0.0.0/8", "172.16.0.0/12"],
+                &[("10.1.0.1", "10.1.0.9")]
+            )
+        );
         assert_eq!(
             pushes.internal(),
             vec![
-                vec![(host_a.clone(), empty.clone())],
-                vec![(host_b.clone(), empty.clone())],
+                vec![(host_a.clone(), internal)],
+                vec![(host_b.clone(), review_database::HostNetworkGroup::default())],
             ]
         );
+        // The allowlist and blocklist are their stored items, in stored order.
         assert_eq!(
             pushes.allow(),
             vec![
                 vec![(host_a.clone(), allowlist)],
-                vec![(host_b.clone(), empty.clone())],
+                vec![(host_b.clone(), Vec::new())],
             ]
         );
         assert_eq!(
             pushes.block(),
-            vec![vec![(host_a, blocklist)], vec![(host_b, empty)]]
+            vec![vec![(host_a, blocklist)], vec![(host_b, Vec::new())]]
         );
     }
 
@@ -4370,25 +4414,17 @@ mod tests {
         const PREVIOUS: u32 = 4343;
         const NEXT: u32 = 4344;
         let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
-        let next_allowlist = group(&["198.51.100.1"], &[], &[]);
-        let next_blocklist = group(&[], &["172.16.0.0/12"], &[]);
+        let entry = |name: &str, group| review_database::NetworkListEntry {
+            id: 1,
+            name: name.to_string(),
+            group,
+        };
+        let next_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let next_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
         schema
             .store()
             .network_lists_map()
-            .replace(
-                NEXT,
-                1,
-                vec![review_database::NetworkListEntry {
-                    id: 1,
-                    name: "partner".to_string(),
-                    group: next_allowlist.clone(),
-                }],
-                vec![review_database::NetworkListEntry {
-                    id: 1,
-                    name: "botnet".to_string(),
-                    group: next_blocklist.clone(),
-                }],
-            )
+            .replace(NEXT, 1, next_allowlist.clone(), next_blocklist.clone())
             .unwrap();
         let profile = |customer_id| review_database::NodeProfile {
             customer_id,
@@ -4438,8 +4474,8 @@ mod tests {
             }}"#
         );
         let target = vec!["001.hog.host-a".to_string()];
-        let previous_allowlist = group(&[], &["10.0.0.0/8"], &[]);
-        let previous_blocklist = group(&["192.0.2.1"], &[], &[]);
+        let previous_allowlist = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
+        let previous_blocklist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
         let apply_done = AtomicBool::new(false);
 
         let (replace_res, apply_res, ()) = tokio::join!(
@@ -4463,7 +4499,7 @@ mod tests {
                     pushes.allow(),
                     vec![vec![(target.clone(), previous_allowlist.clone())]]
                 );
-                assert_eq!(pushes.block(), Vec::<Push>::new());
+                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -4512,10 +4548,10 @@ mod tests {
             name: name.to_string(),
             group,
         };
-        let second_allowlist = group(&["198.51.100.1"], &[], &[]);
-        let second_blocklist = group(&[], &["172.16.0.0/12"], &[]);
-        let third_allowlist = group(&["203.0.113.7"], &[], &[]);
-        let third_blocklist = group(&[], &["192.168.0.0/16"], &[]);
+        let second_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let second_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
+        let third_allowlist = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
+        let third_blocklist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
         for (customer_id, allowlist, blocklist) in [
             (SECOND, &second_allowlist, &second_blocklist),
             (THIRD, &third_allowlist, &third_blocklist),
@@ -4523,12 +4559,7 @@ mod tests {
             schema
                 .store()
                 .network_lists_map()
-                .replace(
-                    customer_id,
-                    1,
-                    vec![entry("partner", allowlist.clone())],
-                    vec![entry("botnet", blocklist.clone())],
-                )
+                .replace(customer_id, 1, allowlist.clone(), blocklist.clone())
                 .unwrap();
         }
         let profile = |customer_id| review_database::NodeProfile {
@@ -4652,10 +4683,10 @@ mod tests {
             name: name.to_string(),
             group,
         };
-        let second_allowlist = group(&["198.51.100.1"], &[], &[]);
-        let second_blocklist = group(&[], &["172.16.0.0/12"], &[]);
-        let third_allowlist = group(&["203.0.113.7"], &[], &[]);
-        let third_blocklist = group(&[], &["192.168.0.0/16"], &[]);
+        let second_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let second_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
+        let third_allowlist = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
+        let third_blocklist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
         for (customer_id, allowlist, blocklist) in [
             (SECOND, &second_allowlist, &second_blocklist),
             (THIRD, &third_allowlist, &third_blocklist),
@@ -4663,12 +4694,7 @@ mod tests {
             schema
                 .store()
                 .network_lists_map()
-                .replace(
-                    customer_id,
-                    1,
-                    vec![entry("partner", allowlist.clone())],
-                    vec![entry("botnet", blocklist.clone())],
-                )
+                .replace(customer_id, 1, allowlist.clone(), blocklist.clone())
                 .unwrap();
         }
         let profile = |customer_id| review_database::NodeProfile {
@@ -4742,8 +4768,8 @@ mod tests {
             }}"#
         );
         let target = vec!["001.hog.host-a".to_string()];
-        let first_allowlist = group(&[], &["10.0.0.0/8"], &[]);
-        let first_blocklist = group(&["192.0.2.1"], &[], &[]);
+        let first_allowlist = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
+        let first_blocklist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
         let to_second = apply(FIRST, SECOND);
         let to_third = apply(SECOND, THIRD);
         let moves_done = AtomicUsize::new(0);
@@ -4788,7 +4814,7 @@ mod tests {
                     pushes.allow(),
                     vec![vec![(target.clone(), first_allowlist.clone())]]
                 );
-                assert_eq!(pushes.block(), Vec::<Push>::new());
+                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -5588,14 +5614,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
