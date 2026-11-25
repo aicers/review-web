@@ -88,7 +88,7 @@ impl CustomerNetworkMutation {
             networks,
             updated_at: jiff::Timestamp::now(),
         };
-        let merged = set.merged_group();
+        let internal = set.internal_group();
         let (push, generators) = {
             let store = crate::graphql::get_store(ctx)?;
             let outcome =
@@ -103,12 +103,14 @@ impl CustomerNetworkMutation {
                 ctx,
                 "Networks of customer {customer_id} have been replaced at revision {revision}"
             );
-            // hog restarts its workers on every push, so a write that leaves
-            // the merged group as it was is not pushed.
-            let push = if previous.is_some_and(|previous| previous.merged_group() == merged) {
+            // hog is pushed the customer's internal addresses, by the
+            // narrowest owned network containing each. It restarts its
+            // workers on every push, so a write that leaves those addresses
+            // as they were is not pushed.
+            let push = if previous.is_some_and(|previous| previous.internal_group() == internal) {
                 None
             } else {
-                hog_push(ctx, &store, customer_id, merged)
+                hog_push(ctx, &store, customer_id, internal)
             };
             (push, policy_generators(ctx, &store, customer_id))
         };
@@ -788,7 +790,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_pushes_merged_group_to_the_customers_hog_agents() {
+    async fn replace_pushes_internal_group_to_the_customers_hog_agents() {
         let (schema, pushes) = recording_schema().await;
         insert_node(&schema, 7, "n7a.example.com");
         insert_node(&schema, 7, "n7b.example.com");
@@ -817,11 +819,8 @@ mod tests {
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
 
-        let expected = group(
-            &["192.168.0.1"],
-            &["10.0.0.0/8", "2001:db8::/32"],
-            &[("172.16.0.1", "172.16.0.9")],
-        );
+        // The Extranet network is not internal, so it is left out.
+        let expected = group(&["192.168.0.1"], &["10.0.0.0/8"], &[]);
         assert_eq!(
             pushes.internal(),
             vec![vec![(
@@ -835,7 +834,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unchanged_merged_group_is_not_pushed() {
+    async fn unchanged_internal_group_is_not_pushed() {
         let (schema, pushes) = recording_schema().await;
         insert_node(&schema, 7, "n7.example.com");
 
@@ -850,11 +849,12 @@ mod tests {
             .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
-        // Only the name and type changed, and the group was split in two.
+        // Only the name and type changed, and the network was split in two
+        // that are both internal.
         let split = [
             network(
                 "a",
-                "EXTRANET",
+                "INTRANET",
                 r#"{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }"#,
             ),
             network(
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(stored.networks.len(), 2);
         assert_eq!(pushes.internal().len(), 1);
 
-        // A change to the group is pushed.
+        // A change to the internal group is pushed.
         let res = schema.execute_as_system_admin(&replace("7", "3", "")).await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "3" }));
         assert_eq!(
@@ -887,6 +887,157 @@ mod tests {
                 vec!["001.hog.n7.example.com".to_string()],
                 HostNetworkGroup::default()
             )]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tie_with_an_extranet_network_pushes_an_empty_group() {
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+
+        // An Extranet and a Gateway network of the same width decide the
+        // same addresses, and the Extranet network makes them not internal.
+        let tie = [
+            network(
+                "a",
+                "EXTRANET",
+                r#"{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }"#,
+            ),
+            network(
+                "b",
+                "GATEWAY",
+                r#"{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }"#,
+            ),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("7", "2", &tie))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
+        let target = vec!["001.hog.n7.example.com".to_string()];
+        assert_eq!(
+            pushes.internal(),
+            vec![
+                vec![(target.clone(), group(&[], &["10.0.0.0/8"], &[]))],
+                vec![(target, HostNetworkGroup::default())],
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nested_extranet_network_is_cut_out_of_the_internal_group() {
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 1, "n1.example.com");
+
+        let networks = [
+            network("office", "INTRANET", OFFICE),
+            network(
+                "partner",
+                "EXTRANET",
+                r#"{ hosts: [], networks: ["10.200.0.0/16"], ranges: [] }"#,
+            ),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("1", "1", &networks))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+
+        let expected = group(
+            &[],
+            &[],
+            &[
+                ("10.0.0.0", "10.199.255.255"),
+                ("10.201.0.0", "10.255.255.255"),
+            ],
+        );
+        assert_eq!(
+            pushes.internal(),
+            vec![vec![(
+                vec!["001.hog.n1.example.com".to_string()],
+                expected.clone()
+            )]]
+        );
+        assert_eq!(get_customer_networks(&schema.store(), 1).unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn only_a_change_to_the_internal_addresses_is_pushed() {
+        const PARTNER: &str = r#"{ hosts: [], networks: ["172.16.0.0/12"], ranges: [] }"#;
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 1, "n1.example.com");
+        let target = vec!["001.hog.n1.example.com".to_string()];
+
+        // An Extranet network outside the Intranet network is left out.
+        let networks = [
+            network("office", "INTRANET", OFFICE),
+            network("partner", "EXTRANET", PARTNER),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("1", "1", &networks))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        let office = group(&[], &["10.0.0.0/8"], &[]);
+        assert_eq!(
+            pushes.internal(),
+            vec![vec![(target.clone(), office.clone())]]
+        );
+
+        // Another Extranet network outside every Intranet and Gateway
+        // network leaves the internal addresses as they were.
+        let networks = [
+            network("office", "INTRANET", OFFICE),
+            network("partner", "EXTRANET", PARTNER),
+            network(
+                "vendor",
+                "EXTRANET",
+                r#"{ hosts: [], networks: ["192.168.0.0/16"], ranges: [] }"#,
+            ),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("1", "2", &networks))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
+        assert_eq!(pushes.internal().len(), 1);
+
+        // An Extranet network inside the Intranet network changes them.
+        let networks = [
+            network("office", "INTRANET", OFFICE),
+            network("partner", "EXTRANET", PARTNER),
+            network(
+                "vendor",
+                "EXTRANET",
+                r#"{ hosts: [], networks: ["10.200.0.0/16"], ranges: [] }"#,
+            ),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("1", "3", &networks))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "3" }));
+        assert_eq!(
+            pushes.internal(),
+            vec![
+                vec![(target.clone(), office)],
+                vec![(
+                    target,
+                    group(
+                        &[],
+                        &[],
+                        &[
+                            ("10.0.0.0", "10.199.255.255"),
+                            ("10.201.0.0", "10.255.255.255"),
+                        ],
+                    )
+                )],
+            ]
         );
     }
 
@@ -966,13 +1117,10 @@ mod tests {
                 ],
             )
             .unwrap();
+        // The Extranet network is not internal, so it is left out.
         assert_eq!(
             get_customer_networks(&store, 0).unwrap(),
-            group(
-                &["192.168.0.1"],
-                &["172.16.0.0/12"],
-                &[("10.1.0.1", "10.1.0.9")]
-            )
+            group(&["192.168.0.1"], &[], &[])
         );
     }
 
@@ -1078,7 +1226,7 @@ mod tests {
         let generator = insert_generator_node(&schema.store(), "g7.example.com", 7);
         policy_of(&schema, "a", 7, "g7.example.com", Some(&generator));
 
-        // Hog gets the merged group, and the generator's node is not among
+        // Hog gets the internal group, and the generator's node is not among
         // its targets.
         let res = schema
             .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
@@ -1094,9 +1242,9 @@ mod tests {
         );
 
         // A change of the type alone still notifies the generators, but Hog
-        // skips a merged group that did not change.
+        // skips an internal group that did not change.
         let res = schema
-            .execute_as_system_admin(&replace("7", "2", &network("office", "EXTRANET", OFFICE)))
+            .execute_as_system_admin(&replace("7", "2", &network("office", "GATEWAY", OFFICE)))
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
         assert_eq!(pushes.internal().len(), 1);

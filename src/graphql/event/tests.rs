@@ -2731,6 +2731,61 @@ mod directions_by_customer {
             Vec::<String>::new()
         );
     }
+
+    #[tokio::test]
+    async fn nested_extranet_network_is_not_internal() {
+        use review_protocol::types::{RawEventBody, RawEventKind};
+
+        use crate::graphql::event_test_support::{conn_body, raw_event};
+
+        let put_conn = |store: &Store, day: i8, sensor: &str, orig: &str, resp: &str| {
+            store
+                .events()
+                .put_event(&raw_event(
+                    utc_micro(2018, 1, day, 0, 0, 0, 0),
+                    sensor,
+                    RawEventKind::Conn,
+                    RawEventBody::Conn(conn_body(orig.parse().unwrap(), resp.parse().unwrap())),
+                    Detail::TorExitNode,
+                ))
+                .unwrap();
+        };
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        insert_sensor_node(&store, 1, "a.example.com");
+        store
+            .customer_networks_map()
+            .replace(
+                1,
+                0,
+                vec![
+                    owned("office", NetworkType::Intranet, "10.0.0.0/8"),
+                    owned("partner", NetworkType::Extranet, "10.200.0.0/16"),
+                ],
+            )
+            .unwrap();
+        // The narrowest network holding the responder is the Extranet one,
+        // so only the originator is internal.
+        put_conn(&store, 1, SENSOR_A, "10.1.0.1", "10.200.0.1");
+        // Neither side is internal.
+        put_conn(&store, 2, SENSOR_A, "10.200.0.1", "10.200.0.2");
+        drop(store);
+
+        assert_eq!(sensors_matching(&schema, "OUTBOUND").await, vec![SENSOR_A]);
+        assert_eq!(
+            sensors_matching(&schema, "INTERNAL").await,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            sensors_matching(&schema, "INBOUND").await,
+            Vec::<String>::new()
+        );
+        // Only the first conn matches any direction.
+        assert_eq!(
+            sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
+            vec![SENSOR_A]
+        );
+    }
 }
 
 /// Inserts and applies node `sensor1`, whose sensor's events have the sensor

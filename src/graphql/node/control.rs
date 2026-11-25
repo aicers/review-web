@@ -4383,6 +4383,11 @@ mod tests {
                         network_type: review_database::event::NetworkType::Gateway,
                         group: group(&[], &["10.0.0.0/8"], &[("10.1.0.1", "10.1.0.9")]),
                     },
+                    review_database::OwnedNetwork {
+                        name: "partner".to_string(),
+                        network_type: review_database::event::NetworkType::Extranet,
+                        group: group(&["198.51.100.1"], &["10.200.0.0/16"], &[]),
+                    },
                 ],
             )
             .unwrap();
@@ -4392,7 +4397,7 @@ mod tests {
             .get(1)
             .unwrap()
             .unwrap()
-            .merged_group();
+            .internal_group();
 
         // Seed nodes whose profile (customer 0) differs from their profile_draft (customers 1
         // and 2) so that applyNodeDraft promotes a customer_id change and broadcasts the new
@@ -4479,13 +4484,18 @@ mod tests {
 
         let host_a = vec!["001.hog.host-a".to_string()];
         let host_b = vec!["001.hog.host-b".to_string()];
-        // The internal networks are one merged group, as before.
+        // The internal networks leave out the Extranet network, also where
+        // it is nested inside the Gateway network.
         assert_eq!(
             internal,
             group(
                 &["192.168.0.1"],
-                &["10.0.0.0/8", "172.16.0.0/12"],
-                &[("10.1.0.1", "10.1.0.9")]
+                &["172.16.0.0/12"],
+                &[
+                    ("10.0.0.0", "10.199.255.255"),
+                    ("10.1.0.1", "10.1.0.9"),
+                    ("10.201.0.0", "10.255.255.255"),
+                ]
             )
         );
         assert_eq!(
