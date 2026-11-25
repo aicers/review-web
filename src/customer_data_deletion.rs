@@ -10,8 +10,8 @@
 //! 3. The Data Store step asks every listed Data Store to delete the
 //!    customer's events and its time series generation policies' periodic time series.
 //! 4. The Data Stores on the customer's nodes are uninstalled.
-//! 5. The Review stage deletes what the Central Manager keeps, its nodes
-//!    among it.
+//! 5. The Review stage deletes what the Central Manager keeps, its device
+//!    identification data and its nodes among it.
 //!
 //! Each stage decides from the job and the store, so a deletion resumed after
 //! a restart skips what is done. A deletion that stops leaves no result it
@@ -33,7 +33,9 @@
 //! - A Data Store without an instance number, registered by hand, is not
 //!   listed, so it is never asked, and the customer's data in it stays.
 //! - The events of a node removed before the deletion cannot be found, since
-//!   nothing records the node's host name any more, and stay.
+//!   nothing records the node's host name any more, and stay. So do the
+//!   device identification rows kept per sensor, such as its cursors, of a
+//!   sensor on such a node that no site of the customer lists.
 //! - A module registered by hand, with no instance number, is removed from the
 //!   records only, and keeps running.
 //! - A Data Store uninstalled with the customer leaves its data directory on
@@ -3077,6 +3079,24 @@ fn delete_review_data(
                 targets.event_service_fqdns
             )
         })?;
+    // The earlier stages uninstalled the customer's sensors, so the node
+    // table no longer names them; their names are passed instead. This runs
+    // before the nodes are removed, and again on a retry, which changes
+    // nothing once it succeeded.
+    let dai_sensors: Vec<String> = targets
+        .host_fqdns
+        .iter()
+        .map(|host_fqdn| service_fqdn("piglet", host_fqdn))
+        .collect();
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::Dai, customer_id).with_context(|| {
+        format!("deleting device identification data for customer {customer_id}")
+    })?;
+    store
+        .delete_dai_customer(customer_id, &dai_sensors)
+        .with_context(|| {
+            format!("deleting device identification data for customer {customer_id}")
+        })?;
     for host_fqdn in &targets.host_fqdns {
         #[cfg(test)]
         tests::checkpoint(&store, tests::Stage::TrafficFilters, customer_id)?;
@@ -4439,6 +4459,209 @@ mod tests {
             .unwrap();
     }
 
+    /// The length of a device identification slot, in nanoseconds.
+    const DAI_SLOT_NANOS: i64 = 300 * 1_000_000_000;
+    /// The DHCP server of the DHCP ACK [`seed_dai`] stores.
+    const DAI_DHCP_SERVER: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 254);
+
+    /// Seeds device identification rows of `customer_id`, whose nodes give
+    /// it the sensors `sensors`, and returns the time they were seeded at.
+    ///
+    /// Device identification is turned on, which writes its settings and its
+    /// default site, and a site lists the first sensor, which writes its
+    /// sensor site history; the other sensors are in no site. Every sensor
+    /// gets its cursors and sensor state. The last sensor sees a DHCP ACK
+    /// giving `ip` to a MAC, stored as an observation and then applied,
+    /// which creates a device and its binding at `ip`.
+    fn seed_dai(store: &Store, customer_id: u32, sensors: &[&str], ip: Ipv4Addr) -> i64 {
+        use review_protocol::types::{
+            DaiDhcpMsg, DaiObservation, DaiObservationBatch, DaiObservationBody, DaiObservationKind,
+        };
+
+        let settings = store.dai_settings(customer_id).unwrap();
+        store
+            .set_dai_settings(
+                customer_id,
+                settings.revision,
+                &review_database::DaiSettingsUpdate {
+                    device_account_identification: true,
+                    inactivity_multiplier: 2,
+                    no_lease_inactivity_secs: 3600,
+                    evidence_aging_secs: 180 * 86_400,
+                    kerberos_preauth_realms: Vec::new(),
+                },
+            )
+            .unwrap();
+        let (site_sensor, _) = sensors.split_first().unwrap();
+        store
+            .create_dai_site(
+                customer_id,
+                &format!("site of {customer_id}"),
+                &[(*site_sensor).to_string()],
+            )
+            .unwrap();
+        // An hour after the writes above, which take the real clock, so the
+        // cursors start after the settings were turned on.
+        let now =
+            i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap() + 3_600 * 1_000_000_000;
+        let slot = now - now.rem_euclid(DAI_SLOT_NANOS);
+        let names: Vec<String> = sensors.iter().map(ToString::to_string).collect();
+        store.dai_cursors(&names, now).unwrap();
+
+        let sensor = sensors.last().unwrap();
+        let seen = slot + 1_000_000_000;
+        let networks = store.customer_networks_map().get(customer_id).unwrap();
+        let batch = DaiObservationBatch {
+            restore_generation: store.dai_restore_generation().unwrap(),
+            config_epoch: store.dai_sensor_config_epoch(sensor).unwrap(),
+            network_digest: review_database::dai_network_digest(networks.as_ref())
+                .unwrap()
+                .digest,
+            sensor: (*sensor).to_string(),
+            kind: DaiObservationKind::DhcpLease,
+            slot_start: slot,
+            slot_len_secs: 300,
+            send_id: 1,
+            part: 0,
+            part_count: 1,
+            observations: vec![DaiObservation {
+                first_seen: seen,
+                last_seen: seen,
+                count: 1,
+                body: DaiObservationBody::DhcpLease {
+                    time: seen,
+                    msg: DaiDhcpMsg::Ack,
+                    ip: ip.into(),
+                    chaddr: vec![0x02, 0, 0, 0, 0, u8::try_from(customer_id).unwrap()],
+                    xid: 1,
+                    server_ip: DAI_DHCP_SERVER.into(),
+                    server_id: Some(DAI_DHCP_SERVER.into()),
+                    giaddr: Ipv4Addr::UNSPECIFIED.into(),
+                    client_id: None,
+                    hostname: None,
+                    lease_secs: Some(300),
+                    subnet_mask: None,
+                    routers: Vec::new(),
+                },
+            }],
+            last_record_time: None,
+            late_slots: Vec::new(),
+            reextract_mark: None,
+            lost_before: None,
+            counted_from: slot,
+        };
+        let outcome = store.store_dai_observations(&batch, now).unwrap();
+        assert!(
+            matches!(outcome, review_database::DaiStoreOutcome::Stored { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            store
+                .apply_dai_slot(
+                    sensor,
+                    slot,
+                    review_database::DAI_APPLY_DEFAULT_MAX_COUNT,
+                    now
+                )
+                .unwrap(),
+            None
+        );
+        now
+    }
+
+    /// Returns, by name, whether `customer_id` holds each kind of device
+    /// identification row [`seed_dai`] writes for it and its `sensors`, other
+    /// than the cursors, as read at `now`.
+    fn dai_rows(
+        store: &Store,
+        customer_id: u32,
+        sensors: &[&str],
+        ip: Ipv4Addr,
+        now: i64,
+    ) -> Vec<(String, bool)> {
+        let settings = store.dai_settings(customer_id).unwrap();
+        let devices = store
+            .dai_devices(
+                customer_id,
+                &review_database::DaiDeviceFilter::default(),
+                &review_database::DaiPageRequest {
+                    from: None,
+                    direction: review_database::DaiPageDirection::Forward,
+                    limit: 10,
+                },
+                now,
+            )
+            .unwrap();
+        let bound = devices.rows.iter().any(|row| {
+            store
+                .dai_device(customer_id, row.device, now)
+                .unwrap()
+                .is_some_and(|device| {
+                    device
+                        .ip_history
+                        .iter()
+                        .any(|binding| binding.ip == IpAddr::from(ip))
+                })
+        });
+        let found = !store
+            .dai_search(customer_id, &ip.to_string(), now)
+            .unwrap()
+            .matches
+            .is_empty();
+        let mut rows = vec![
+            (
+                "settings".to_string(),
+                settings != review_database::DaiSettings::default(),
+            ),
+            (
+                "sites".to_string(),
+                !store.dai_sites(customer_id).unwrap().is_empty(),
+            ),
+            ("device".to_string(), devices.total > 0),
+            ("binding".to_string(), bound),
+            ("device found by its IP".to_string(), found),
+        ];
+        for sensor in sensors {
+            rows.push((
+                format!("sensor site of {sensor}"),
+                store
+                    .dai_sensor_site(customer_id, sensor, now)
+                    .unwrap()
+                    .is_some(),
+            ));
+            rows.push((
+                format!("sensor state of {sensor}"),
+                store.dai_sensor_config_epoch(sensor).unwrap() > 0
+                    || store.dai_first_cursor_time(sensor).unwrap().is_some(),
+            ));
+        }
+        rows
+    }
+
+    /// Returns the sensors of `customer_id`, per the node table, that hold a
+    /// device identification cursor at `now`.
+    fn dai_cursor_sensors(store: &Store, customer_id: u32, now: i64) -> Vec<String> {
+        store
+            .dai_collection_status(customer_id, now)
+            .unwrap()
+            .sensors
+            .into_iter()
+            .filter(|sensor| !sensor.cursors.is_empty())
+            .map(|sensor| sensor.sensor)
+            .collect()
+    }
+
+    /// Asserts that every row of `rows` is held if `held`, and none
+    /// otherwise.
+    fn assert_dai_rows(rows: &[(String, bool)], held: bool) {
+        let wrong: Vec<&str> = rows
+            .iter()
+            .filter(|(_, is_held)| *is_held != held)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(wrong.is_empty(), "held is not {held}: {wrong:?}");
+    }
+
     fn put_dns_event(test_store: &TestStore, sensor: &str, second: i64) {
         put_detection_event(test_store, Some(sensor), second);
     }
@@ -4467,6 +4690,8 @@ mod tests {
         PersistRequest,
         Worker,
         Events,
+        /// Before the deletion of the customer's device identification rows.
+        Dai,
         TrafficFilters,
         CustomerNetworks,
         NetworkLists,
@@ -6413,8 +6638,11 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
-        const STAGES: [Stage; 7] = [
+        const DAI_SENSOR: &str = "piglet.one.example";
+        const DAI_IP: Ipv4Addr = Ipv4Addr::new(10, 1, 0, 1);
+        const STAGES: [Stage; 8] = [
             Stage::Events,
+            Stage::Dai,
             Stage::TrafficFilters,
             Stage::CustomerNetworks,
             Stage::NetworkLists,
@@ -6450,6 +6678,12 @@ mod tests {
                     .unwrap();
                 TestModel::new("model", 1).replace(&store);
             }
+            let dai_now = seed_dai(
+                &read_store(&test_store.store).unwrap(),
+                1,
+                &[DAI_SENSOR],
+                DAI_IP,
+            );
             put_job(
                 &test_store.store,
                 1,
@@ -6506,6 +6740,7 @@ mod tests {
                 assert!(error.contains("injected RocksDB boundary error"));
             }
             let error_context = match fail_stage {
+                Stage::Dai => Some("deleting device identification data for customer 1"),
                 Stage::CustomerNetworks => Some("deleting customer networks for customer 1"),
                 Stage::NetworkLists => Some("deleting network lists for customer 1"),
                 Stage::ConfigHistory => Some("deleting configuration history for customer 1"),
@@ -6532,19 +6767,36 @@ mod tests {
                     )
                 });
                 assert_eq!(target_event_exists, fail_stage == Stage::Events);
+                // The node table still gives customer 1 the sensor, so its
+                // cursors are listed for it.
+                let dai_kept = matches!(fail_stage, Stage::Events | Stage::Dai);
+                assert_dai_rows(
+                    &dai_rows(&store, 1, &[DAI_SENSOR], DAI_IP, dai_now),
+                    dai_kept,
+                );
+                assert_eq!(
+                    dai_cursor_sensors(&store, 1, dai_now) == [DAI_SENSOR],
+                    dai_kept
+                );
                 assert_eq!(
                     store
                         .traffic_filter_map()
                         .get("one.example")
                         .unwrap()
                         .is_some(),
-                    matches!(fail_stage, Stage::Events | Stage::TrafficFilters)
+                    matches!(
+                        fail_stage,
+                        Stage::Events | Stage::Dai | Stage::TrafficFilters
+                    )
                 );
                 assert_eq!(
                     store.customer_networks_map().get(1).unwrap().is_some(),
                     matches!(
                         fail_stage,
-                        Stage::Events | Stage::TrafficFilters | Stage::CustomerNetworks
+                        Stage::Events
+                            | Stage::Dai
+                            | Stage::TrafficFilters
+                            | Stage::CustomerNetworks
                     )
                 );
                 assert_eq!(
@@ -6552,6 +6804,7 @@ mod tests {
                     matches!(
                         fail_stage,
                         Stage::Events
+                            | Stage::Dai
                             | Stage::TrafficFilters
                             | Stage::CustomerNetworks
                             | Stage::NetworkLists
@@ -6626,6 +6879,7 @@ mod tests {
             let store = read_store(&test_store.store).unwrap();
             assert!(store.customer_networks_map().get(1).unwrap().is_none());
             assert!(store.network_lists_map().get(1).unwrap().is_none());
+            assert_dai_rows(&dai_rows(&store, 1, &[DAI_SENSOR], DAI_IP, dai_now), false);
             assert!(
                 store
                     .traffic_filter_map()
@@ -9273,6 +9527,125 @@ server_name = "{server_name}"
                 .iter()
                 .all(|(host, _, _)| host != "x.example")
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    // One scenario: seed, delete through every stage, then probe each kind of row.
+    #[allow(clippy::too_many_lines)]
+    async fn the_review_stage_deletes_the_dai_rows_of_the_customer_only() {
+        const SITE_HOST: &str = "dai-site.example";
+        const LOOSE_HOST: &str = "dai-loose.example";
+        const SITE_SENSOR: &str = "piglet.dai-site.example";
+        const LOOSE_SENSOR: &str = "piglet.dai-loose.example";
+        const OTHER_SENSOR: &str = "piglet.dai-other.example";
+        const IP: Ipv4Addr = Ipv4Addr::new(10, 7, 0, 1);
+        const OTHER_IP: Ipv4Addr = Ipv4Addr::new(10, 8, 0, 1);
+        const PROBE_CUSTOMER: u32 = 9;
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let loose_node = put_customer_node(
+            &test_store,
+            7,
+            LOOSE_HOST,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_customer_node(
+            &test_store,
+            7,
+            SITE_HOST,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_customer_node(
+            &test_store,
+            8,
+            "dai-other.example",
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        // The ACK of the customer is seen by its sensor in no site.
+        let (now, other_now) = {
+            let store = read_store(&test_store.store).unwrap();
+            let now = seed_dai(&store, 7, &[SITE_SENSOR, LOOSE_SENSOR], IP);
+            let other_now = seed_dai(&store, 8, &[OTHER_SENSOR], OTHER_IP);
+            assert_dai_rows(
+                &dai_rows(&store, 7, &[SITE_SENSOR, LOOSE_SENSOR], IP, now),
+                true,
+            );
+            assert_eq!(
+                dai_cursor_sensors(&store, 7, now),
+                [LOOSE_SENSOR, SITE_SENSOR]
+            );
+            (now, other_now)
+        };
+        let other_rows = || {
+            let store = read_store(&test_store.store).unwrap();
+            (
+                dai_rows(&store, 8, &[OTHER_SENSOR], OTHER_IP, other_now),
+                dai_cursor_sensors(&store, 8, other_now),
+            )
+        };
+        let other_before = other_rows();
+        assert_dai_rows(&other_before.0, true);
+        assert_eq!(other_before.1, [OTHER_SENSOR]);
+
+        // By the Review stage, the sensor in no site is in the node table no
+        // more.
+        let loose_sensor_at_review = Arc::new(std::sync::Mutex::new(None));
+        let snapshot = Arc::clone(&loose_sensor_at_review);
+        let hook_store = Arc::clone(&test_store.store);
+        let hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::Dai {
+                    let (node, _, _) = read_store(&hook_store)?
+                        .node_map()
+                        .get_by_id(loose_node)?
+                        .expect("the Review stage removes the nodes after this");
+                    *snapshot.lock().unwrap() = Some(review_database::sensor_name(&node));
+                }
+                Ok(())
+            }),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            request_with(&test_store, 7, &agent, &deployer, &manager).await,
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        finish_supervisor(&manager).await;
+        drop(hook);
+        assert_eq!(*loose_sensor_at_review.lock().unwrap(), Some(None));
+        let done = job(&test_store.store, 7);
+        assert!(
+            done.service_results
+                .iter()
+                .all(|result| result.status == CustomerDataDeletionStatus::Succeeded),
+            "{done:?}"
+        );
+        assert_eq!(nodes_of(&test_store, 7), 0);
+
+        {
+            let store = read_store(&test_store.store).unwrap();
+            assert_dai_rows(
+                &dai_rows(&store, 7, &[SITE_SENSOR, LOOSE_SENSOR], IP, now),
+                false,
+            );
+        }
+        // Cursors are listed for the sensors of a customer only: give the
+        // two sensors to another one.
+        for host in [SITE_HOST, LOOSE_HOST] {
+            put_customer_node(
+                &test_store,
+                PROBE_CUSTOMER,
+                host,
+                vec![numbered_agent(AgentKind::Sensor, 1)],
+            );
+        }
+        assert_eq!(
+            dai_cursor_sensors(&read_store(&test_store.store).unwrap(), PROBE_CUSTOMER, now),
+            Vec::<String>::new()
+        );
+        assert_eq!(other_rows(), other_before);
     }
 
     #[tokio::test(start_paused = true)]

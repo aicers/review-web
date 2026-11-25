@@ -2033,6 +2033,55 @@ mod tests {
         assert_eq!(stored_policy(&schema, setup.policy_a), stored);
     }
 
+    /// An insert whose sensors are in two device identification sites of
+    /// the customer is refused with review-database's refusal, and stores
+    /// nothing.
+    #[tokio::test]
+    async fn an_insert_whose_sensors_span_two_sites_is_refused() {
+        const HOST_C: &str = "c.example.com";
+
+        let schema = TestSchema::new().await;
+        let sensor_a = sensor_name(HOST_A);
+        let sensor_c = sensor_name(HOST_C);
+        let mut sites = {
+            let store = schema.store();
+            insert_generator_node(&store, HOST_A, 1);
+            insert_generator_node(&store, HOST_C, 1);
+            insert_internal_network(&store, 1);
+            vec![
+                (
+                    store
+                        .create_dai_site(1, "Seoul", std::slice::from_ref(&sensor_a))
+                        .unwrap(),
+                    vec![sensor_a.clone()],
+                ),
+                (
+                    store
+                        .create_dai_site(1, "Busan", std::slice::from_ref(&sensor_c))
+                        .unwrap(),
+                    vec![sensor_c.clone()],
+                ),
+            ]
+        };
+        sites.sort_unstable();
+        let refusal = review_database::TimeSeriesGenerationPolicyError::SensorsSpanSites {
+            customer_id: 1,
+            sites,
+        }
+        .to_string();
+
+        let res = schema
+            .execute_as_system_admin(&insert_mutation(1, "custom", &[&sensor_a, &sensor_c]))
+            .await;
+        assert_eq!(error_message(&res), refusal);
+        let res = schema
+            .execute_as_system_admin(&from_type_mutation(1, "typed", 1, &[&sensor_a, &sensor_c]))
+            .await;
+        assert_eq!(error_message(&res), refusal);
+
+        assert_eq!(listed_names_of_store(&schema), Vec::<String>::new());
+    }
+
     #[tokio::test]
     async fn scoped_caller_lists_only_own_policies() {
         let schema = TestSchema::new().await;
