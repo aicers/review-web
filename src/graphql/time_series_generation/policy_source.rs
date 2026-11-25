@@ -523,3 +523,70 @@ fn applied_giganto_name(
         .find(|agent| agent.key == assignee.agent_key)
         .and_then(generator_data_store))
 }
+
+#[cfg(test)]
+mod tests {
+    use review_database::{EndpointRole, RawEventKind, SlotSize};
+
+    use super::{endpoint_role_name, raw_event_kind_name, slot_seconds};
+
+    #[test]
+    fn every_network_kind_has_its_training_definition_name() {
+        let names = [
+            (RawEventKind::Bootp, "bootp"),
+            (RawEventKind::Conn, "conn"),
+            (RawEventKind::DceRpc, "dce_rpc"),
+            (RawEventKind::Dhcp, "dhcp"),
+            (RawEventKind::Dns, "dns"),
+            (RawEventKind::Ftp, "ftp"),
+            (RawEventKind::Http, "http"),
+            (RawEventKind::Icmp, "icmp"),
+            (RawEventKind::Kerberos, "kerberos"),
+            (RawEventKind::Ldap, "ldap"),
+            (RawEventKind::MalformedDns, "malformed_dns"),
+            (RawEventKind::Mqtt, "mqtt"),
+            (RawEventKind::Nfs, "nfs"),
+            (RawEventKind::Ntlm, "ntlm"),
+            (RawEventKind::Radius, "radius"),
+            (RawEventKind::Rdp, "rdp"),
+            (RawEventKind::Smb, "smb"),
+            (RawEventKind::Smtp, "smtp"),
+            (RawEventKind::Ssh, "ssh"),
+            (RawEventKind::Tls, "tls"),
+        ];
+        for (kind, name) in names {
+            assert_eq!(raw_event_kind_name(kind), Some(name), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_kind_that_is_not_a_network_kind_has_no_name() {
+        for kind in [
+            RawEventKind::ProcessCreate,
+            RawEventKind::DnsQuery,
+            RawEventKind::Netflow5,
+        ] {
+            assert_eq!(raw_event_kind_name(kind), None, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn every_endpoint_role_has_its_group_by_name() {
+        assert_eq!(endpoint_role_name(EndpointRole::Source), "source");
+        assert_eq!(endpoint_role_name(EndpointRole::Destination), "destination");
+    }
+
+    #[test]
+    fn every_slot_size_has_its_length_in_seconds() {
+        let seconds = [
+            (SlotSize::FiveMinutes, 300),
+            (SlotSize::TenMinutes, 600),
+            (SlotSize::FifteenMinutes, 900),
+            (SlotSize::ThirtyMinutes, 1800),
+            (SlotSize::OneHour, 3600),
+        ];
+        for (size, expected) in seconds {
+            assert_eq!(slot_seconds(size), expected, "{size:?}");
+        }
+    }
+}
