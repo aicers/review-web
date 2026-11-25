@@ -209,3 +209,62 @@ transform = "none"
     );
     with_extra(&template, extra)
 }
+
+/// Returns a complete definition of the time-series type `type_id` version
+/// 1, `server_daily_tls` or another daily TLS type grouping by `group_by`
+/// (`source` or `destination`) with the threat role `threat_role`, reading
+/// the time series generation policies `sources` from the Data Store
+/// `server_name` at `address`, with `extra` top-level lines in place of
+/// those of their keys, or after the window.
+pub(crate) fn daily_tls_definition(
+    (type_id, group_by, threat_role): (&str, &str, &str),
+    sources: &[&str],
+    server_name: &str,
+    address: &str,
+    extra: &str,
+) -> String {
+    let template = format!(
+        r#"type = "{type_id}"
+type_version = 1
+raw_event_kind = "tls"
+method = "timeseries"
+sources = {sources}
+window_start = "{start}"
+window_end = "{end}"
+batch_size = 1000000
+max_event_id_num = 50
+algorithm = "dbscan"
+eps = 2.0
+precision = 2
+numbers_of_top_n = []
+slot_size = 300
+group_by = "{group_by}"
+threat_role = "{threat_role}"
+min_cluster_size = 3
+transform = "none"
+
+{data_store}"#,
+        sources = source_list(sources),
+        start = window_start(),
+        end = window_end(),
+        data_store = data_store(server_name, address),
+    );
+    with_extra(&template, extra)
+}
+
+/// Returns a complete `server_daily_tls` version 1 definition, as
+/// [`daily_tls_definition`] writes it.
+pub(crate) fn server_daily_tls_definition(
+    sources: &[&str],
+    server_name: &str,
+    address: &str,
+    extra: &str,
+) -> String {
+    daily_tls_definition(
+        ("server_daily_tls", "destination", "target"),
+        sources,
+        server_name,
+        address,
+        extra,
+    )
+}

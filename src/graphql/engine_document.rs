@@ -31,7 +31,9 @@ use super::{
     customer_access::{customer_source_names, model_by_name},
     model::TIMESERIES_KIND,
     refusal::{RefusalCode, refusal},
-    time_series_generation::{check_policy_sources, policy_sensors, trained_shape},
+    time_series_generation::{
+        check_policy_sources, policy_id, policy_sensors, time_series_type_of, trained_shape,
+    },
     toml_refusal::parse_refusal,
     training::is_customer_indicator,
     unsupervised::{DataStore, check_data_store},
@@ -47,6 +49,8 @@ const MIN_PERIOD: Duration = Duration::from_mins(1);
 const MAX_READ_LAG: Duration = Duration::from_hours(1);
 /// The key of a detector's table of detection model sections.
 const DETECTION_MODELS: &str = "detection_models";
+/// The key of a detector's table of the sensors of each source policy.
+const SOURCE_SENSORS: &str = "source_sensors";
 /// The section of the detection model that matches label DBs.
 const LABEL_DB_MATCH: &str = "label_db_match";
 /// The list of `LABEL_DB_MATCH` whose entries name columns and a label DB.
@@ -91,8 +95,10 @@ pub(crate) struct Detector {
     /// The sensors of each source policy, by policy id, which the database
     /// write's completion sets for a detector of a time-series type's model
     /// from the stored policies. It is declared so that every document the
-    /// completion writes parses, and is not checked against the policies:
-    /// the completion replaces a value that differs from theirs.
+    /// completion writes parses. Only a detector of a time-series type's
+    /// model may have it, and each of its entries must be the stored sensors
+    /// of one of the detector's sources, as [`EngineDocument::check_stored`]
+    /// checks it; a source with no entry gets one from the completion.
     pub(crate) source_sensors: Option<BTreeMap<String, Vec<String>>>,
 }
 
@@ -310,8 +316,13 @@ impl EngineDocument {
     /// A detector of a timeseries model reads time series generation policies
     /// of the customer, as [`check_policy_sources`] checks them, each of the
     /// shape of the policies the model was trained on; while none of those is
-    /// stored, the shape is unknown and any source is refused. Any other
+    /// stored, the shape is unknown and any source is refused. A detector of
+    /// a model whose recorded clustering model type is a time-series type
+    /// reads only policies made from that type at that version. Any other
     /// detector reads source names of the customer.
+    ///
+    /// After its sources, a detector's `source_sensors` is checked, as
+    /// [`check_source_sensors`] does.
     ///
     /// # Errors
     ///
@@ -375,6 +386,8 @@ impl EngineDocument {
                     customer_id,
                     &detector.sources,
                     shape,
+                    &model.clustering_model_type,
+                    None,
                     &detector.data_store.server_name,
                 )
                 .map_err(|e| format!("cannot read time series generation policies: {e:#}"))?;
@@ -403,6 +416,7 @@ impl EngineDocument {
                 }
                 customer_sources = Some(names);
             }
+            check_source_sensors(store, i, detector, &model)?;
 
             let addrs = target
                 .addrs
@@ -640,6 +654,75 @@ fn check_label_columns(
                 detector,
             ));
         }
+    }
+    Ok(())
+}
+
+/// Checks the `source_sensors` of detector `i`, whose model is `model` and
+/// whose sources have passed the source rule.
+///
+/// Only a detector of a model whose recorded clustering model type is a
+/// time-series type may have it; any other detector's, an empty table
+/// included, is refused with `FIELD_NOT_ALLOWED`. On such a detector, each
+/// key must be one of the detector's `sources`, and its list the stored
+/// `sensors` of that policy, in the same order; otherwise it is refused with
+/// `SOURCES_INCOMPATIBLE`. A source with no key is accepted: the completion
+/// on apply writes its sensors.
+fn check_source_sensors(
+    store: &Store,
+    i: usize,
+    detector: &Detector,
+    model: &ModelDigest,
+) -> Result<()> {
+    let Some(source_sensors) = detector.source_sensors.as_ref() else {
+        return Ok(());
+    };
+    if time_series_type_of(&model.clustering_model_type).is_none() {
+        return Err(detector_refusal(
+            RefusalCode::FieldNotAllowed,
+            format!(
+                "{SOURCE_SENSORS} is only for a detector of a time-series type's model, which \
+                 model {:?} is not",
+                model.name
+            ),
+            i,
+            SOURCE_SENSORS,
+            String::new(),
+            detector,
+        ));
+    }
+    let map = store.time_series_generation_policy_map();
+    for (key, sensors) in source_sensors {
+        let stored = if detector.sources.contains(key) {
+            match policy_id(key) {
+                Some(id) => map
+                    .get_by_id(id)
+                    .map_err(|e| format!("cannot read time series generation policy {id}: {e:#}"))?
+                    .map(|policy| policy.sensors),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let message = match stored {
+            None => format!(
+                "{SOURCE_SENSORS} lists time series generation policy {key:?}, which is not a \
+                 source of the detector"
+            ),
+            Some(stored) if stored != *sensors => format!(
+                "{SOURCE_SENSORS} lists sensors for time series generation policy {key:?} \
+                 that are not its sensors {stored:?}"
+            ),
+            Some(_) => continue,
+        };
+        return Err(detector_refusal(
+            RefusalCode::SourcesIncompatible,
+            message,
+            i,
+            SOURCE_SENSORS,
+            key.clone(),
+            detector,
+        ));
     }
     Ok(())
 }

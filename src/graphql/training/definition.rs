@@ -28,16 +28,13 @@ use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
     rfc3339::{self, LeapAwareTime},
-    time_series_generation::{ShapeReference, check_policy_sources},
+    time_series_generation::{CustomKeys, ShapeReference, check_policy_sources},
     toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store, data_store_retention},
 };
 
 /// The most event ids a cluster keeps.
 const MAX_EVENT_ID_NUM: u32 = 100;
-/// The raw event kind a `timeseries` definition's record stores: the Giganto
-/// canonical name the engine records a time-series model's kind as.
-const TIMESERIES_RECORD_KIND: &str = "periodic_time_series";
 /// The raw event kind of every `prefix` definition, which reads the log its
 /// `log_kind` names.
 const PREFIX_RAW_EVENT_KIND: &str = "log";
@@ -143,23 +140,63 @@ pub(crate) struct TrainingDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) csv: Option<CsvConfig>,
     /// The slot length of a `timeseries` definition's series, in seconds.
-    /// [`check_training_definition`] decides where it may appear; it is not
-    /// matched against the sources here.
+    /// [`check_training_definition`] decides where it may appear; a custom
+    /// definition's must be its source policies' slot size, as
+    /// [`check_policy_sources`] checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) slot_size: Option<u64>,
     /// The endpoint a `timeseries` definition's source policies are grouped
-    /// by; absent means they are not grouped.
+    /// by; absent means they are not grouped. A custom definition's must be
+    /// its source policies', as [`check_policy_sources`] checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) group_by: Option<String>,
+    pub(crate) group_by: Option<GroupBy>,
     /// The threat role of the detections of a catalog `timeseries` type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) threat_role: Option<String>,
+    pub(crate) threat_role: Option<ThreatRole>,
     /// The smallest cluster a `timeseries` definition's model keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) min_cluster_size: Option<u64>,
     /// The input transform of a `timeseries` definition's series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) transform: Option<String>,
+    pub(crate) transform: Option<Transform>,
+}
+
+/// The endpoint a `timeseries` definition's source policies are grouped by.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GroupBy {
+    Source,
+    Destination,
+}
+
+impl GroupBy {
+    /// Returns the name a definition writes the endpoint as.
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Destination => "destination",
+        }
+    }
+}
+
+/// The threat role of the detections of a catalog `timeseries` type.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ThreatRole {
+    Actor,
+    Target,
+}
+
+/// The input transform of a `timeseries` definition's series.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) enum Transform {
+    /// The series as counted.
+    #[serde(rename = "none")]
+    None,
+    /// `ln(1 + x)` of each value.
+    #[serde(rename = "log1p")]
+    Log1p,
 }
 
 /// The clustering method of a definition.
@@ -299,19 +336,17 @@ impl TrainingDocument {
     /// stores.
     ///
     /// A `prefix` definition reads the log `log_kind` names, so its record
-    /// stores `log` and that name. A `timeseries` definition's record stores
-    /// `periodic_time_series`, the Giganto name the engine records a
-    /// time-series model's kind as, while its text keeps `timeseries`:
-    /// review-database refuses a run's upload, or a clone, whose raw event
-    /// kind differs from the record's. A `multidimension` definition's record
-    /// stores its text's raw event kind. Only a `prefix` record has a log
-    /// kind.
+    /// stores `log` and that name. A `multidimension` or `timeseries`
+    /// definition's record stores its text's raw event kind, a network kind
+    /// such as `tls` for a `timeseries` one, which the engine records on the
+    /// model too: review-database refuses a run's upload, or a clone, whose
+    /// raw event kind differs from the record's. Only a `prefix` record has a
+    /// log kind.
     #[must_use]
     pub(crate) fn record_kinds(&self) -> (String, Option<String>) {
         match self.method {
             Method::Prefix => (PREFIX_RAW_EVENT_KIND.to_string(), self.log_kind.clone()),
-            Method::Multidimension => (self.raw_event_kind.clone(), None),
-            Method::Timeseries => (TIMESERIES_RECORD_KIND.to_string(), None),
+            Method::Multidimension | Method::Timeseries => (self.raw_event_kind.clone(), None),
         }
     }
 
@@ -475,14 +510,18 @@ impl TrainingDocument {
     /// definition's customer `customer_id`.
     ///
     /// `addrs` and `kept` are the Data Store rule's, as [`check_data_store`]
-    /// takes them, and `shape` the shape a timeseries definition's sources
-    /// must have, as [`check_policy_sources`] takes it.
+    /// takes them, and `shape` and `model_type` the shape and the clustering
+    /// model type a timeseries definition's sources are checked by, as
+    /// [`Self::check_sources`] takes them.
     ///
     /// # Errors
     ///
     /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
     /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` or
     /// `INDICATOR_NOT_ALLOWED`, or an error if the store cannot be read.
+    // Each argument is a distinct input of the rules; bundling them would only
+    // move the list into a struct every caller builds once.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_stored(
         &self,
         store: &Store,
@@ -490,20 +529,26 @@ impl TrainingDocument {
         addrs: &[IpAddr],
         kept: &HashSet<(String, SocketAddr)>,
         shape: ShapeReference<'_>,
+        model_type: &ClusteringModelTypeRef,
         system_admin: bool,
     ) -> Result<()> {
-        self.check_sources(store, customer_id, shape)?;
+        self.check_sources(store, customer_id, shape, model_type)?;
         self.check_data_store(store, addrs, kept, system_admin)?;
         self.check_indicator(store, customer_id)
     }
 
     /// Checks the sources for the customer `customer_id`.
     ///
-    /// A timeseries definition's sources must be assigned time series generation policies
-    /// of the customer, of the shape `shape` gives, all kept in the Data
-    /// Store `[data_store]` names, as [`check_policy_sources`] checks them.
-    /// Any other definition's sources must be source names of the customer,
-    /// and `shape` is not read.
+    /// A timeseries definition's sources must be assigned time series
+    /// generation policies of the customer, of the shape `shape` gives, all
+    /// kept in the Data Store `[data_store]` names, as
+    /// [`check_policy_sources`] checks them. `model_type` is the definition's
+    /// clustering model type: when it is a time-series type, every source
+    /// policy must be of that type and version, and when it is `Custom`, the
+    /// definition's `raw_event_kind`, `group_by` and `slot_size` must equal
+    /// the source policies' values. Any other definition's sources must be
+    /// source names of the customer, and `shape` and `model_type` are not
+    /// read.
     ///
     /// # Errors
     ///
@@ -514,13 +559,21 @@ impl TrainingDocument {
         store: &Store,
         customer_id: u32,
         shape: ShapeReference<'_>,
+        model_type: &ClusteringModelTypeRef,
     ) -> Result<()> {
         if self.method == Method::Timeseries {
+            let custom_keys = (*model_type == ClusteringModelTypeRef::Custom).then(|| CustomKeys {
+                raw_event_kind: &self.raw_event_kind,
+                group_by: self.group_by.map(GroupBy::as_str),
+                slot_size: self.slot_size,
+            });
             return match check_policy_sources(
                 store,
                 customer_id,
                 &self.sources,
                 shape,
+                model_type,
+                custom_keys,
                 &self.data_store.server_name,
             )? {
                 Some(refused) => Err(refused.into_error("")),

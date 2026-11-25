@@ -38,7 +38,7 @@ pub(super) use self::node_apply::{
     refresh_data_stores,
 };
 pub(super) use self::policy_source::{
-    ShapeReference, check_policy_sources, policy_id, trained_shape,
+    CustomKeys, ShapeReference, check_policy_sources, policy_id, time_series_type_of, trained_shape,
 };
 
 const NO_SUCH_POLICY: &str = "no such time series generation policy";

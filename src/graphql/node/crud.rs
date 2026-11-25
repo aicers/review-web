@@ -337,6 +337,17 @@ impl NodeMutation {
     /// an allowed model, and a missing value that has a default, are accepted: Apply stores the
     /// document completed with them.
     ///
+    /// A detector of a timeseries model reads time series generation policies of the customer of
+    /// the shape of those its model was trained on. One whose model was trained as a time-series
+    /// type, such as `server_daily_tls`, reads only policies made from that type at that version,
+    /// and takes only the sections of the type's detection models; another policy, a custom one of
+    /// the same shape included, is refused with `SOURCES_INCOMPATIBLE` at the source. Such a
+    /// detector alone may have `source_sensors`, a table from source policy ids to sensor lists,
+    /// which Apply fills in from the stored policies; on any other detector it is refused with
+    /// `FIELD_NOT_ALLOWED`. Each of its entries must name one of the detector's sources and list
+    /// that policy's sensors in their order, or it is refused with `SOURCES_INCOMPATIBLE` at
+    /// `source_sensors`; a source with no entry gets one on Apply.
+    ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
     /// customer, or of the customer the new profile gives it, is unfinished, also while it is
     /// stopped; and, while any customer's deletion is unfinished, when the new hostname is one

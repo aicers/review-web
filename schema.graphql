@@ -3054,6 +3054,14 @@ type ModelDigest {
 	"""
 	trainingRead: TrainingRead!
 	"""
+	The number of clusters the current result had right after its
+	training, as the engine reported it with the model; null when none is
+	recorded, as for every model that is not a timeseries model. An
+	analysis round does not change it, so it can be compared with the
+	model's current cluster count.
+	"""
+	clusterCountAtTraining: StringNumber
+	"""
 	The customer the model belongs to.
 	"""
 	customerId: ID!
@@ -3585,6 +3593,17 @@ type Mutation {
 	an allowed model, and a missing value that has a default, are accepted: Apply stores the
 	document completed with them.
 	
+	A detector of a timeseries model reads time series generation policies of the customer of
+	the shape of those its model was trained on. One whose model was trained as a time-series
+	type, such as `server_daily_tls`, reads only policies made from that type at that version,
+	and takes only the sections of the type's detection models; another policy, a custom one of
+	the same shape included, is refused with `SOURCES_INCOMPATIBLE` at the source. Such a
+	detector alone may have `source_sensors`, a table from source policy ids to sensor lists,
+	which Apply fills in from the stored policies; on any other detector it is refused with
+	`FIELD_NOT_ALLOWED`. Each of its entries must name one of the detector's sources and list
+	that policy's sensors in their order, or it is refused with `SOURCES_INCOMPATIBLE` at
+	`source_sensors`; a source with no entry gets one on Apply.
+	
 	Each Semi-supervised Engine agent's document being applied that differs from its stored
 	config is completed with the defaults of the detection model properties
 	(`detectionModelProperties`) and stored completed. If completion refuses one such
@@ -3652,6 +3671,17 @@ type Mutation {
 	`BOUND_VIOLATED`; and a label DB that is not stored, with `NOT_FOUND`. A missing section of
 	an allowed model, and a missing value that has a default, are accepted: Apply stores the
 	document completed with them.
+	
+	A detector of a timeseries model reads time series generation policies of the customer of
+	the shape of those its model was trained on. One whose model was trained as a time-series
+	type, such as `server_daily_tls`, reads only policies made from that type at that version,
+	and takes only the sections of the type's detection models; another policy, a custom one of
+	the same shape included, is refused with `SOURCES_INCOMPATIBLE` at the source. Such a
+	detector alone may have `source_sensors`, a table from source policy ids to sensor lists,
+	which Apply fills in from the stored policies; on any other detector it is refused with
+	`FIELD_NOT_ALLOWED`. Each of its entries must name one of the detector's sources and list
+	that policy's sensors in their order, or it is refused with `SOURCES_INCOMPATIBLE` at
+	`source_sensors`; a source with no entry gets one on Apply.
 	
 	Each Semi-supervised Engine agent's document being applied that differs from its stored
 	config is completed with the defaults of the detection model properties
@@ -3764,6 +3794,17 @@ type Mutation {
 	`BOUND_VIOLATED`; and a label DB that is not stored, with `NOT_FOUND`. A missing section of
 	an allowed model, and a missing value that has a default, are accepted: Apply stores the
 	document completed with them.
+	
+	A detector of a timeseries model reads time series generation policies of the customer of
+	the shape of those its model was trained on. One whose model was trained as a time-series
+	type, such as `server_daily_tls`, reads only policies made from that type at that version,
+	and takes only the sections of the type's detection models; another policy, a custom one of
+	the same shape included, is refused with `SOURCES_INCOMPATIBLE` at the source. Such a
+	detector alone may have `source_sensors`, a table from source policy ids to sensor lists,
+	which Apply fills in from the stored policies; on any other detector it is refused with
+	`FIELD_NOT_ALLOWED`. Each of its entries must name one of the detector's sources and list
+	that policy's sensors in their order, or it is refused with `SOURCES_INCOMPATIBLE` at
+	`source_sensors`; a source with no entry gets one on Apply.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
 	customer, or of the customer the new profile gives it, is unfinished, also while it is
@@ -3975,11 +4016,22 @@ type Mutation {
 	reads in `log_kind`, which is neither empty nor the name of another raw
 	event kind, such as `http`, or is refused with `EVENT_KIND_NOT_ALLOWED`.
 	A `timeseries` definition takes a network raw event kind, such as
-	`conn`, and as sources the IDs of time series generation policies of
-	the customer that are assigned, of one raw event kind, measure,
-	grouping endpoint, grouping unit, counterpart scope, slot size, window
-	size and UTC offset, and kept in the Data Store `[data_store]` names,
-	which their generators still write to.
+	`conn`, which its record stores as it does a `multidimension`
+	definition's, and as sources the IDs of time series generation
+	policies of the customer that are assigned, of one raw event kind,
+	measure, grouping endpoint, grouping unit, counterpart scope, slot
+	size, window size and UTC offset, and kept in the Data Store
+	`[data_store]` names, which their generators still write to. A
+	definition of a time-series type, such as `server_daily_tls`, reads
+	only policies made from that type at its version; a custom policy, a
+	policy of another type and one of another version of the type are
+	refused with `SOURCES_INCOMPATIBLE` at the first such source. A custom
+	`timeseries` definition's `raw_event_kind`, `group_by` (absent exactly
+	when the policies are not grouped) and `slot_size`, in seconds, must
+	be its sources' values; the first that is not is refused with
+	`SOURCES_INCOMPATIBLE` at that key, with the definition's value. The
+	sources are checked in this order: the customer's assigned policies,
+	the shape, the type, a custom definition's keys, then the Data Store.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the instance's customer is unfinished, also while it is stopped.
@@ -4005,7 +4057,9 @@ type Mutation {
 	Once its timeseries model exists, a timeseries definition's sources
 	must have the shape of the policies the model was trained on, which
 	the model's detectors read; otherwise they are refused with
-	`SOURCES_INCOMPATIBLE`.
+	`SOURCES_INCOMPATIBLE`. They must also be of the definition's
+	time-series type, and a custom definition's keys their values, as
+	`insertTrainingDefinition` checks them.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the definition's customer is unfinished, also while it is stopped.
@@ -4035,7 +4089,8 @@ type Mutation {
 	sources, an installed Data Store and the Data Store's retention; and
 	the definition text the run starts with is relayed to the instance. A
 	retrain of a timeseries model keeps the shape of the policies it was
-	trained on, as `updateTrainingDefinition` does.
+	trained on, and a timeseries definition's sources are checked against
+	its type and keys, as `updateTrainingDefinition` does.
 	
 	Refusals carry `extensions.code`: `NOT_FOUND`; the codes of the
 	clustering model type check, as `insertTrainingDefinition` lists
@@ -4088,6 +4143,11 @@ type Mutation {
 	so a timeseries target's sources must have the shape of the policies
 	the source was trained on, and while none of those is stored, the
 	shape is unknown and any source is refused with
+	`SOURCES_INCOMPATIBLE`. A source model trained as a time-series type,
+	such as `server_daily_tls`, gives its target that type, so the
+	target's sources must be policies made from it at that version, and
+	a custom target's keys must be its sources' values, as
+	`insertTrainingDefinition` checks them; otherwise
 	`SOURCES_INCOMPATIBLE`.
 	
 	The caller must belong to the source's customer and the target
@@ -7618,8 +7678,8 @@ type TrainingDefinition {
 	"""
 	The Giganto kind name of the raw events the definition trains on,
 	such as `http`. A prefix definition's is `log`, the log being named by
-	the definition's `log_kind`; a timeseries definition's is
-	`periodic_time_series`.
+	the definition's `log_kind`; a timeseries definition's is the network
+	kind its policies count, such as `tls`.
 	"""
 	rawEventKind: String!
 	"""

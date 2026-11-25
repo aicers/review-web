@@ -2160,54 +2160,286 @@ async fn a_stored_completed_config_keeps_its_data_store_pair() {
     assert_eq!(f.stored_sections(), Some(sections(DEFAULT_SECTIONS)));
 }
 
-/// An applied detector of a model of a time-series type carries the sensors
-/// of the policies its sources name in `source_sensors`; its draft is stored
-/// as written, and recompleting the applied documents at startup changes
-/// nothing.
-#[tokio::test]
-async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
-    use crate::graphql::{
-        model::TIMESERIES_KIND,
-        time_series_generation_test_support::{
-            PolicyShape, generator_config, insert_generator_node_with, insert_shaped_policy,
-            sensor_name,
-        },
-    };
+// ---------------------------------------------------------------------------
+// Detectors of time-series models
 
-    let f = fixture().await;
-    let generator_sensor = sensor_name("gen-a.example.com");
-    let policies = {
-        let store = f.store();
+/// A model of `engine_a` of `server_daily_tls` version 1.
+const TLS_MODEL: &str = "tls-a";
+/// A custom timeseries model of `engine_a`.
+const SERIES_MODEL: &str = "series-a";
+
+/// The policies of customer A the time-series detector tests read, assigned
+/// to a generator writing to the fixture's Data Store.
+struct TlsPolicies {
+    /// `server_daily_tls` version 1 policies.
+    typed: [String; 2],
+    /// The sensors of `typed`, in order.
+    sensors: [Vec<String>; 2],
+    /// A custom policy of the `server_daily_tls` shape.
+    custom: String,
+}
+
+impl Fixture {
+    /// Stores the policies of [`TlsPolicies`], [`TLS_MODEL`] trained on its
+    /// typed policies and [`SERIES_MODEL`] trained on its custom one.
+    fn tls_policies(&self) -> TlsPolicies {
+        use crate::graphql::{
+            model::TIMESERIES_KIND,
+            time_series_generation_test_support::{
+                PolicyShape, generator_config, insert_generator_node_with, insert_internal_network,
+                insert_policy_of, sensor_name, type_ref,
+            },
+        };
+
+        let store = self.store();
+        insert_internal_network(&store, A);
         let generator = insert_generator_node_with(
             &store,
             "gen-a.example.com",
             A,
-            Some(generator_config(&f.server_name)),
+            Some(generator_config(&self.server_name)),
         );
-        let sensors: [&[&str]; 2] = [&[&f.sensor_a], &[&generator_sensor, &f.sensor_a]];
-        let policies = [("first", sensors[0]), ("second", sensors[1])].map(|(name, sensors)| {
-            let id = insert_shaped_policy(&store, name, A, sensors, PolicyShape::default());
+        let sensors = [
+            vec![self.sensor_a.clone()],
+            vec![sensor_name("gen-a.example.com"), self.sensor_a.clone()],
+        ];
+        let shape = PolicyShape::daily_tls(review_database::EndpointRole::Destination);
+        let policy = |name: &str, sensors: &[String], of: Option<&str>| {
+            let sensors: Vec<&str> = sensors.iter().map(String::as_str).collect();
+            let id = insert_policy_of(
+                &store,
+                name,
+                A,
+                &sensors,
+                shape,
+                of.map(|id| type_ref(id, 1)),
+            );
             store
                 .time_series_generation_policy_map()
                 .assign(id, Some(&generator), true)
                 .expect("assign policy");
-            id
-        });
-        TestModel {
-            instance: f.engine_a.clone(),
-            kind: TIMESERIES_KIND,
-            clustering_model_type: ClusteringModelTypeRef::Catalog {
-                id: "server_daily_tls".to_string(),
-                version: 1,
-            },
-            trained_sources: policies.iter().map(ToString::to_string).collect(),
-            ..TestModel::new("tls-a", A)
+            id.to_string()
+        };
+        let typed = [
+            policy("first", &sensors[0], Some("server_daily_tls")),
+            policy("second", &sensors[1], Some("server_daily_tls")),
+        ];
+        let custom = policy("custom", &sensors[0], None);
+        for (name, model_type, trained_on) in [
+            (
+                TLS_MODEL,
+                ClusteringModelTypeRef::Catalog {
+                    id: "server_daily_tls".to_string(),
+                    version: 1,
+                },
+                typed.to_vec(),
+            ),
+            (
+                SERIES_MODEL,
+                ClusteringModelTypeRef::Custom,
+                vec![custom.clone()],
+            ),
+        ] {
+            TestModel {
+                instance: self.engine_a.clone(),
+                kind: TIMESERIES_KIND,
+                clustering_model_type: model_type,
+                trained_sources: trained_on,
+                ..TestModel::new(name, A)
+            }
+            .replace(&store);
         }
-        .replace(&store);
-        policies
+        TlsPolicies {
+            typed,
+            sensors,
+            custom,
+        }
+    }
+
+    /// Returns the code, `field`, `value` and `detectorId` of the refusal of
+    /// `document` by a draft save of `engine_a`, then checks that
+    /// `applyNode` and `applyNodeDraft` of it as the stored draft refuse it
+    /// alike, leaving nothing stored.
+    async fn refused_everywhere(&self, document: &str) -> (String, String, String, Value) {
+        let saved = refused(&self.save(&self.engine_a, Some(document)).await);
+        assert_eq!(self.agent(&self.engine_a).draft, None, "{document}");
+        self.seed(&self.engine_a, Some(document));
+        for mutation in MUTATIONS {
+            let applied = refused(&self.apply_through(mutation).await);
+            assert_eq!(applied, saved, "{mutation}: {document}");
+            assert_eq!(self.agent(&self.engine_a).config, None, "{mutation}");
+        }
+        self.seed(&self.engine_a, None);
+        saved
+    }
+
+    /// Checks that a draft save of `document` on `engine_a`, and each apply
+    /// of it, is accepted, then clears the draft and the config again.
+    async fn accepted_everywhere(&self, document: &str) {
+        for mutation in MUTATIONS {
+            let res = self.save(&self.engine_a, Some(document)).await;
+            assert!(res.errors.is_empty(), "{document}: {res:?}");
+            let res = self.apply_through(mutation).await;
+            assert!(res.errors.is_empty(), "{mutation}: {document}: {res:?}");
+            let old = self.agent(&self.engine_a);
+            let mut new = old.clone();
+            new.draft = None;
+            new.config = None;
+            self.store()
+                .agents_map()
+                .update(&old, &new)
+                .expect("clear the agent's documents");
+        }
+    }
+}
+
+/// Returns a `source_sensors` line listing `entries`.
+fn source_sensors(entries: &[(&str, &[String])]) -> String {
+    let entries: Vec<String> = entries
+        .iter()
+        .map(|(id, sensors)| format!("{id:?} = {}", serde_json::to_string(sensors).unwrap()))
+        .collect();
+    format!("source_sensors = {{ {} }}", entries.join(", "))
+}
+
+#[tokio::test]
+async fn a_server_daily_tls_detector_refuses_a_custom_policy_of_its_shape() {
+    let f = fixture().await;
+    let p = f.tls_policies();
+    let document = f.doc(TLS_MODEL, &[&p.typed[0], &p.custom], "");
+    assert_eq!(
+        f.refused_everywhere(&document).await,
+        (
+            "SOURCES_INCOMPATIBLE".to_string(),
+            "detectors[0].sources[1]".to_string(),
+            p.custom.clone(),
+            Value::from(1)
+        )
+    );
+    // A custom time-series model's detector reads the same policy.
+    f.accepted_everywhere(&f.doc(SERIES_MODEL, &[&p.custom, &p.typed[0]], ""))
+        .await;
+    f.accepted_everywhere(&f.doc(TLS_MODEL, &[&p.typed[0], &p.typed[1]], ""))
+        .await;
+}
+
+#[tokio::test]
+async fn a_server_daily_tls_detector_takes_window_outlier_only() {
+    let f = fixture().await;
+    let p = f.tls_policies();
+    let with_section = |section: &str| {
+        format!(
+            "{}\n[detectors.detection_models.{section}]\nenabled = true\n",
+            f.doc(TLS_MODEL, &[&p.typed[0]], "")
+        )
     };
-    let sources = policies.map(|id| id.to_string());
-    let document = f.doc("tls-a", &[&sources[0], &sources[1]], "");
+    f.accepted_everywhere(&with_section("window_outlier")).await;
+    assert_eq!(
+        f.refused_everywhere(&with_section("far_outlier")).await,
+        (
+            "FIELD_NOT_ALLOWED".to_string(),
+            "detectors[0].detection_models.far_outlier".to_string(),
+            String::new(),
+            Value::from(1)
+        )
+    );
+}
+
+#[tokio::test]
+async fn source_sensors_is_checked_by_draft_save_and_apply_alike() {
+    let f = fixture().await;
+    let p = f.tls_policies();
+    let [t1, t2] = &p.typed;
+    let [s1, s2] = &p.sensors;
+    let both = [t1.as_str(), t2.as_str()];
+    for entries in [
+        vec![(t1.as_str(), s1.as_slice()), (t2.as_str(), s2.as_slice())],
+        vec![(t2.as_str(), s2.as_slice())],
+    ] {
+        let line = source_sensors(&entries);
+        f.accepted_everywhere(&f.doc(TLS_MODEL, &both, &line)).await;
+    }
+
+    let reordered: Vec<String> = s2.iter().rev().cloned().collect();
+    let wrong = vec![f.sensor_b.clone()];
+    for (sources, entries, key) in [
+        (vec![t2.as_str()], vec![(t1.as_str(), s1.as_slice())], t1),
+        (both.to_vec(), vec![(t2.as_str(), reordered.as_slice())], t2),
+        (both.to_vec(), vec![(t1.as_str(), wrong.as_slice())], t1),
+    ] {
+        let line = source_sensors(&entries);
+        assert_eq!(
+            f.refused_everywhere(&f.doc(TLS_MODEL, &sources, &line))
+                .await,
+            (
+                "SOURCES_INCOMPATIBLE".to_string(),
+                "detectors[0].source_sensors".to_string(),
+                key.clone(),
+                Value::from(1)
+            ),
+            "{line}"
+        );
+    }
+
+    for (model, source, line) in [
+        (
+            SERIES_MODEL,
+            p.custom.as_str(),
+            source_sensors(&[(p.custom.as_str(), s1.as_slice())]),
+        ),
+        (
+            "model-a",
+            f.sensor_a.as_str(),
+            source_sensors(&[(t1.as_str(), s1.as_slice())]),
+        ),
+        ("model-a", f.sensor_a.as_str(), source_sensors(&[])),
+    ] {
+        assert_eq!(
+            f.refused_everywhere(&f.doc(model, &[source], &line)).await,
+            (
+                "FIELD_NOT_ALLOWED".to_string(),
+                "detectors[0].source_sensors".to_string(),
+                String::new(),
+                Value::from(1)
+            ),
+            "{model}: {line}"
+        );
+    }
+
+    // A new node's draft is parsed as the others are, and a detector on it
+    // is refused for the node having no applied profile.
+    let malformed = f.doc(TLS_MODEL, &[t1], "source_sensors = [\"s1\"]");
+    let (code, field, _, _) = refused(
+        &f.sys(&insert_node(A, "new.example.com", Some(&malformed)))
+            .await,
+    );
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("INVALID_DOCUMENT", "detectors[0].source_sensors")
+    );
+    let line = source_sensors(&[(t1.as_str(), s1.as_slice())]);
+    let (code, _, _, _) = refused(
+        &f.sys(&insert_node(
+            A,
+            "new.example.com",
+            Some(&f.doc(TLS_MODEL, &[t1], &line)),
+        ))
+        .await,
+    );
+    assert_eq!(code, "SOURCE_NOT_ALLOWED");
+}
+
+/// An applied detector of a model of a time-series type carries the sensors
+/// of the policies its sources name in `source_sensors`; its draft is stored
+/// as written, the applied document keeps counting for the Data Store rule
+/// and the customer deletion guard, and recompleting the applied documents
+/// at startup changes nothing.
+#[tokio::test]
+async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
+    let f = fixture().await;
+    let p = f.tls_policies();
+    let sources = &p.typed;
+    let document = f.doc(TLS_MODEL, &[&sources[0], &sources[1]], "");
 
     ok(f.save(&f.engine_a, Some(&document)).await);
     let agent = f.agent(&f.engine_a);
@@ -2225,10 +2457,13 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
         .map(|config| config.as_ref().to_string())
         .expect("an applied document");
     let expected_sensors = format!(
-        "source_sensors = {{ \"{}\" = [{:?}], \"{}\" = [{:?}, {:?}] }}",
-        sources[0], f.sensor_a, sources[1], generator_sensor, f.sensor_a
+        "source_sensors = {{ \"{}\" = {:?}, \"{}\" = {:?} }}",
+        sources[0], p.sensors[0], sources[1], p.sensors[1]
     );
-    assert!(applied.contains(&expected_sensors), "{applied}");
+    assert!(
+        applied.contains(&expected_sensors),
+        "{expected_sensors}\n{applied}"
+    );
     // The applied document parses, so the Data Store rule keeps its pair.
     assert_eq!(
         crate::graphql::engine_document::kept_pairs([applied.as_str()]),
@@ -2243,10 +2478,11 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
                 version: 1,
             })
         },
-        &|id| match policies.iter().position(|&policy| policy == id) {
-            Some(0) => Some(vec![f.sensor_a.clone()]),
-            Some(_) => Some(vec![generator_sensor.clone(), f.sensor_a.clone()]),
-            None => None,
+        &|id| {
+            sources
+                .iter()
+                .position(|source| *source == id.to_string())
+                .and_then(|i| p.sensors.get(i).cloned())
         },
         CompletionMode::Apply,
     )
@@ -2256,6 +2492,10 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
         f.agent(&f.engine_a).draft.as_ref().map(AsRef::as_ref),
         Some(document.as_str())
     );
+    // Saved again as the applied document, `source_sensors` included, the
+    // draft passes the check of its sensors.
+    ok(f.save(&f.engine_a, Some(&applied)).await);
+    ok(f.save(&f.engine_a, Some(&document)).await);
 
     // The startup recompletion finds the applied document complete.
     assert_eq!(
@@ -2270,5 +2510,29 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
             .config
             .map(|config| config.as_ref().to_string()),
         Some(applied)
+    );
+
+    // With the draft gone and the engine's node another customer's, the
+    // applied document alone makes the engine a user of customer A's Data
+    // Store, which the customer deletion guard reports.
+    f.seed(&f.engine_a, None);
+    let profile = |customer_id| NodeProfile {
+        customer_id,
+        description: String::new(),
+        hostname: "engine-a.example.com".to_string(),
+    };
+    f.set_profiles(f.engine_a.node_id, Some(profile(B)), Some(profile(B)));
+    let in_use = crate::graphql::data_stores_in_use(&f.store(), A).expect("read the store");
+    let users: Vec<&str> = in_use
+        .data_stores
+        .iter()
+        .filter(|data_store| data_store.server_name == f.server_name)
+        .flat_map(|data_store| data_store.users.iter().map(String::as_str))
+        .collect();
+    assert_eq!(
+        users,
+        [format!(
+            "the Unsupervised Engine agent {ENGINE_KEY} on engine-a.example.com"
+        )]
     );
 }

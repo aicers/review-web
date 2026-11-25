@@ -572,6 +572,15 @@ impl ModelDigest {
         (&self.inner.training_read).into()
     }
 
+    /// The number of clusters the current result had right after its
+    /// training, as the engine reported it with the model; null when none is
+    /// recorded, as for every model that is not a timeseries model. An
+    /// analysis round does not change it, so it can be compared with the
+    /// model's current cluster count.
+    async fn cluster_count_at_training(&self) -> Option<StringNumber<u32>> {
+        self.inner.cluster_count_at_training.map(StringNumber)
+    }
+
     /// The customer the model belongs to.
     async fn customer_id(&self) -> ID {
         ID(self.inner.customer_id.to_string())
