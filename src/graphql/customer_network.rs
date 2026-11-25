@@ -359,12 +359,11 @@ pub(super) fn hog_agent_lookup_keys(
 /// generation policy of the customer, each once.
 ///
 /// A policy is sent with its customer's internal networks, so every such
-/// generator is told when the stored networks change, whether or not the
-/// merged group hog receives changes: a change of a network's type alone
-/// changes which addresses are internal. The networks are already stored
-/// when this runs, so a failure to read the policies is logged rather than
-/// failing the call; the generators pull their policies again when they
-/// reconnect.
+/// generator is told whenever the stored networks are written, also when
+/// the internal addresses hog receives stay as they were and hog is not
+/// pushed. The networks are already stored when this runs, so a failure to
+/// read the policies is logged rather than failing the call; the generators
+/// pull their policies again when they reconnect.
 fn policy_generators(ctx: &Context<'_>, store: &Store, customer_id: u32) -> Vec<ModelInstance> {
     generators_of_customer(store, customer_id).unwrap_or_else(|e| {
         error_with_caller!(
@@ -1249,17 +1248,23 @@ mod tests {
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
         assert_eq!(pushes.internal().len(), 1);
 
+        // A change of the type to Extranet empties the internal group, so Hog
+        // is pushed the empty group.
+        let res = schema
+            .execute_as_system_admin(&replace("7", "3", &network("office", "EXTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "3" }));
+
         // A removal pushes the empty group to Hog alone.
         let res = schema.execute_as_system_admin(REMOVE_7).await;
         assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
+        let target = vec!["001.hog.n7.example.com".to_string()];
         assert_eq!(
             pushes.internal(),
             vec![
-                vec![(vec!["001.hog.n7.example.com".to_string()], expected)],
-                vec![(
-                    vec!["001.hog.n7.example.com".to_string()],
-                    HostNetworkGroup::default()
-                )],
+                vec![(target.clone(), expected)],
+                vec![(target.clone(), HostNetworkGroup::default())],
+                vec![(target, HostNetworkGroup::default())],
             ]
         );
     }
