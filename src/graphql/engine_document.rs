@@ -14,7 +14,7 @@
 //! by [`EngineDocument::check_stored`].
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
@@ -88,6 +88,12 @@ pub(crate) struct Detector {
     /// every document the database write completes parses: their contents
     /// are checked by [`EngineDocument::check_stored`], never by the parse.
     pub(crate) detection_models: Option<toml::Table>,
+    /// The sensors of each source policy, by policy id, which the database
+    /// write's completion sets for a detector of a time-series type's model
+    /// from the stored policies. It is declared so that every document the
+    /// completion writes parses, and is not checked against the policies:
+    /// the completion replaces a value that differs from theirs.
+    pub(crate) source_sensors: Option<BTreeMap<String, Vec<String>>>,
 }
 
 /// A duration written as `humantime` text, such as `5m`, with its text.

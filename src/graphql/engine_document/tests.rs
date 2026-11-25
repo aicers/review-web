@@ -634,6 +634,66 @@ fn kept_pairs_come_from_completed_documents_and_not_from_the_old_shape() {
     );
 }
 
+/// A document the database write completes for a detector of a time-series
+/// type's model, `source_sensors` included, parses, and its Data Store pairs
+/// are kept.
+#[test]
+fn completed_time_series_documents_parse_and_keep_their_pairs() {
+    let draft = with(
+        &VALID.replace("001.giganto.node1.example.com", "ts.example.com"),
+        "sources",
+        "sources = [\"42\", \"43\"]",
+    );
+    let completed = complete_engine_document(
+        AgentKind::Unsupervised,
+        &draft,
+        &|_| {
+            Some(ClusteringModelTypeRef::Catalog {
+                id: "server_daily_tls".to_string(),
+                version: 1,
+            })
+        },
+        &|id| match id {
+            42 => Some(vec!["s1".to_string()]),
+            43 => Some(vec!["s2".to_string(), "s1".to_string()]),
+            _ => None,
+        },
+        CompletionMode::Apply,
+    )
+    .unwrap();
+    assert!(
+        completed.contains("source_sensors = { \"42\" = [\"s1\"], \"43\" = [\"s2\", \"s1\"] }"),
+        "{completed}"
+    );
+
+    let document = EngineDocument::parse_and_validate(&completed).expect(&completed);
+    let detector = document.detectors.first().expect("one detector");
+    assert_eq!(
+        detector.source_sensors,
+        Some(BTreeMap::from([
+            ("42".to_string(), vec!["s1".to_string()]),
+            ("43".to_string(), vec!["s2".to_string(), "s1".to_string()]),
+        ]))
+    );
+    assert_eq!(document.server_names(), BTreeSet::from(["ts.example.com"]));
+    assert_eq!(
+        kept_pairs([completed.as_str()]),
+        HashSet::from([(
+            "ts.example.com".to_string(),
+            "10.0.0.5:38371".parse().unwrap()
+        )])
+    );
+
+    // The key holds a table of sensor lists, as the completion writes it.
+    let error = EngineDocument::parse_and_validate(&with(
+        &draft,
+        "source_sensors",
+        "source_sensors = [\"s1\"]",
+    ))
+    .expect_err("a list is not a table of sensors");
+    assert_eq!(parts(&error).0, "INVALID_DOCUMENT");
+}
+
 // ---------------------------------------------------------------------------
 // Detectors of a timeseries model
 

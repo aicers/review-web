@@ -2229,6 +2229,11 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
         sources[0], f.sensor_a, sources[1], generator_sensor, f.sensor_a
     );
     assert!(applied.contains(&expected_sensors), "{applied}");
+    // The applied document parses, so the Data Store rule keeps its pair.
+    assert_eq!(
+        crate::graphql::engine_document::kept_pairs([applied.as_str()]),
+        HashSet::from([(f.server_name.clone(), OWN_ADDRESS.parse().unwrap())])
+    );
     let completed = complete_engine_document(
         AgentKind::Unsupervised,
         &document,
