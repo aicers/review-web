@@ -1181,7 +1181,7 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
     use ipnet::IpNet;
-    use review_database::AgentStatus;
+    use review_database::{AgentStatus, ModelInstance};
     use serde_json::json;
 
     use super::super::test_support::{
@@ -3340,11 +3340,7 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn time_series_generation_policies_changed(
-            &self,
-            _generators: &[review_database::ModelInstance],
-        ) {
-        }
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(
             &self,
@@ -3442,11 +3438,7 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn time_series_generation_policies_changed(
-            &self,
-            _generators: &[review_database::ModelInstance],
-        ) {
-        }
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(
             &self,
@@ -5741,11 +5733,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn time_series_generation_policies_changed(
-            &self,
-            _generators: &[review_database::ModelInstance],
-        ) {
-        }
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(
             &self,

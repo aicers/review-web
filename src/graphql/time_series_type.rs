@@ -158,7 +158,7 @@ impl From<&protocol::TimeSeriesTypeRef> for TimeSeriesTypeRef {
 }
 
 /// A catalog time-series type to make a time series generation policy from.
-#[derive(Clone, Debug, InputObject)]
+#[derive(InputObject)]
 pub(super) struct TimeSeriesTypeRefInput {
     /// The id of the type.
     pub(super) id: String,

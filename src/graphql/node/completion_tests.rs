@@ -811,6 +811,13 @@ fn http_url_v1() -> ClusteringModelTypeRef {
     }
 }
 
+fn server_daily_tls_v1() -> ClusteringModelTypeRef {
+    ClusteringModelTypeRef::Catalog {
+        id: "server_daily_tls".to_string(),
+        version: 1,
+    }
+}
+
 /// The clustering model type of the models the documents below name: `m` is
 /// `http_url` version 1, `c` is custom, and no other model exists.
 fn model_type(name: &str) -> Option<ClusteringModelTypeRef> {
@@ -1090,6 +1097,56 @@ fn engine(key: &str, config: Option<&str>) -> review_database::Agent {
         kind: AgentKind::Unsupervised,
         ..hog(key, config)
     }
+}
+
+/// A detector of a time-series type's model looks up the stored policies its
+/// sources name before its sections are checked, and the refused agent is
+/// still found with them.
+#[tokio::test]
+async fn the_refused_time_series_detector_is_found_with_the_stored_policies() {
+    let f = Fixture::new(&[(FIRST, Some(APPLIED))]).await;
+    let policy = {
+        let store = f.schema.store();
+        update_node(&store, f.node_id, |node| {
+            node.agents.push(engine(ENGINE, None));
+        });
+        TestModel {
+            clustering_model_type: server_daily_tls_v1(),
+            ..TestModel::new("t", 1)
+        }
+        .replace(&store);
+        insert_policy(&store, "p", 1, &sensor_name(HOST))
+    };
+    let stored = f.node();
+    let time_series = format!(
+        "[[detectors]]\nid = 1\nmodel = \"t\"\nsources = [\"{policy}\"]\ndetection_models = 1\n"
+    );
+    let mut new = NodeUpdate::from(stored.clone());
+    for agent in &mut new.agents {
+        if agent.key == ENGINE {
+            agent.config = Some(time_series.clone().try_into().expect("valid TOML"));
+        }
+    }
+    let sensors_looked_up = Mutex::new(Vec::new());
+    let refused = complete_engine_document(
+        AgentKind::Unsupervised,
+        &time_series,
+        &|name| (name == "t").then(server_daily_tls_v1),
+        &|id| {
+            sensors_looked_up.lock().expect("not poisoned").push(id);
+            None
+        },
+        CompletionMode::Apply,
+    )
+    .expect_err("`detection_models` is not a table");
+    assert_eq!(*sensors_looked_up.lock().expect("not poisoned"), [policy]);
+    let error = anyhow::Error::new(refused.clone());
+    let store = f.schema.store();
+    let mapped = completion_refusal(&error, &store, &stored, &new).expect("the agent is found");
+    assert_eq!(
+        refusal_of_error(&mapped),
+        refusal_of_error(&unsupervised_refusal(&refused, ENGINE))
+    );
 }
 
 #[tokio::test]

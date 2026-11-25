@@ -216,11 +216,7 @@ impl AgentManager for Relay {
         Ok(lock(&self.0.online_apps).clone())
     }
 
-    async fn time_series_generation_policies_changed(
-        &self,
-        _generators: &[review_database::ModelInstance],
-    ) {
-    }
+    async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
     async fn capabilities(
         &self,

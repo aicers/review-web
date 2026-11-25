@@ -9,7 +9,8 @@ use std::{
 
 use async_trait::async_trait;
 use review_database::{
-    Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, NetworkListEntry, Node, NodeProfile,
+    Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, ModelInstance, NetworkListEntry,
+    Node, NodeProfile,
 };
 use tokio::sync::Notify;
 
@@ -219,11 +220,7 @@ impl AgentManager for RecordingAgentManager {
         Ok(HashMap::new())
     }
 
-    async fn time_series_generation_policies_changed(
-        &self,
-        _generators: &[review_database::ModelInstance],
-    ) {
-    }
+    async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
     async fn capabilities(
         &self,

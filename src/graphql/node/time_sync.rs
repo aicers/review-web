@@ -149,6 +149,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
+    use review_database::ModelInstance;
     use review_protocol::types::ResourceUsage;
     use serde_json::json;
     use tokio::sync::Barrier;
@@ -248,11 +249,7 @@ mod tests {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn time_series_generation_policies_changed(
-            &self,
-            _generators: &[review_database::ModelInstance],
-        ) {
-        }
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(&self, _hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")

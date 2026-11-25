@@ -1674,6 +1674,21 @@ impl TestSchema {
         .await
     }
 
+    /// Builds a schema on the data directory `db_dir`, which a test prepares
+    /// before the store opens it, for example with a row the store cannot
+    /// decode.
+    async fn new_in(agent_manager: SharedAgentManager, db_dir: tempfile::TempDir) -> Self {
+        Self::build_in(
+            db_dir,
+            agent_manager,
+            Arc::new(MockPackageDeployer::default()),
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
     async fn build(
         agent_manager: SharedAgentManager,
         package_deployer: SharedPackageDeployer,
@@ -1681,7 +1696,25 @@ impl TestSchema {
         event_country_locator: Option<Arc<ip2location::DB>>,
         manager_node_hostname: Option<String>,
     ) -> Self {
-        let db_dir = tempfile::tempdir().unwrap();
+        Self::build_in(
+            tempfile::tempdir().unwrap(),
+            agent_manager,
+            package_deployer,
+            test_addr,
+            event_country_locator,
+            manager_node_hostname,
+        )
+        .await
+    }
+
+    async fn build_in(
+        db_dir: tempfile::TempDir,
+        agent_manager: SharedAgentManager,
+        package_deployer: SharedPackageDeployer,
+        test_addr: Option<SocketAddr>,
+        event_country_locator: Option<Arc<ip2location::DB>>,
+        manager_node_hostname: Option<String>,
+    ) -> Self {
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
         let store = Arc::new(RwLock::new(store));

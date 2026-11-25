@@ -392,9 +392,10 @@ mod tests {
 
     use crate::graphql::{
         Role, TestSchema, get_customer_networks,
+        logging_test_support::CapturedEvents,
         push_test_support::{Push, group, insert_node, recording_schema},
         time_series_generation_test_support::{
-            DeliveryRecorder, insert_generator_node, insert_policy, sensor_name,
+            DeliveryRecorder, NO_DELIVERIES, insert_generator_node, insert_policy, sensor_name,
         },
     };
 
@@ -1068,5 +1069,63 @@ mod tests {
                 .take(3)
                 .all(|call| call == &generators_of_7)
         );
+    }
+
+    #[tokio::test]
+    async fn a_network_write_is_kept_when_the_policies_cannot_be_read() {
+        const STATES_DIRECTORY: &str = "states.db";
+        const POLICY_COLUMN_FAMILY: &str = "time series generation policy";
+
+        let db_dir = tempfile::tempdir().unwrap();
+        {
+            // Match review-database's layout and write an undecodable
+            // policy. Close the raw database before Store opens it and
+            // creates the remaining tables.
+            let mut options = rocksdb::Options::default();
+            options.create_if_missing(true);
+            options.create_missing_column_families(true);
+            let db = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open_cf(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+                [POLICY_COLUMN_FAMILY],
+            )
+            .unwrap();
+            let column_family = db.cf_handle(POLICY_COLUMN_FAMILY).unwrap();
+            db.put_cf(column_family, b"undecodable", [0xff]).unwrap();
+        }
+        let (agent_manager, deliveries) = DeliveryRecorder::boxed();
+        let schema = TestSchema::new_in(agent_manager, db_dir).await;
+
+        // The networks are stored, the failure is logged, and nobody is
+        // told.
+        let (events, guard) = CapturedEvents::start();
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        assert_eq!(
+            schema
+                .store()
+                .customer_networks_map()
+                .get(7)
+                .unwrap()
+                .map(|set| set.revision),
+            Some(1)
+        );
+        let res = schema.execute_as_system_admin(REMOVE_7).await;
+        assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
+        drop(guard);
+        assert_eq!(deliveries.calls(), NO_DELIVERIES);
+        let failures: Vec<_> = events
+            .messages()
+            .into_iter()
+            .filter(|message| {
+                message.starts_with(
+                    "Failed to find the Time Series Generators of customer 7 to tell that its \
+                     networks changed",
+                )
+            })
+            .collect();
+        assert_eq!(failures.len(), 2, "{failures:?}");
     }
 }

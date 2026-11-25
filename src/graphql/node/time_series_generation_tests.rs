@@ -302,6 +302,34 @@ async fn a_data_store_change_its_policies_could_not_follow_is_refused() {
              Store in an apply that leaves the profile as it is",
             "{mutation}"
         );
+
+        // The node has no customer after the change.
+        let node = stage(&schema, generator.node_id, |node| {
+            node.profile_draft = None;
+            let agent = node
+                .agents
+                .iter_mut()
+                .find(|agent| agent.key == generator.agent_key)
+                .expect("the generator is on the node");
+            agent.draft = Some(
+                generator_config("002.giganto.x")
+                    .try_into()
+                    .expect("a valid configuration"),
+            );
+        })
+        .await;
+        let res = apply(&schema, mutation, generator.node_id, &node).await;
+        assert_eq!(
+            res.errors.first().expect("a refusal").message,
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it could not be assigned to it again to record the \
+             new Data Store: time series generation policy \"elsewhere\" of agent \
+             \"crusher@test\" belongs to customer 1, and the node has no customer after this \
+             change; time series generation policy \"own\" of agent \"crusher@test\" belongs to \
+             customer 1, and the node has no customer after this change; unassign the policy \
+             first, or change the Data Store in an apply that leaves the profile as it is",
+            "{mutation}"
+        );
         let after = stored_node(&schema.store(), generator.node_id);
         assert_eq!(after.profile, before.profile, "{mutation}");
         assert_eq!(

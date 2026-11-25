@@ -3518,8 +3518,8 @@ mod tests {
     use ipnet::IpNet;
     use review_database::{
         Agent, AgentStatus, ExternalService, ExternalServiceStatus, HostNetworkGroup,
-        NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase, OperationRetryPolicy,
-        OwnedNetwork, event::NetworkType,
+        ModelInstance, NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase,
+        OperationRetryPolicy, OwnedNetwork, event::NetworkType,
     };
     use rocksdb::{OptimisticTransactionDB, Options, SingleThreaded};
 
@@ -3802,11 +3802,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn time_series_generation_policies_changed(
-            &self,
-            _generators: &[review_database::ModelInstance],
-        ) {
-        }
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(&self, _hostname: &str) -> anyhow::Result<BTreeSet<String>> {
             Ok(BTreeSet::new())
