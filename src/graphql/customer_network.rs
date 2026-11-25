@@ -1072,6 +1072,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_hog_push_is_unchanged_beside_the_generators_of_the_customers_policies() {
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+        let generator = insert_generator_node(&schema.store(), "g7.example.com", 7);
+        policy_of(&schema, "a", 7, "g7.example.com", Some(&generator));
+
+        // Hog gets the merged group, and the generator's node is not among
+        // its targets.
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        let expected = group(&[], &["10.0.0.0/8"], &[]);
+        assert_eq!(
+            pushes.internal(),
+            vec![vec![(
+                vec!["001.hog.n7.example.com".to_string()],
+                expected.clone()
+            )]]
+        );
+
+        // A change of the type alone still notifies the generators, but Hog
+        // skips a merged group that did not change.
+        let res = schema
+            .execute_as_system_admin(&replace("7", "2", &network("office", "EXTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
+        assert_eq!(pushes.internal().len(), 1);
+
+        // A removal pushes the empty group to Hog alone.
+        let res = schema.execute_as_system_admin(REMOVE_7).await;
+        assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
+        assert_eq!(
+            pushes.internal(),
+            vec![
+                vec![(vec!["001.hog.n7.example.com".to_string()], expected)],
+                vec![(
+                    vec!["001.hog.n7.example.com".to_string()],
+                    HostNetworkGroup::default()
+                )],
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn a_network_write_is_kept_when_the_policies_cannot_be_read() {
         const STATES_DIRECTORY: &str = "states.db";
         const POLICY_COLUMN_FAMILY: &str = "time series generation policy";

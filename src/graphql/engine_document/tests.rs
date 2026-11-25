@@ -5,7 +5,8 @@ use super::*;
 use crate::graphql::{
     model_test_support::{TestModel, http_url, insert_engine_node, insert_label_db},
     time_series_generation_test_support::{
-        OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, sensor_name,
+        OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, generator_config,
+        insert_generator_node_with, sensor_name,
     },
     training_test_support::HTTP_URL_CSV,
 };
@@ -838,6 +839,37 @@ fn a_timeseries_detector_of_a_model_of_unknown_shape_is_refused() {
             )
         );
     }
+}
+
+#[test]
+fn a_timeseries_detector_whose_source_cannot_be_read_is_refused_with_the_error() {
+    const NODES_TABLE: &str = "nodes";
+    const BROKEN_HOST: &str = "gen-broken.example.com";
+
+    let Detectors { policies, instance } = Detectors::new();
+    let generator = insert_generator_node_with(
+        &policies.store,
+        BROKEN_HOST,
+        POLICY_CUSTOMER,
+        Some(generator_config(&policies.server_name)),
+    );
+    let source = policies.assigned_policy("broken", &generator, PolicyShape::default());
+    // Every policy still reads, so the source is checked up to its
+    // generator's applied Data Store, the record that does not read.
+    let f = Detectors {
+        policies: policies.with_undecodable_row(NODES_TABLE, BROKEN_HOST),
+        instance,
+    };
+    let error = f
+        .check(&f.document(TIMESERIES_MODEL, &[source.to_string()], ""))
+        .expect_err("a source that cannot be read refuses the document");
+    assert!(
+        error
+            .message
+            .starts_with("cannot read time series generation policies: "),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

@@ -5989,6 +5989,64 @@ mod tests {
         assert!(map.get_by_id(other).unwrap().is_some());
     }
 
+    #[tokio::test]
+    async fn a_failed_policy_removal_fails_the_review_stage_naming_it() {
+        const STATES_DIRECTORY: &str = "states.db";
+        const POLICY_COLUMN_FAMILY: &str = "time series generation policy";
+
+        let permit = TEST_DB_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        {
+            // Match review-database's layout and write an undecodable
+            // policy. Close the raw database before Store opens it and
+            // creates the remaining tables.
+            let mut options = Options::default();
+            options.create_if_missing(true);
+            options.create_missing_column_families(true);
+            let db = OptimisticTransactionDB::<SingleThreaded>::open_cf(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+                [POLICY_COLUMN_FAMILY],
+            )
+            .unwrap();
+            let column_family = db.cf_handle(POLICY_COLUMN_FAMILY).unwrap();
+            db.put_cf(column_family, b"undecodable", [0xff]).unwrap();
+        }
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        let test_store = TestStore {
+            _permit: permit,
+            _db_dir: db_dir,
+            _backup_dir: backup_dir,
+            store: Arc::new(RwLock::new(store)),
+        };
+        // The customer has no node left, so the policies are the first
+        // records the Review stage cannot read.
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
+            .await;
+
+        let result = job(&test_store.store, 1).service_results.remove(0);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+        let message = result.error.unwrap_or_default();
+        assert!(
+            message.starts_with("deleting time series generation policies for customer 1: "),
+            "{message}"
+        );
+    }
+
     /// Stores the timeseries training definition `name` of `customer_id` on
     /// `instance`, reading the time series generation policy `policy`.
     fn put_timeseries_definition(

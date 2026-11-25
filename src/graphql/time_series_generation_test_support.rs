@@ -511,4 +511,44 @@ impl PolicyFixture {
     ) -> u32 {
         insert_assigned_policy(&self.store, name, POLICY_CUSTOMER, generator, shape)
     }
+
+    /// Closes the store, overwrites the row `key` of the table
+    /// `column_family` with a value that does not decode, and opens the
+    /// store again, so that reading that record fails while every other
+    /// record reads as before.
+    pub(super) fn with_undecodable_row(self, column_family: &str, key: &str) -> Self {
+        const STATES_DIRECTORY: &str = "states.db";
+
+        let Self {
+            _db: db,
+            _backup: backup,
+            store,
+            ..
+        } = self;
+        drop(store);
+        {
+            // Every column family of an existing database has to be opened
+            // with it.
+            let path = db.path().join(STATES_DIRECTORY);
+            let options = rocksdb::Options::default();
+            let column_families =
+                rocksdb::DB::list_cf(&options, &path).expect("list the column families");
+            let raw = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open_cf(
+                &options,
+                &path,
+                column_families,
+            )
+            .expect("open the closed store");
+            let handle = raw.cf_handle(column_family).expect("the table exists");
+            raw.put_cf(handle, key.as_bytes(), [0xff])
+                .expect("overwrite the row");
+        }
+        let store = Store::new(db.path(), backup.path(), None).expect("open the store again");
+        Self {
+            _db: db,
+            _backup: backup,
+            store,
+            ..self
+        }
+    }
 }
