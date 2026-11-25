@@ -891,7 +891,7 @@ mod tests {
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let entries = data["detectionModelProperties"].as_array().unwrap();
-        assert_eq!(entries.len(), 20);
+        assert_eq!(entries.len(), 21);
         let enabled = serde_json::json!({
             "name": "enabled",
             "valueType": "BOOLEAN",
@@ -940,6 +940,10 @@ mod tests {
                 (
                     serde_json::json!("FAR_OUTLIER"),
                     serde_json::json!(["HTTP"])
+                ),
+                (
+                    serde_json::json!("WINDOW_OUTLIER"),
+                    serde_json::json!(["TLS"])
                 ),
             ]
         );

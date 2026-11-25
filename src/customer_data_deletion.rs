@@ -8,7 +8,7 @@
 //!    other than its Data Stores, is uninstalled, so that nothing sends the
 //!    customer's data any more.
 //! 3. The Data Store step asks every listed Data Store to delete the
-//!    customer's events and its sampling policies' periodic time series.
+//!    customer's events and its time series generation policies' periodic time series.
 //! 4. The Data Stores on the customer's nodes are uninstalled.
 //! 5. The Review stage deletes what the Central Manager keeps, its nodes
 //!    among it.
@@ -24,7 +24,7 @@
 //!
 //! What a deletion leaves behind:
 //!
-//! - A sampling policy ID recycled before the store's policy IDs became
+//! - A time series generation policy ID recycled before the store's policy IDs became
 //!   unique names the periodic time series of every policy that held it;
 //!   deleting the customer of the last holder deletes all of them.
 //! - A host name used earlier by another customer's node names that
@@ -72,8 +72,9 @@ use crate::{
     auth::MtlsIdentity,
     backend::{DeployError, MODULE_PACKAGE_IDS, SharedAgentManager, SharedPackageDeployer},
     graphql::{
-        RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token, data_store_in_use_message,
-        data_stores_in_use, listed_rows, operator_installs, timestamp::Timestamp,
+        RoleGuard, TimeSeriesGenerationPoliciesLock, agent_lookup_key_service_token,
+        data_store_in_use_message, data_stores_in_use, listed_rows, operator_installs,
+        timestamp::Timestamp,
     },
 };
 
@@ -175,7 +176,7 @@ impl CustomerDataDeletionTarget {
 }
 
 /// A Data Store that must delete a customer's events and the periodic time
-/// series of its sampling policies.
+/// series of its time series generation policies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataStoreDeletionTarget {
     customer_id: u32,
@@ -236,8 +237,8 @@ impl DataStoreDeletionTarget {
         &self.service_fqdns
     }
 
-    /// Returns the decimal sampling policy IDs, ascending, whose periodic time
-    /// series the Data Store deletes.
+    /// Returns the decimal time series generation policy IDs, ascending, whose
+    /// periodic time series the Data Store deletes.
     #[must_use]
     pub fn periodic_time_series_ids(&self) -> &[String] {
         &self.periodic_time_series_ids
@@ -278,10 +279,10 @@ pub enum CustomerDataDeletionRequestStatus {
 #[derive(Default)]
 pub struct CustomerDataDeletionTaskManager {
     state: Mutex<CustomerDataDeletionTaskState>,
-    /// The lock `removeSamplingPolicies` takes, which the deletion takes
-    /// around its removal of the customer's sampling policies. The GraphQL
-    /// schema is given this one, so the two share it.
-    sampling_policies_lock: Arc<SamplingPoliciesLock>,
+    /// The lock `removeTimeSeriesGenerationPolicies` takes, which the deletion
+    /// takes around its removal of the customer's time series generation
+    /// policies. The GraphQL schema is given this one, so the two share it.
+    time_series_generation_policies_lock: Arc<TimeSeriesGenerationPoliciesLock>,
     /// Set when shutdown starts, which ends the supervisor's waits.
     shutdown: watch::Sender<bool>,
 }
@@ -293,9 +294,12 @@ struct CustomerDataDeletionTaskState {
 }
 
 impl CustomerDataDeletionTaskManager {
-    /// Returns the lock that orders the removals of sampling policies.
-    pub(crate) fn sampling_policies_lock(&self) -> &Arc<SamplingPoliciesLock> {
-        &self.sampling_policies_lock
+    /// Returns the lock that orders the removals of time series generation
+    /// policies.
+    pub(crate) fn time_series_generation_policies_lock(
+        &self,
+    ) -> &Arc<TimeSeriesGenerationPoliciesLock> {
+        &self.time_series_generation_policies_lock
     }
 
     /// Blocks new deletion requests and tells the active supervisor to stop,
@@ -349,8 +353,8 @@ struct CustomerDataDeletionExecutionPlan {
     customer_id: u32,
     review_targets: Option<ReviewDeletionTargets>,
     remote_targets: Vec<CustomerDataDeletionTarget>,
-    /// The customer's sampling policy IDs, read for an initial plan only; a
-    /// retry or a resume keeps the ones stored with the job.
+    /// The customer's time series generation policy IDs, read for an initial
+    /// plan only; a retry or a resume keeps the ones stored with the job.
     periodic_time_series_ids: Vec<String>,
 }
 
@@ -468,9 +472,9 @@ impl CustomerDataDeletionMutation {
     /// such Data Store, its users, and how to free it.
     ///
     /// Refused the same way, with `CUSTOMER_DATA_ALREADY_DELETED`, when the
-    /// customer's data was already deleted and it holds nodes, sampling
-    /// policies, models or training definitions created since. Once they are
-    /// removed, the request is answered `ALREADY_COMPLETED`.
+    /// customer's data was already deleted and it holds nodes, time series
+    /// generation policies, models or training definitions created since.
+    /// Once they are removed, the request is answered `ALREADY_COMPLETED`.
     ///
     /// `abandonHosts` and `abandonDataStores` give up, on a retry of a
     /// stopped deletion, hosts and Data Stores that are gone for good. The
@@ -708,7 +712,7 @@ async fn request_deletion(
         store: Arc::clone(store),
         agent_manager: Arc::clone(agent_manager),
         deployer: Arc::clone(deployer),
-        policies_lock: Arc::clone(task_manager.sampling_policies_lock()),
+        policies_lock: Arc::clone(task_manager.time_series_generation_policies_lock()),
         shutdown: task_manager.shutdown.subscribe(),
     };
     let supervisor = tokio::spawn(async move { supervisor.run(plan, Start::Request).await });
@@ -757,8 +761,12 @@ fn already_deleted_refusal(
         }
     }
     let mut policies = 0_usize;
-    for policy in store.sampling_policy_map().iter(Direction::Forward, None) {
-        if policy.context("reading the sampling policies")?.customer_id == Some(customer_id) {
+    for policy in store
+        .time_series_generation_policy_map()
+        .iter(Direction::Forward, None)
+    {
+        let policy = policy.context("reading the time series generation policies")?;
+        if policy.customer_id == customer_id {
             policies += 1;
         }
     }
@@ -776,7 +784,11 @@ fn already_deleted_refusal(
         .count();
     let held: Vec<String> = [
         (nodes, "node", "nodes"),
-        (policies, "sampling policy", "sampling policies"),
+        (
+            policies,
+            "time series generation policy",
+            "time series generation policies",
+        ),
         (models, "model", "models"),
         (definitions, "training definition", "training definitions"),
     ]
@@ -1050,11 +1062,14 @@ fn collect_initial_plan(
     remote_targets.sort_unstable_by(|a, b| a.target_service_key.cmp(&b.target_service_key));
     remote_targets.dedup_by(|a, b| a.target_service_key == b.target_service_key);
 
-    // A policy whose `customer_id` is `None` is not the customer's.
     let mut policy_ids = Vec::new();
-    for policy in store.sampling_policy_map().iter(Direction::Forward, None) {
-        let policy = policy.context("collecting customer deletion sampling policies")?;
-        if policy.customer_id == Some(customer_id) {
+    for policy in store
+        .time_series_generation_policy_map()
+        .iter(Direction::Forward, None)
+    {
+        let policy =
+            policy.context("collecting customer deletion time series generation policies")?;
+        if policy.customer_id == customer_id {
             policy_ids.push(policy.id);
         }
     }
@@ -1508,7 +1523,7 @@ struct Supervisor {
     store: Arc<RwLock<Store>>,
     agent_manager: SharedAgentManager,
     deployer: SharedPackageDeployer,
-    policies_lock: Arc<SamplingPoliciesLock>,
+    policies_lock: Arc<TimeSeriesGenerationPoliciesLock>,
     /// Turns `true` when shutdown starts. Once it has, the supervisor records
     /// nothing more, except a Review stage already running.
     shutdown: watch::Receiver<bool>,
@@ -2538,8 +2553,8 @@ enum DataStoreNext {
     },
 }
 
-/// Asks every listed Data Store to delete the customer's events and its
-/// sampling policies' periodic time series, and waits until each one's
+/// Asks every listed Data Store to delete the customer's events and its time
+/// series generation policies' periodic time series, and waits until each one's
 /// result is terminal.
 ///
 /// The targets are computed when the step runs: one per listed Data Store,
@@ -2990,7 +3005,7 @@ async fn wait_for_data_store(
 
 async fn run_review_worker_and_persist(
     store: Arc<RwLock<Store>>,
-    policies_lock: Arc<SamplingPoliciesLock>,
+    policies_lock: Arc<TimeSeriesGenerationPoliciesLock>,
     customer_id: u32,
     targets: ReviewDeletionTargets,
 ) {
@@ -3040,7 +3055,7 @@ async fn run_review_worker_and_persist(
 #[allow(clippy::too_many_lines)]
 fn delete_review_data(
     store_lock: &RwLock<Store>,
-    policies_lock: &SamplingPoliciesLock,
+    policies_lock: &TimeSeriesGenerationPoliciesLock,
     customer_id: u32,
     targets: &ReviewDeletionTargets,
 ) -> anyhow::Result<()> {
@@ -3062,12 +3077,6 @@ fn delete_review_data(
                 targets.event_service_fqdns
             )
         })?;
-    #[cfg(test)]
-    tests::checkpoint(&store, tests::Stage::Hosts, customer_id)?;
-    store
-        .hosts_map()
-        .remove_by_customer_id(customer_id)
-        .with_context(|| format!("deleting hosts for customer {customer_id}"))?;
     for host_fqdn in &targets.host_fqdns {
         #[cfg(test)]
         tests::checkpoint(&store, tests::Stage::TrafficFilters, customer_id)?;
@@ -3149,15 +3158,17 @@ fn delete_review_data(
     // Removing the nodes detached the customer's engine instances and
     // cleared every assignment of its generators, so no generator is told.
     // The customer's models and definitions, which may have named these
-    // policies, are already gone. The lock keeps a `removeSamplingPolicies`
-    // from finding a policy it checked gone; it is taken before the store,
-    // as a removal takes it.
+    // policies, are already gone. The lock keeps a
+    // `removeTimeSeriesGenerationPolicies` from finding a policy it checked
+    // gone; it is taken before the store, as a removal takes it.
     drop(store);
     let _policies = policies_lock.blocking_lock();
     read_store(store_lock)?
-        .sampling_policy_map()
+        .time_series_generation_policy_map()
         .remove_customer_policies(customer_id)
-        .with_context(|| format!("deleting sampling policies for customer {customer_id}"))?;
+        .with_context(|| {
+            format!("deleting time series generation policies for customer {customer_id}")
+        })?;
     Ok(())
 }
 
@@ -3413,7 +3424,7 @@ impl RecoveredDeletions {
             store: self.store,
             agent_manager,
             deployer,
-            policies_lock: Arc::clone(task_manager.sampling_policies_lock()),
+            policies_lock: Arc::clone(task_manager.time_series_generation_policies_lock()),
             shutdown: task_manager.shutdown.subscribe(),
         };
         let supervisor = tokio::spawn(async move {
@@ -3507,8 +3518,8 @@ mod tests {
     use ipnet::IpNet;
     use review_database::{
         Agent, AgentStatus, ExternalService, ExternalServiceStatus, HostNetworkGroup,
-        NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase, OperationRetryPolicy,
-        OwnedNetwork, event::NetworkType,
+        ModelInstance, NetworkListEntry, NodeProfile, OperationFailureKind, OperationPhase,
+        OperationRetryPolicy, OwnedNetwork, event::NetworkType,
     };
     use rocksdb::{OptimisticTransactionDB, Options, SingleThreaded};
 
@@ -3791,7 +3802,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(&self, _hostname: &str) -> anyhow::Result<BTreeSet<String>> {
             Ok(BTreeSet::new())
@@ -4456,7 +4467,6 @@ mod tests {
         PersistRequest,
         Worker,
         Events,
-        Hosts,
         TrafficFilters,
         CustomerNetworks,
         NetworkLists,
@@ -5474,24 +5484,8 @@ mod tests {
         put_dns_event(&test_store, "piglet.one.example.extra", 2);
         put_dns_event(&test_store, "piglet.other.example", 3);
         put_detection_event(&test_store, None, 4);
-        let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-        let other_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         {
             let store = read_store(&test_store.store).unwrap();
-            store
-                .hosts_map()
-                .update_opened_ports(
-                    1,
-                    &HashMap::from([(target_ip, HashMap::from([((80, 6), 1)]))]),
-                )
-                .unwrap();
-            store
-                .hosts_map()
-                .update_opened_ports(
-                    2,
-                    &HashMap::from([(other_ip, HashMap::from([((443, 6), 1)]))]),
-                )
-                .unwrap();
             for hostname in ["one.example", "one.example.extra", "other.example"] {
                 store
                     .traffic_filter_map()
@@ -5504,14 +5498,14 @@ mod tests {
 
         delete_review_data(
             &test_store.store,
-            &SamplingPoliciesLock::default(),
+            &TimeSeriesGenerationPoliciesLock::default(),
             1,
             &targets,
         )
         .unwrap();
         delete_review_data(
             &test_store.store,
-            &SamplingPoliciesLock::default(),
+            &TimeSeriesGenerationPoliciesLock::default(),
             1,
             &targets,
         )
@@ -5522,8 +5516,6 @@ mod tests {
         assert!(store.network_lists_map().get(1).unwrap().is_none());
         assert!(store.customer_networks_map().get(2).unwrap().is_some());
         assert!(store.network_lists_map().get(2).unwrap().is_some());
-        assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
-        assert!(store.hosts_map().get(2, other_ip).unwrap().is_some());
         assert!(
             store
                 .traffic_filter_map()
@@ -5827,28 +5819,32 @@ mod tests {
         }
     }
 
-    /// Stores a draft sampling policy `name` of `customer_id` reading
-    /// `node`, and returns its ID.
-    fn put_policy(store: &Store, name: &str, customer_id: u32, node: &str) -> u32 {
+    /// Stores a draft time series generation policy `name` of `customer_id`
+    /// reading `sensor`, and returns its ID.
+    fn put_policy(store: &Store, name: &str, customer_id: u32, sensor: &str) -> u32 {
         store
-            .sampling_policy_map()
-            .insert(review_database::NewSamplingPolicy {
+            .time_series_generation_policy_map()
+            .insert(review_database::NewTimeSeriesGenerationPolicy {
                 name: name.to_string(),
-                kind: review_database::SamplingKind::Conn,
-                interval: review_database::SamplingInterval::FifteenMinutes,
-                period: review_database::SamplingPeriod::OneDay,
-                offset: 0,
+                raw_event_kind: review_database::RawEventKind::Conn,
+                measure: review_database::Measure::Count,
+                group_by: None,
+                group_by_unit: review_database::GroupByUnit::Ip,
+                counterpart_scope: review_database::CounterpartScope::Any,
+                slot_size: review_database::SlotSize::FifteenMinutes,
+                window_size: review_database::WindowSize::OneDay,
+                utc_offset: 0,
                 src_ip: None,
                 dst_ip: None,
-                node: Some(node.to_string()),
-                column: None,
+                sensors: vec![sensor.to_string()],
+                time_series_type: None,
                 customer_id,
             })
             .unwrap()
     }
 
     #[tokio::test]
-    async fn deletion_removes_the_customers_sampling_policies_even_in_use() {
+    async fn deletion_removes_the_customers_time_series_generation_policies_even_in_use() {
         let test_store = TestStore::new();
         put_active_node(&test_store, 1, "one.example");
         put_active_node(&test_store, 2, "two.example");
@@ -5902,7 +5898,7 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(
-                store.sampling_policy_uses(used).unwrap(),
+                store.time_series_generation_policy_uses(used).unwrap(),
                 [review_database::PolicyUse::Definition {
                     name: "series".to_string()
                 }]
@@ -5929,14 +5925,14 @@ mod tests {
             CustomerDataDeletionStatus::Succeeded
         );
         let store = read_store(&test_store.store).unwrap();
-        let map = store.sampling_policy_map();
+        let map = store.time_series_generation_policy_map();
         assert!(map.get_by_id(own).unwrap().is_none());
         assert!(map.get_by_id(used).unwrap().is_none());
         assert!(map.get_by_id(other).unwrap().is_some());
     }
 
     #[tokio::test]
-    async fn deletion_waits_for_a_held_sampling_policies_lock() {
+    async fn deletion_waits_for_a_held_time_series_generation_policies_lock() {
         let test_store = TestStore::new();
         let node = put_active_node(&test_store, 1, "one.example");
         put_active_node(&test_store, 2, "two.example");
@@ -5955,9 +5951,10 @@ mod tests {
                 &["one.example"],
             )],
         );
-        let lock = Arc::new(SamplingPoliciesLock::default());
-        // A `removeSamplingPolicies` holds the lock from its checks through
-        // its last removal, so the deletion cannot take a policy it checked.
+        let lock = Arc::new(TimeSeriesGenerationPoliciesLock::default());
+        // A `removeTimeSeriesGenerationPolicies` holds the lock from its checks
+        // through its last removal, so the deletion cannot take a policy it
+        // checked.
         let guard = lock.hold().await;
 
         let targets =
@@ -5974,7 +5971,7 @@ mod tests {
         {
             let store = read_store(&test_store.store).unwrap();
             assert!(store.node_map().get_by_id(node).unwrap().is_none());
-            let map = store.sampling_policy_map();
+            let map = store.time_series_generation_policy_map();
             assert!(map.get_by_id(own).unwrap().is_some());
             assert!(map.get_by_id(other).unwrap().is_some());
         }
@@ -5987,13 +5984,71 @@ mod tests {
             CustomerDataDeletionStatus::Succeeded
         );
         let store = read_store(&test_store.store).unwrap();
-        let map = store.sampling_policy_map();
+        let map = store.time_series_generation_policy_map();
         assert!(map.get_by_id(own).unwrap().is_none());
         assert!(map.get_by_id(other).unwrap().is_some());
     }
 
+    #[tokio::test]
+    async fn a_failed_policy_removal_fails_the_review_stage_naming_it() {
+        const STATES_DIRECTORY: &str = "states.db";
+        const POLICY_COLUMN_FAMILY: &str = "time series generation policy";
+
+        let permit = TEST_DB_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        {
+            // Match review-database's layout and write an undecodable
+            // policy. Close the raw database before Store opens it and
+            // creates the remaining tables.
+            let mut options = Options::default();
+            options.create_if_missing(true);
+            options.create_missing_column_families(true);
+            let db = OptimisticTransactionDB::<SingleThreaded>::open_cf(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+                [POLICY_COLUMN_FAMILY],
+            )
+            .unwrap();
+            let column_family = db.cf_handle(POLICY_COLUMN_FAMILY).unwrap();
+            db.put_cf(column_family, b"undecodable", [0xff]).unwrap();
+        }
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        let test_store = TestStore {
+            _permit: permit,
+            _db_dir: db_dir,
+            _backup_dir: backup_dir,
+            store: Arc::new(RwLock::new(store)),
+        };
+        // The customer has no node left, so the policies are the first
+        // records the Review stage cannot read.
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
+            .await;
+
+        let result = job(&test_store.store, 1).service_results.remove(0);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+        let message = result.error.unwrap_or_default();
+        assert!(
+            message.starts_with("deleting time series generation policies for customer 1: "),
+            "{message}"
+        );
+    }
+
     /// Stores the timeseries training definition `name` of `customer_id` on
-    /// `instance`, reading the sampling policy `policy`.
+    /// `instance`, reading the time series generation policy `policy`.
     fn put_timeseries_definition(
         store: &Store,
         name: &str,
@@ -6043,14 +6098,14 @@ mod tests {
             .collect()
     }
 
-    /// Returns the ids of the sampling policies of `customer_id`, from the
-    /// table `samplingPolicyList` lists.
+    /// Returns the ids of the time series generation policies of `customer_id`,
+    /// from the table `timeSeriesGenerationPolicyList` lists.
     fn customer_policies(store: &Store, customer_id: u32) -> Vec<u32> {
         store
-            .sampling_policy_map()
+            .time_series_generation_policy_map()
             .iter(Direction::Forward, None)
             .map(Result::unwrap)
-            .filter(|policy| policy.customer_id == Some(customer_id))
+            .filter(|policy| policy.customer_id == customer_id)
             .map(|policy| policy.id)
             .collect()
     }
@@ -6118,7 +6173,7 @@ mod tests {
             let policy = put_policy(&store, "own", 1, "piglet.one.example");
             put_timeseries_definition(&store, "series", 1, &engine, policy);
             assert_eq!(
-                store.sampling_policy_uses(policy).unwrap(),
+                store.time_series_generation_policy_uses(policy).unwrap(),
                 [review_database::PolicyUse::Definition {
                     name: "series".to_string()
                 }]
@@ -6358,9 +6413,8 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
-        const STAGES: [Stage; 8] = [
+        const STAGES: [Stage; 7] = [
             Stage::Events,
-            Stage::Hosts,
             Stage::TrafficFilters,
             Stage::CustomerNetworks,
             Stage::NetworkLists,
@@ -6372,7 +6426,6 @@ mod tests {
         for (index, fail_stage) in STAGES.into_iter().enumerate() {
             let node = put_active_node(&test_store, 1, "one.example");
             put_customer_network_data(&test_store, 1);
-            let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
             put_dns_event(
                 &test_store,
                 "piglet.one.example",
@@ -6385,13 +6438,6 @@ mod tests {
             );
             {
                 let store = read_store(&test_store.store).unwrap();
-                store
-                    .hosts_map()
-                    .update_opened_ports(
-                        1,
-                        &HashMap::from([(target_ip, HashMap::from([((80, 6), 1)]))]),
-                    )
-                    .unwrap();
                 store
                     .traffic_filter_map()
                     .add_rules(
@@ -6487,28 +6533,18 @@ mod tests {
                 });
                 assert_eq!(target_event_exists, fail_stage == Stage::Events);
                 assert_eq!(
-                    store.hosts_map().get(1, target_ip).unwrap().is_some(),
-                    matches!(fail_stage, Stage::Events | Stage::Hosts)
-                );
-                assert_eq!(
                     store
                         .traffic_filter_map()
                         .get("one.example")
                         .unwrap()
                         .is_some(),
-                    matches!(
-                        fail_stage,
-                        Stage::Events | Stage::Hosts | Stage::TrafficFilters
-                    )
+                    matches!(fail_stage, Stage::Events | Stage::TrafficFilters)
                 );
                 assert_eq!(
                     store.customer_networks_map().get(1).unwrap().is_some(),
                     matches!(
                         fail_stage,
-                        Stage::Events
-                            | Stage::Hosts
-                            | Stage::TrafficFilters
-                            | Stage::CustomerNetworks
+                        Stage::Events | Stage::TrafficFilters | Stage::CustomerNetworks
                     )
                 );
                 assert_eq!(
@@ -6516,7 +6552,6 @@ mod tests {
                     matches!(
                         fail_stage,
                         Stage::Events
-                            | Stage::Hosts
                             | Stage::TrafficFilters
                             | Stage::CustomerNetworks
                             | Stage::NetworkLists
@@ -6591,7 +6626,6 @@ mod tests {
             let store = read_store(&test_store.store).unwrap();
             assert!(store.customer_networks_map().get(1).unwrap().is_none());
             assert!(store.network_lists_map().get(1).unwrap().is_none());
-            assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
             assert!(
                 store
                     .traffic_filter_map()
@@ -6712,7 +6746,7 @@ mod tests {
 
         let error = delete_review_data(
             &test_store.store,
-            &SamplingPoliciesLock::default(),
+            &TimeSeriesGenerationPoliciesLock::default(),
             1,
             &ReviewDeletionTargets {
                 node_ids: vec![first_node, second_node],
@@ -7004,20 +7038,9 @@ mod tests {
         let test_store = TestStore::new();
         let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
 
-        for (customer_id, hostname, ip, retry) in [
-            (
-                1,
-                "retry.example",
-                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                true,
-            ),
-            (
-                2,
-                "recovery.example",
-                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                false,
-            ),
-        ] {
+        for (customer_id, hostname, retry) in
+            [(1, "retry.example", true), (2, "recovery.example", false)]
+        {
             let manager = Arc::new(CustomerDataDeletionTaskManager::default());
             let node_id = put_active_node(&test_store, customer_id, hostname);
             put_customer_network_data(&test_store, customer_id);
@@ -7035,13 +7058,6 @@ mod tests {
             );
             {
                 let store = read_store(&test_store.store).unwrap();
-                store
-                    .hosts_map()
-                    .update_opened_ports(
-                        customer_id,
-                        &HashMap::from([(ip, HashMap::from([((80, 6), 1)]))]),
-                    )
-                    .unwrap();
                 store
                     .traffic_filter_map()
                     .add_rules(hostname, "10.0.0.0/24".parse().unwrap(), None, None, None)
@@ -7087,10 +7103,6 @@ mod tests {
                     .unwrap()
                     .is_none(),
                 "customer {customer_id} network lists remain"
-            );
-            assert!(
-                store.hosts_map().get(customer_id, ip).unwrap().is_none(),
-                "customer {customer_id} host remains"
             );
             assert!(store.traffic_filter_map().get(hostname).unwrap().is_none());
             assert!(store.events().iter_forward().all(|entry| {
@@ -9140,7 +9152,7 @@ server_name = "{server_name}"
         assert!(
             read_store(&test_store.store)
                 .unwrap()
-                .sampling_policy_map()
+                .time_series_generation_policy_map()
                 .get_by_id(policy)
                 .unwrap()
                 .is_none()
@@ -10522,7 +10534,7 @@ server_name = "{server_name}"
         assert_eq!(
             message,
             "the customer's data was deleted on 1970-01-01T00:00:00.000000456Z; it now holds \
-             1 node, 2 sampling policies, created since; remove them, then retry"
+             1 node, 2 time series generation policies, created since; remove them, then retry"
         );
         assert_eq!(job(&test_store.store, 1), completed);
         assert!(manager.state.lock().await.active.is_none());
@@ -10531,7 +10543,7 @@ server_name = "{server_name}"
             let store = read_store(&test_store.store).unwrap();
             store.node_map().remove(node).unwrap();
             store
-                .sampling_policy_map()
+                .time_series_generation_policy_map()
                 .remove_customer_policies(1)
                 .unwrap();
         }

@@ -3,7 +3,7 @@
 
 use review_database::{
     ClusteringModelTypeRef, EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite,
-    ModelInstance, NodeUpdate, RunState, SamplingInterval, Store, TrainingDefinitionUpdate,
+    ModelInstance, NodeUpdate, RunState, SlotSize, Store, TrainingDefinitionUpdate,
     types::ModelScores,
 };
 use serde_json::{Value, json};
@@ -16,7 +16,7 @@ use crate::graphql::{
         Relay, RelayAnswer, RelayCall, insert_data_store_node, insert_engine_instance,
         insert_log_collector_node, insert_named_data_store_node, insert_sensor_node, relay_schema,
     },
-    sampling_test_support::{
+    time_series_generation_test_support::{
         PolicyShape, SENSOR_KEY, generator_config, insert_assigned_policy,
         insert_generator_node_with, insert_policy, sensor_name, timeseries_definition,
     },
@@ -275,6 +275,7 @@ fn upload(name: &str, (kind, raw_event_kind): (&str, &str)) -> review_database::
         clustering_model_type: http_url(1),
         training_read: review_database::TrainingRead::default(),
         detection_model_states: vec![],
+        cluster_count_at_training: None,
     }
 }
 
@@ -512,14 +513,19 @@ async fn validation_refusals_carry_their_codes() {
         refused(&res),
         ("UNKNOWN_FIELD".into(), "name".into(), "def".into())
     );
-    // A catalog type fixes its method.
+    // A clustering model type is no type of the timeseries method, which
+    // takes time-series types.
     let text = f
         .definition(&[&f.sensor_a], OWN_ADDRESS, "")
         .replace("multidimension", "timeseries");
     let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
     assert_eq!(
         refused(&res),
-        ("FIELD_FIXED".into(), "method".into(), "timeseries".into())
+        (
+            "UNKNOWN_MODEL_TYPE".into(),
+            "type".into(),
+            "http_url".into()
+        )
     );
     // A custom definition holds only the keys of its method.
     let text = custom(&f.definition(&[&f.sensor_a], OWN_ADDRESS, ""))
@@ -620,13 +626,13 @@ async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_deliver
     ] {
         let res = f
             .sec(
-                &format!(r#"{{ samplingPolicy(id: "{id}") {{ delivery }} }}"#),
+                &format!(r#"{{ timeSeriesGenerationPolicy(id: "{id}") {{ delivery }} }}"#),
                 &[A],
             )
             .await;
         assert_eq!(
             data(res),
-            json!({ "samplingPolicy": { "delivery": delivery } }),
+            json!({ "timeSeriesGenerationPolicy": { "delivery": delivery } }),
             "{id}"
         );
     }
@@ -701,7 +707,7 @@ async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
             policy(
                 "hourly",
                 PolicyShape {
-                    interval: SamplingInterval::OneHour,
+                    slot_size: SlotSize::OneHour,
                     ..PolicyShape::default()
                 },
             ),
@@ -797,6 +803,7 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 clustering_model_type: ClusteringModelTypeRef::Custom,
                 training_read: review_database::TrainingRead::default(),
                 detection_model_states: vec![],
+                cluster_count_at_training: None,
             },
             review_database::ModelOwner {
                 customer_id: A,
@@ -3138,7 +3145,7 @@ async fn prefix_and_log_kind_refusals() {
         ),
         (
             timeseries_definition(&[1], &f.server_name, OWN_ADDRESS, "").replace(
-                "raw_event_kind = \"timeseries\"",
+                "raw_event_kind = \"conn\"",
                 "raw_event_kind = \"periodic_time_series\"",
             ),
             (

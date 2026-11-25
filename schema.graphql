@@ -1118,6 +1118,25 @@ type CoreComponent {
 	latestOperationAttempt: OperationAttempt
 }
 
+"""
+A filter on whether the other endpoint of a raw event is inside the
+internal networks of the policy's customer.
+"""
+enum CounterpartScope {
+	"""
+	No filter.
+	"""
+	ANY
+	"""
+	Counts only raw events whose other endpoint is internal.
+	"""
+	INTERNAL
+	"""
+	Counts only raw events whose other endpoint is external.
+	"""
+	EXTERNAL
+}
+
 type CryptocurrencyMiningPoolDetail {
 	coins: [String!]!
 }
@@ -1264,7 +1283,7 @@ enum DeployDisposition {
 """
 What a detection model found, as its own detail.
 """
-union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail | LabelDbMatchDetail | FarOutlierDetail
+union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail | LabelDbMatchDetail | FarOutlierDetail | WindowOutlierDetail
 
 type DetectionEvent {
 	"""
@@ -1449,6 +1468,7 @@ enum DetectionModel {
 	UNUSUAL_DESTINATION_PATTERN
 	LABEL_DB_MATCH
 	FAR_OUTLIER
+	WINDOW_OUTLIER
 }
 
 type DetectionModelEventCounter {
@@ -1619,10 +1639,10 @@ type DetectorStatus {
 	"""
 	reportedAt: DateTime!
 	"""
-	The delivery of each source of the applied document's detector, in
-	its order; empty if the applied document has no detector of this id.
-	Only a timeseries model's sources are sampling policies; any other
-	source's `delivery` is null.
+	The delivery of each source of the applied document's detector, in its
+	order; empty if the applied document has no detector of this id. Only a
+	timeseries model's sources are time series generation policies; any
+	other source's `delivery` is null.
 	"""
 	sourceDelivery: [SourceDelivery!]!
 }
@@ -2435,6 +2455,20 @@ type FtpPlainTextDetail {
 	detectionModel: DetectionModel!
 }
 
+"""
+The unit a time series generation policy splits its series by.
+"""
+enum GroupByUnit {
+	"""
+	Splits by single IP.
+	"""
+	IP
+	"""
+	Reserved for a later per-network unit; a policy with it is refused.
+	"""
+	OWNED_NETWORK
+}
+
 type HostNetworkGroup {
 	hosts: [String!]!
 	networks: [String!]!
@@ -2621,14 +2655,6 @@ type InstallServiceSuccess {
 	disposition: DeployDisposition!
 }
 
-enum Interval {
-	FIVE_MINUTES
-	TEN_MINUTES
-	FIFTEEN_MINUTES
-	THIRTY_MINUTES
-	ONE_HOUR
-}
-
 scalar IpAddress
 
 type IpLocation {
@@ -2694,13 +2720,6 @@ type KerberosBody {
 	realm: String!
 	snameType: Int!
 	sname: [String!]!
-}
-
-enum Kind {
-	CONN
-	DNS
-	HTTP
-	RDP
 }
 
 type LabelDb {
@@ -2952,6 +2971,36 @@ type ManifestFormatUnsupported {
 	The highest manifest format version the host last reported reading.
 	"""
 	max: Int!
+}
+
+"""
+The value a time series generation policy counts per slot.
+"""
+enum Measure {
+	"""
+	Counts raw events.
+	"""
+	COUNT
+	"""
+	Sums the duration of Conn events.
+	"""
+	SUM_DURATION
+	"""
+	Sums the bytes the originators of Conn events sent.
+	"""
+	SUM_ORIG_BYTES
+	"""
+	Sums the bytes the responders of Conn events sent.
+	"""
+	SUM_RESP_BYTES
+	"""
+	Sums the packets the originators of Conn events sent.
+	"""
+	SUM_ORIG_PKTS
+	"""
+	Sums the packets the responders of Conn events sent.
+	"""
+	SUM_RESP_PKTS
 }
 
 """
@@ -3264,9 +3313,9 @@ type Mutation {
 	such Data Store, its users, and how to free it.
 	
 	Refused the same way, with `CUSTOMER_DATA_ALREADY_DELETED`, when the
-	customer's data was already deleted and it holds nodes, sampling
-	policies, models or training definitions created since. Once they are
-	removed, the request is answered `ALREADY_COMPLETED`.
+	customer's data was already deleted and it holds nodes, time series
+	generation policies, models or training definitions created since.
+	Once they are removed, the request is answered `ALREADY_COMPLETED`.
 	
 	`abandonHosts` and `abandonDataStores` give up, on a retry of a
 	stopped deletion, hosts and Data Stores that are gone for good. The
@@ -3398,11 +3447,20 @@ type Mutation {
 	none. A `revision` lower than the stored one is refused with the error
 	code `STALE_REVISION`, whose `storedRevision` extension holds the stored
 	revision.
+	
+	Once the networks are stored, every Time Series Generator holding an
+	assigned time series generation policy of the customer is told that
+	its policies changed, since a policy is sent with its customer's
+	internal networks.
 	"""
 	replaceCustomerNetworks(customerId: ID!, revision: StringNumber!, networks: [OwnedNetworkInput!]!): StringNumber!
 	"""
 	Removes the networks the customer owns, returning whether any were
 	stored.
+	
+	Once stored networks are removed, every Time Series Generator holding
+	an assigned time series generation policy of the customer is told
+	that its policies changed.
 	"""
 	removeCustomerNetworks(customerId: ID!): Boolean!
 	"""
@@ -3542,19 +3600,20 @@ type Mutation {
 	A Semi-supervised Engine agent whose draft is empty is notified when the apply changes its
 	stored completed config, since completion gives it a populated document.
 	
-	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-	policy assigned to it is in use, naming the policies and their uses. It is also refused
-	before anything is committed while a policy assigned to it, even an unused one, could not
-	be assigned to that generator again once the apply is stored, naming each such policy and
-	why. This includes an apply that also changes the node's customer away from the policy's
-	customer, or removes the policy's sensor name from that customer's sensors; the sensor names
-	are counted across all of the customer's nodes after the apply, so removing the name from
-	this node refuses the change only if no other node of that customer still provides it. To
-	make such a change, unassign the affected policy first, or apply the Data Store change with
-	the profile unchanged and apply the profile change separately. Only once these checks permit
-	the apply do the generator's policies record the new Data Store. When the apply changes the
-	node's applied customer or hostname, every Time Series Generator holding a sampling policy
-	whose sensor or assignee is on the node is told that its policies changed.
+	A change of a Time Series Generator's applied `giganto_name` is refused while a time
+	series generation policy assigned to it is in use, naming the policies and their uses. It
+	is also refused before anything is committed while a policy assigned to it, even an unused
+	one, could not be assigned to that generator again once the apply is stored, naming each
+	such policy and why. This includes an apply that also changes the node's customer away from
+	the policy's customer, or removes any of the policy's sensor names from that customer's
+	sensors; the sensor names are counted across all of the customer's nodes after the apply,
+	so removing a name from this node refuses the change only if no other node of that customer
+	still provides it. To make such a change, unassign the affected policy first, or apply the
+	Data Store change with the profile unchanged and apply the profile change separately. Only
+	once these checks permit the apply do the generator's policies record the new Data Store.
+	When the apply changes the node's applied customer or hostname, every Time Series Generator
+	holding a time series generation policy any of whose sensors or whose assignee is on the
+	node is told that its policies changed.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
 	customer, or of the customer the new profile gives it, is unfinished, also while it is
@@ -3606,19 +3665,20 @@ type Mutation {
 	offending part, empty for a document that does not parse; its `value` is the offending
 	value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
 	
-	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-	policy assigned to it is in use, naming the policies and their uses. It is also refused
-	before anything is committed while a policy assigned to it, even an unused one, could not
-	be assigned to that generator again once the apply is stored, naming each such policy and
-	why. This includes an apply that also changes the node's customer away from the policy's
-	customer, or removes the policy's sensor name from that customer's sensors; the sensor names
-	are counted across all of the customer's nodes after the apply, so removing the name from
-	this node refuses the change only if no other node of that customer still provides it. To
-	make such a change, unassign the affected policy first, or apply the Data Store change with
-	the profile unchanged and apply the profile change separately. Only once these checks permit
-	the apply do the generator's policies record the new Data Store. When the apply changes the
-	node's applied customer or hostname, every Time Series Generator holding a sampling policy
-	whose sensor or assignee is on the node is told that its policies changed.
+	A change of a Time Series Generator's applied `giganto_name` is refused while a time
+	series generation policy assigned to it is in use, naming the policies and their uses. It
+	is also refused before anything is committed while a policy assigned to it, even an unused
+	one, could not be assigned to that generator again once the apply is stored, naming each
+	such policy and why. This includes an apply that also changes the node's customer away from
+	the policy's customer, or removes any of the policy's sensor names from that customer's
+	sensors; the sensor names are counted across all of the customer's nodes after the apply,
+	so removing a name from this node refuses the change only if no other node of that customer
+	still provides it. To make such a change, unassign the affected policy first, or apply the
+	Data Store change with the profile unchanged and apply the profile change separately. Only
+	once these checks permit the apply do the generator's policies record the new Data Store.
+	When the apply changes the node's applied customer or hostname, every Time Series Generator
+	holding a time series generation policy any of whose sensors or whose assignee is on the
+	node is told that its policies changed.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
 	customer, or of the customer the new profile gives it, is unfinished, also while it is
@@ -3728,21 +3788,43 @@ type Mutation {
 	"""
 	updateQualifier(id: ID!, description: String!): ID!
 	"""
-	Inserts a new sampling policy of customer `customerId`, a draft,
-	returning its ID.
+	Inserts a new custom time series generation policy of customer
+	`customerId`, a draft, returning its ID.
 	
-	A caller scoped to customers must belong to `customerId`. `node` must
-	be a sensor name of one of the customer's nodes, such as
-	`piglet.sensor.example.com`. A draft cannot be assigned; fix it with
-	`fixSamplingPolicy`, or with `assignSamplingPolicy(fix: true)`.
+	A caller scoped to customers must belong to `customerId`. Every entry
+	of `sensors` must be a sensor name of one of the customer's nodes,
+	such as `piglet.sensor.example.com`; the first that is not refuses the
+	call. The generation spec is then checked as review-database checks
+	it, and its refusal is returned as it is. A draft cannot be assigned;
+	fix it with `fixTimeSeriesGenerationPolicy`, or with
+	`assignTimeSeriesGenerationPolicy(fix: true)`.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	`customerId` is unfinished, also while it is stopped.
 	"""
-	insertSamplingPolicy(customerId: ID!, name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int): ID!
+	insertTimeSeriesGenerationPolicy(customerId: ID!, name: String!, rawEventKind: RawEventKind!, measure: Measure!, groupBy: EndpointRole, groupByUnit: GroupByUnit!, counterpartScope: CounterpartScope!, slotSize: SlotSize!, windowSize: WindowSize!, utcOffset: Int!, srcIp: IpAddress, dstIp: IpAddress, sensors: [String!]!): ID!
 	"""
-	Removes sampling policies, returning the names of the policies
-	removed.
+	Inserts a new time series generation policy of customer `customerId`
+	made from the catalog time-series type `timeSeriesType`, a draft,
+	returning its ID.
+	
+	The generation spec is the type's: its raw event kind, measure,
+	endpoint to group by, unit, counterpart scope, slot size and window
+	size, with no IP filter. `name`, `sensors` and `utcOffset` are the
+	operator's. The type must be in the catalog at the given version;
+	otherwise the call is refused and nothing is stored.
+	
+	The caller is checked as `insertTimeSeriesGenerationPolicy` checks it,
+	every entry of `sensors` must be a sensor name of the customer, and
+	the policy is then checked as review-database checks any insert.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	`customerId` is unfinished, also while it is stopped.
+	"""
+	insertTimeSeriesGenerationPolicyFromType(customerId: ID!, name: String!, timeSeriesType: TimeSeriesTypeRefInput!, sensors: [String!]!, utcOffset: Int!): ID!
+	"""
+	Removes time series generation policies, returning the names of the
+	policies removed.
 	
 	Every ID is checked before any policy is removed: it must exist, be
 	in the caller's scope and not be in use. A refused ID leaves every
@@ -3759,37 +3841,40 @@ type Mutation {
 	the customer of any requested policy is unfinished, also while it is
 	stopped.
 	"""
-	removeSamplingPolicies(ids: [ID!]!): [String!]!
+	removeTimeSeriesGenerationPolicies(ids: [ID!]!): [String!]!
 	"""
-	Updates an existing sampling policy, returning its ID.
+	Updates an existing time series generation policy, returning its ID.
 	
-	A draft's definition and name can change, and its new `node` must be a
-	sensor name of one of its customer's nodes. Only the name of a fixed
-	policy can change. A caller scoped to customers may update only a
-	policy of a customer in scope.
+	A draft's generation spec and name can change, and every entry of its
+	new `sensors` must be a sensor name of one of its customer's nodes;
+	the first that is not refuses the call. Only the name of a fixed
+	policy can change. The policy keeps the catalog type it was made
+	from, and a draft made from a type is refused if its new spec is not
+	the type's. A caller scoped to customers may update only a policy of
+	a customer in scope.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the policy's customer is unfinished, also while it is stopped.
 	"""
-	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
+	updateTimeSeriesGenerationPolicy(id: ID!, old: TimeSeriesGenerationPolicyInput!, new: TimeSeriesGenerationPolicyInput!): ID!
 	"""
-	Fixes a draft sampling policy, returning its ID.
+	Fixes a draft time series generation policy, returning its ID.
 	
-	A fixed policy's definition cannot change, and nothing makes it a
+	A fixed policy's generation spec cannot change, and nothing makes it a
 	draft again. Fixing a fixed policy succeeds and changes nothing.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the policy's customer is unfinished, also while it is stopped.
 	"""
-	fixSamplingPolicy(id: ID!): ID!
+	fixTimeSeriesGenerationPolicy(id: ID!): ID!
 	"""
-	Assigns a sampling policy to the Time Series Generator agent
-	`agentKey` of node `nodeId`, or unassigns it if both are null,
+	Assigns a time series generation policy to the Time Series Generator
+	agent `agentKey` of node `nodeId`, or unassigns it if both are null,
 	returning its ID.
 	
 	The caller must belong to the policy's customer and the generator's,
-	and the generator's node must be the policy's customer's, its `node`
-	a sensor name of that customer. A draft is refused unless `fix` is
+	and the generator's node must be the policy's customer's, every entry
+	of its `sensors` a sensor name of that customer. A draft is refused unless `fix` is
 	true, which fixes it and assigns it in one transaction; a refused
 	assignment leaves it a draft, and `fix` on a fixed policy changes
 	nothing. `fix` cannot be given to unassign. While the policy is in use
@@ -3799,7 +3884,7 @@ type Mutation {
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the policy's customer is unfinished, also while it is stopped.
 	"""
-	assignSamplingPolicy(id: ID!, nodeId: ID, agentKey: String, fix: Boolean): ID!
+	assignTimeSeriesGenerationPolicy(id: ID!, nodeId: ID, agentKey: String, fix: Boolean): ID!
 	"""
 	Adds a new status.
 	"""
@@ -3887,13 +3972,14 @@ type Mutation {
 	with `BOUND_VIOLATED` on `window_end` or `window_start`.
 	
 	A `prefix` definition takes raw event kind `log` and names the log it
-	reads in `log_kind`, which is neither empty nor the name of another
-	raw event kind, such as `http`, or is refused with
-	`EVENT_KIND_NOT_ALLOWED`. A `timeseries` definition takes event kind
-	`timeseries`, and as sources the IDs of sampling policies of the
-	customer that are assigned, of one kind, column, interval, period and
-	offset, and kept in the Data Store `[data_store]` names, which their
-	generators still write to.
+	reads in `log_kind`, which is neither empty nor the name of another raw
+	event kind, such as `http`, or is refused with `EVENT_KIND_NOT_ALLOWED`.
+	A `timeseries` definition takes a network raw event kind, such as
+	`conn`, and as sources the IDs of time series generation policies of
+	the customer that are assigned, of one raw event kind, measure,
+	grouping endpoint, grouping unit, counterpart scope, slot size, window
+	size and UTC offset, and kept in the Data Store `[data_store]` names,
+	which their generators still write to.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the instance's customer is unfinished, also while it is stopped.
@@ -5101,12 +5187,6 @@ type ParsedCertificate {
 	subjectAlternativeName: [String!]
 }
 
-enum Period {
-	SIX_HOURS
-	TWELVE_HOURS
-	ONE_DAY
-}
-
 type PipeEventBody {
 	agentName: String!
 	agentId: String!
@@ -5346,6 +5426,11 @@ type Query {
 	Every clustering model type of the catalog, in catalog order.
 	"""
 	clusteringModelTypes: [ClusteringModelType!]!
+	"""
+	Every time-series type of the catalog, in catalog order: the fixed
+	recipes a time series generation policy can be made from.
+	"""
+	timeSeriesTypes: [TimeSeriesType!]!
 	"""
 	The keys a training definition of `method` holds, one row per key of
 	the method's key table, in its order. A `[csv]` part is a row of its
@@ -5688,13 +5773,13 @@ type Query {
 	"""
 	configRevision(nodeId: ID!, agentKey: String!, revision: StringNumber!): ConfigRevision
 	"""
-	A list of sampling policies.
+	A list of time series generation policies.
 	"""
-	samplingPolicyList(after: String, before: String, first: Int, last: Int): SamplingPolicyConnection!
+	timeSeriesGenerationPolicyList(after: String, before: String, first: Int, last: Int): TimeSeriesGenerationPolicyConnection!
 	"""
-	Looks up a sampling policy by the given id.
+	Looks up a time series generation policy by the given id.
 	"""
-	samplingPolicy(id: ID!): SamplingPolicy!
+	timeSeriesGenerationPolicy(id: ID!): TimeSeriesGenerationPolicy!
 	"""
 	The column statistics of a cluster.
 	
@@ -6376,211 +6461,6 @@ type RunningRoxydBuild {
 	commit: String!
 }
 
-type SamplingPolicy {
-	id: ID!
-	name: String!
-	kind: Kind!
-	interval: Interval!
-	period: Period!
-	offset: Int!
-	srcIp: String
-	dstIp: String
-	node: String
-	column: StringNumber
-	"""
-	Whether the policy is a draft, whose definition can change, or fixed.
-	"""
-	state: SamplingPolicyState!
-	"""
-	The customer the policy belongs to, or null for a policy stored
-	before customers were recorded whose customer could not be derived.
-	"""
-	customerId: ID
-	"""
-	The Time Series Generator agent the policy is assigned to, or null if
-	it is unassigned.
-	"""
-	assignee: SamplingPolicyAssignee
-	"""
-	The Data Store the policy's series are kept in: the `giganto_name`
-	of the generator it was last assigned to. Null if it was never
-	assigned, or was last assigned to a generator with no `giganto_name`;
-	unassigning the policy keeps it.
-	"""
-	dataStore: String
-	"""
-	What uses the policy by naming its ID as a source: timeseries
-	training definitions, in name order; detectors of timeseries models
-	in an applied or pending engine document, by node, agent and detector;
-	and timeseries models trained on it, in name order. A policy in use
-	cannot be unassigned or removed.
-	"""
-	usedBy: [SamplingPolicyUse!]!
-	"""
-	Whether the policy's series are being produced, as far as the Central
-	Manager can tell: the first of `UNASSIGNED`, `WITHHELD`,
-	`ASSIGNEE_OFFLINE` and `ASSIGNEE_ONLINE` that holds.
-	"""
-	delivery: SamplingPolicyDelivery!
-	creationTime: DateTime!
-}
-
-"""
-The Time Series Generator agent a sampling policy is assigned to.
-"""
-type SamplingPolicyAssignee {
-	"""
-	The node of the generator.
-	"""
-	nodeId: ID!
-	"""
-	The key of the generator's agent on the node.
-	"""
-	agentKey: String!
-}
-
-type SamplingPolicyConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [SamplingPolicyEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [SamplingPolicy!]!
-	"""
-	The total number of edges.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-Whether the series of a sampling policy are being produced, as far as the
-Central Manager can tell.
-
-An assigned policy whose generator is online has no window yet for up to
-one period and the generator's grace after it is assigned, which is
-normal and not told apart here.
-"""
-enum SamplingPolicyDelivery {
-	"""
-	The policy has no assignee.
-	"""
-	UNASSIGNED
-	"""
-	The policy is assigned, but its generator is not given it: the
-	generator's node is not of the policy's customer, or the policy's
-	`node` is not a sensor name of that customer.
-	"""
-	WITHHELD
-	"""
-	The policy's generator is not connected.
-	"""
-	ASSIGNEE_OFFLINE
-	"""
-	The policy's generator is connected.
-	"""
-	ASSIGNEE_ONLINE
-}
-
-"""
-An edge in a connection.
-"""
-type SamplingPolicyEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: SamplingPolicy!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-input SamplingPolicyInput {
-	name: String!
-	kind: Kind!
-	interval: Interval!
-	period: Period!
-	offset: Int!
-	srcIp: IpAddress
-	dstIp: IpAddress
-	node: String
-	column: Int
-}
-
-"""
-The state of a sampling policy.
-"""
-enum SamplingPolicyState {
-	"""
-	The definition and the name can change, and the policy cannot be
-	assigned.
-	"""
-	DRAFT
-	"""
-	The definition is frozen and only the name can change. A policy never
-	leaves this state.
-	"""
-	FIXED
-}
-
-"""
-A use of a sampling policy.
-"""
-type SamplingPolicyUse {
-	kind: SamplingPolicyUseKind!
-	"""
-	The name of the definition or the model; null for a detector.
-	"""
-	name: String
-	"""
-	The node of a detector's engine instance; null for anything else.
-	"""
-	nodeId: ID
-	"""
-	The key of a detector's engine instance agent on the node; null for
-	anything else.
-	"""
-	agentKey: String
-	"""
-	The id of a detector; null for anything else.
-	"""
-	detectorId: ID
-	"""
-	Whether the applied document's detector names the policy; null for
-	anything but a detector.
-	"""
-	applied: Boolean
-	"""
-	Whether the pending document's detector names the policy; null for
-	anything but a detector.
-	"""
-	pending: Boolean
-}
-
-"""
-What uses a sampling policy.
-"""
-enum SamplingPolicyUseKind {
-	"""
-	A timeseries training definition.
-	"""
-	DEFINITION
-	"""
-	A detector of a timeseries model.
-	"""
-	DETECTOR
-	"""
-	A timeseries model trained on the policy.
-	"""
-	MODEL
-}
-
 """
 A condition of an inline triage policy on a detection event's own score.
 
@@ -6695,6 +6575,37 @@ type SkippedAgent {
 	reason: SkipReason!
 }
 
+"""
+One slot of a `WindowOutlier` window and how far it lies from the nearest
+centroid.
+"""
+type SlotDeviation {
+	"""
+	The start of the slot.
+	"""
+	slotStart: DateTime!
+	"""
+	The slot's value, before the time-series type's input transform.
+	"""
+	value: Float!
+	"""
+	The nearest centroid's value for this slot, with the input transform
+	reversed.
+	"""
+	centroidValue: Float!
+}
+
+"""
+The length of one slot of a series.
+"""
+enum SlotSize {
+	FIVE_MINUTES
+	TEN_MINUTES
+	FIFTEEN_MINUTES
+	THIRTY_MINUTES
+	ONE_HOUR
+}
+
 type SmbBody {
 	origAddr: String!
 	origPort: Int!
@@ -6750,10 +6661,10 @@ type SourceDelivery {
 	"""
 	source: String!
 	"""
-	The delivery of the sampling policy the source names, or null for a
-	source that is not a sampling policy.
+	The delivery of the time series generation policy the source names, or
+	null for a source that is not a time series generation policy.
 	"""
-	delivery: SamplingPolicyDelivery
+	delivery: TimeSeriesGenerationPolicyDelivery
 }
 
 """
@@ -7144,10 +7055,399 @@ type TimeRange {
 	upper: DateTime
 }
 
+"""
+A time series generation policy: what a Time Series Generator counts, how
+it splits the counts into series, and how it slots and windows them.
+
+The fields from `rawEventKind` to `timeSeriesType` are the generation
+spec.
+"""
+type TimeSeriesGenerationPolicy {
+	id: ID!
+	name: String!
+	"""
+	The kind of the raw events the policy counts, one of the network
+	kinds.
+	"""
+	rawEventKind: RawEventKind!
+	"""
+	The value counted per slot.
+	"""
+	measure: Measure!
+	"""
+	The endpoint whose IP splits the policy into one series per internal
+	IP; null if the policy is not split and produces one series.
+	"""
+	groupBy: EndpointRole
+	"""
+	The unit `groupBy` splits by.
+	"""
+	groupByUnit: GroupByUnit!
+	"""
+	The filter on whether the other endpoint is internal.
+	"""
+	counterpartScope: CounterpartScope!
+	"""
+	The length of one slot.
+	"""
+	slotSize: SlotSize!
+	"""
+	The length of one window, which is one series sample.
+	"""
+	windowSize: WindowSize!
+	"""
+	The offset from UTC, in seconds, that aligns window boundaries to
+	local time.
+	"""
+	utcOffset: Int!
+	"""
+	The source IP a raw event must have to be counted, if any.
+	"""
+	srcIp: String
+	"""
+	The destination IP a raw event must have to be counted, if any.
+	"""
+	dstIp: String
+	"""
+	The sensor names whose raw events the policy counts, each a sensor
+	name of the policy's customer when it was stored.
+	"""
+	sensors: [String!]!
+	"""
+	The catalog time-series type the policy was made from; null for a
+	custom policy.
+	"""
+	timeSeriesType: TimeSeriesTypeRef
+	"""
+	Whether the policy is a draft, whose generation spec can change, or
+	fixed.
+	"""
+	state: TimeSeriesGenerationPolicyState!
+	"""
+	The customer the policy belongs to.
+	"""
+	customerId: ID!
+	"""
+	The Time Series Generator agent the policy is assigned to, or null if
+	it is unassigned.
+	"""
+	assignee: TimeSeriesGenerationPolicyAssignee
+	"""
+	The Data Store the policy's series are kept in: the `giganto_name`
+	of the generator it was last assigned to. Null if it was never
+	assigned, or was last assigned to a generator with no `giganto_name`;
+	unassigning the policy keeps it.
+	"""
+	dataStore: String
+	"""
+	What uses the policy by naming its ID as a source: timeseries
+	training definitions, in name order; detectors of timeseries models
+	in an applied or pending engine document, by node, agent and detector;
+	and timeseries models trained on it, in name order. A policy in use
+	cannot be unassigned or removed.
+	"""
+	usedBy: [TimeSeriesGenerationPolicyUse!]!
+	"""
+	Whether the policy's series are being produced, as far as the Central
+	Manager can tell: the first of `UNASSIGNED`, `WITHHELD`,
+	`ASSIGNEE_OFFLINE` and `ASSIGNEE_ONLINE` that holds.
+	"""
+	delivery: TimeSeriesGenerationPolicyDelivery!
+	creationTime: DateTime!
+}
+
+"""
+The Time Series Generator agent a time series generation policy is
+assigned to.
+"""
+type TimeSeriesGenerationPolicyAssignee {
+	"""
+	The node of the generator.
+	"""
+	nodeId: ID!
+	"""
+	The key of the generator's agent on the node.
+	"""
+	agentKey: String!
+}
+
+type TimeSeriesGenerationPolicyConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TimeSeriesGenerationPolicyEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TimeSeriesGenerationPolicy!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+Whether the series of a time series generation policy are being produced, as
+far as the Central Manager can tell.
+
+An assigned policy whose generator is online has no window yet for up to one
+window and the generator's grace after it is assigned, which is normal and
+not told apart here.
+"""
+enum TimeSeriesGenerationPolicyDelivery {
+	"""
+	The policy has no assignee.
+	"""
+	UNASSIGNED
+	"""
+	The policy is assigned, but its generator is not given it: the
+	generator's node is not of the policy's customer, or an entry of the
+	policy's `sensors` is not a sensor name of that customer.
+	"""
+	WITHHELD
+	"""
+	The policy's generator is not connected.
+	"""
+	ASSIGNEE_OFFLINE
+	"""
+	The policy's generator is connected.
+	"""
+	ASSIGNEE_ONLINE
+}
+
+"""
+An edge in a connection.
+"""
+type TimeSeriesGenerationPolicyEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TimeSeriesGenerationPolicy!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+The name and the generation spec of a time series generation policy, as
+`updateTimeSeriesGenerationPolicy` takes them. The catalog type a policy
+was made from is not part of it: an update keeps the stored one.
+"""
+input TimeSeriesGenerationPolicyInput {
+	name: String!
+	rawEventKind: RawEventKind!
+	measure: Measure!
+	"""
+	Null for a policy that is not split.
+	"""
+	groupBy: EndpointRole
+	groupByUnit: GroupByUnit!
+	counterpartScope: CounterpartScope!
+	slotSize: SlotSize!
+	windowSize: WindowSize!
+	"""
+	The offset from UTC, in seconds.
+	"""
+	utcOffset: Int!
+	srcIp: IpAddress
+	dstIp: IpAddress
+	sensors: [String!]!
+}
+
+"""
+The state of a time series generation policy.
+"""
+enum TimeSeriesGenerationPolicyState {
+	"""
+	The generation spec and the name can change, and the policy cannot be
+	assigned.
+	"""
+	DRAFT
+	"""
+	The generation spec is frozen and only the name can change. A policy
+	never leaves this state.
+	"""
+	FIXED
+}
+
+"""
+A use of a time series generation policy.
+"""
+type TimeSeriesGenerationPolicyUse {
+	kind: TimeSeriesGenerationPolicyUseKind!
+	"""
+	The name of the definition or the model; null for a detector.
+	"""
+	name: String
+	"""
+	The node of a detector's engine instance; null for anything else.
+	"""
+	nodeId: ID
+	"""
+	The key of a detector's engine instance agent on the node; null for
+	anything else.
+	"""
+	agentKey: String
+	"""
+	The id of a detector; null for anything else.
+	"""
+	detectorId: ID
+	"""
+	Whether the applied document's detector names the policy; null for
+	anything but a detector.
+	"""
+	applied: Boolean
+	"""
+	Whether the pending document's detector names the policy; null for
+	anything but a detector.
+	"""
+	pending: Boolean
+}
+
+"""
+What uses a time series generation policy.
+"""
+enum TimeSeriesGenerationPolicyUseKind {
+	"""
+	A timeseries training definition.
+	"""
+	DEFINITION
+	"""
+	A detector of a timeseries model.
+	"""
+	DETECTOR
+	"""
+	A timeseries model trained on the policy.
+	"""
+	MODEL
+}
+
 type TimeSeriesResult {
 	earliest: DateTime
 	latest: DateTime
 	series: [ColumnTimeSeries!]!
+}
+
+"""
+A time-series type: a fixed recipe for generating time series from one
+network raw event kind and training a timeseries model on them.
+
+The values a policy's operator sets whatever the type, its name, its
+sensors, its generator and its `utcOffset`, are not part of a type.
+"""
+type TimeSeriesType {
+	"""
+	The snake-case identifier, never changed; a policy made from the type
+	names it in `timeSeriesType`.
+	"""
+	id: String!
+	"""
+	The current version, raised whenever the fixed values or the allowed
+	detection models change.
+	"""
+	version: StringNumber!
+	"""
+	The position in the catalog.
+	"""
+	order: StringNumber!
+	"""
+	The kind of the raw events the policy counts.
+	"""
+	rawEventKind: RawEventKind!
+	"""
+	The clustering method of the model trained on the series.
+	"""
+	method: ModelMethod!
+	"""
+	The value counted per slot.
+	"""
+	measure: Measure!
+	"""
+	The endpoint whose IP splits the series. Every type splits by one.
+	"""
+	groupBy: EndpointRole!
+	"""
+	The unit `groupBy` splits by.
+	"""
+	groupByUnit: GroupByUnit!
+	"""
+	The filter on whether the other endpoint is internal.
+	"""
+	counterpartScope: CounterpartScope!
+	"""
+	The length of one slot.
+	"""
+	slotSize: SlotSize!
+	"""
+	The length of one window, which is one series sample.
+	"""
+	windowSize: WindowSize!
+	"""
+	The threat role of the primary subject of the type's detections.
+	"""
+	threatRole: ThreatRole!
+	"""
+	The top-level training definition keys the type fixes, with their
+	values, in catalog order; empty for a type only Hog uses, on which
+	the Unsupervised Engine trains no model.
+	"""
+	fixedValues: [TrainingValue!]!
+	"""
+	The training definition values the operator sets, in catalog order.
+	"""
+	operatorValues: [TrainingOperatorValue!]!
+	"""
+	The shortest training window, from `window_start` to `window_end`, in
+	seconds; null when the type sets no minimum.
+	"""
+	minWindowSeconds: Int
+	"""
+	The detection models allowed to run on the model, in detection model
+	number order.
+	"""
+	detectionModels: [DetectionModel!]!
+	"""
+	What the type counts and what its limits are, in English.
+	"""
+	descriptionEn: String!
+	"""
+	What the type counts and what its limits are, in Korean.
+	"""
+	descriptionKo: String!
+}
+
+"""
+The catalog time-series type a time series generation policy was made
+from.
+"""
+type TimeSeriesTypeRef {
+	"""
+	The id of the type.
+	"""
+	id: String!
+	"""
+	The version of the type the policy was made from.
+	"""
+	version: StringNumber!
+}
+
+"""
+A catalog time-series type to make a time series generation policy from.
+"""
+input TimeSeriesTypeRefInput {
+	"""
+	The id of the type.
+	"""
+	id: String!
+	"""
+	The version of the type, which must be the catalog's.
+	"""
+	version: StringNumber!
 }
 
 type TimeWindow {
@@ -7331,13 +7631,14 @@ type TrainingDefinition {
 	clusteringModelType: ClusteringModelTypeRef!
 	"""
 	The source names the definition reads events of; for the timeseries
-	method, the IDs of the sampling policies it reads the series of.
+	method, the IDs of the time series generation policies it reads the
+	series of.
 	"""
 	sources: [String!]!
 	"""
 	The delivery of each source, in the order of `sources`. Only a
-	timeseries definition's sources are sampling policies; any other
-	source's `delivery` is null.
+	timeseries definition's sources are time series generation policies; any
+	other source's `delivery` is null.
 	"""
 	sourceDelivery: [SourceDelivery!]!
 	"""
@@ -7828,6 +8129,54 @@ type WatchlistMatchDetail {
 	rawEventCount: StringNumber!
 	truncatedRelatedIps: StringNumber!
 	closedEarly: Boolean!
+}
+
+"""
+The detail of a `WindowOutlier` detection event: a window of a time
+series that lies far from every cluster of the model.
+"""
+type WindowOutlierDetail {
+	"""
+	The time series the window belongs to, `<policy id>/<IP>`.
+	"""
+	timeSeriesId: String!
+	"""
+	The start of the window that is the outlier.
+	"""
+	windowStart: DateTime!
+	"""
+	The cluster whose centroid is nearest to the window.
+	"""
+	nearestClusterId: StringNumber!
+	"""
+	The Euclidean distance from the window, after the time-series type's
+	input transform, to the centroid of the nearest cluster.
+	"""
+	distance: Float!
+	"""
+	At most 3 slots of the window that differ most from the centroid.
+	"""
+	topSlots: [SlotDeviation!]!
+	"""
+	The number of `WindowOutlier` detections of this round and this
+	policy that the per-round output cap cut.
+	"""
+	truncated: StringNumber!
+	"""
+	The number of sessions in the detection's time window that were not
+	requested as PCAP because of the PCAP request cap; null when the
+	engine could not look the sessions up.
+	"""
+	pcapTruncated: StringNumber
+}
+
+"""
+The length of one window of a series, which is one series sample.
+"""
+enum WindowSize {
+	SIX_HOURS
+	TWELVE_HOURS
+	ONE_DAY
 }
 
 """

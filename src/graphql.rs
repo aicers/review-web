@@ -51,15 +51,16 @@ mod refusal;
 mod rfc3339;
 #[cfg(test)]
 mod run_test_support;
-mod sampling;
-#[cfg(test)]
-mod sampling_test_support;
 mod slicing;
 mod statistics;
 mod status;
 mod system_log_collector;
 mod tags;
 mod template;
+mod time_series_generation;
+#[cfg(test)]
+mod time_series_generation_test_support;
+mod time_series_type;
 pub(crate) mod timestamp;
 mod toml_refusal;
 mod tor_exit_node;
@@ -118,10 +119,9 @@ pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };
 pub(crate) use self::operation_attempt::operator_installs;
-pub(crate) use self::sampling::SamplingPoliciesLock;
-pub use self::sampling::{
-    Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
-    Policy as SamplingPolicy, sampling_policies_for_generator,
+pub(crate) use self::time_series_generation::TimeSeriesGenerationPoliciesLock;
+pub use self::time_series_generation::{
+    SlotSize, TimeSeriesGenerationPolicy, WindowSize, time_series_generation_policies_for_generator,
 };
 use crate::backend::{AgentManager, CertManager, HostOnboarder};
 #[cfg(test)]
@@ -177,7 +177,7 @@ where
     .data(node::ManagerNodeHostname(manager_node_hostname))
     .data(tls_reload_handle)
     .data(Arc::clone(
-        customer_data_deletion_manager.sampling_policies_lock(),
+        customer_data_deletion_manager.time_series_generation_policies_lock(),
     ))
     .data(customer_data_deletion_manager)
     .data(Arc::new(network_list::NetworkListsLock::default()))
@@ -225,7 +225,7 @@ struct SubQueryOneB(
 #[derive(MergedObject, Default)]
 struct SubQueryTwoA(
     config_revision::ConfigRevisionQuery,
-    sampling::SamplingPolicyQuery,
+    time_series_generation::TimeSeriesGenerationPolicyQuery,
     statistics::StatisticsQuery,
     status::StatusQuery,
     tags::EventTagQuery,
@@ -284,7 +284,7 @@ struct SubMutationOneB(
 #[derive(MergedObject, Default)]
 struct SubMutationTwoA(
     qualifier::QualifierMutation,
-    sampling::SamplingPolicyMutation,
+    time_series_generation::TimeSeriesGenerationPolicyMutation,
     status::StatusMutation,
     tags::EventTagMutation,
     tags::WorkflowTagMutation,
@@ -995,7 +995,11 @@ impl AgentManager for MockAgentManager {
         Ok(std::collections::HashMap::new())
     }
 
-    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+    async fn time_series_generation_policies_changed(
+        &self,
+        _generators: &[review_database::ModelInstance],
+    ) {
+    }
 
     // The mock host advertises the rollback supervisor, so the deployment
     // mutations' default `ROLLBACK` is not refused by the capability gate. A
@@ -1591,7 +1595,8 @@ struct TestSchema {
     next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
     network_lists_lock: Arc<network_list::NetworkListsLock>,
     engine_config_lock: Arc<engine_config::EngineConfigLock>,
-    sampling_policies_lock: Arc<sampling::SamplingPoliciesLock>,
+    time_series_generation_policies_lock:
+        Arc<time_series_generation::TimeSeriesGenerationPoliciesLock>,
 }
 
 #[cfg(test)]
@@ -1669,6 +1674,21 @@ impl TestSchema {
         .await
     }
 
+    /// Builds a schema on the data directory `db_dir`, which a test prepares
+    /// before the store opens it, for example with a row the store cannot
+    /// decode.
+    async fn new_in(agent_manager: SharedAgentManager, db_dir: tempfile::TempDir) -> Self {
+        Self::build_in(
+            db_dir,
+            agent_manager,
+            Arc::new(MockPackageDeployer::default()),
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
     async fn build(
         agent_manager: SharedAgentManager,
         package_deployer: SharedPackageDeployer,
@@ -1676,15 +1696,33 @@ impl TestSchema {
         event_country_locator: Option<Arc<ip2location::DB>>,
         manager_node_hostname: Option<String>,
     ) -> Self {
-        let db_dir = tempfile::tempdir().unwrap();
+        Self::build_in(
+            tempfile::tempdir().unwrap(),
+            agent_manager,
+            package_deployer,
+            test_addr,
+            event_country_locator,
+            manager_node_hostname,
+        )
+        .await
+    }
+
+    async fn build_in(
+        db_dir: tempfile::TempDir,
+        agent_manager: SharedAgentManager,
+        package_deployer: SharedPackageDeployer,
+        test_addr: Option<SocketAddr>,
+        event_country_locator: Option<Arc<ip2location::DB>>,
+        manager_node_hostname: Option<String>,
+    ) -> Self {
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
         let store = Arc::new(RwLock::new(store));
         let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
         let engine_config_lock = Arc::new(engine_config::EngineConfigLock::default());
         let customer_data_deletion_manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        let sampling_policies_lock =
-            Arc::clone(customer_data_deletion_manager.sampling_policies_lock());
+        let time_series_generation_policies_lock =
+            Arc::clone(customer_data_deletion_manager.time_series_generation_policies_lock());
 
         let builder = Schema::build(
             Query::default(),
@@ -1697,7 +1735,7 @@ impl TestSchema {
         .data(store.clone())
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
-        .data(sampling_policies_lock.clone())
+        .data(time_series_generation_policies_lock.clone())
         .data(customer_data_deletion_manager)
         .data(node::ManagerNodeHostname(manager_node_hostname))
         .extension(install_state::LatestBuildMemoExtension)
@@ -1714,7 +1752,7 @@ impl TestSchema {
             next_customer_id: AtomicU32::new(0),
             network_lists_lock,
             engine_config_lock,
-            sampling_policies_lock,
+            time_series_generation_policies_lock,
         }
     }
 
@@ -1740,16 +1778,18 @@ impl TestSchema {
         self.engine_config_lock.users()
     }
 
-    /// Takes the sampling policies lock, as a removal or update holding it
-    /// would.
-    async fn hold_sampling_policies_lock(&self) -> sampling::SamplingPoliciesGuard<'_> {
-        self.sampling_policies_lock.hold().await
+    /// Takes the time series generation policies lock, as a removal or update
+    /// holding it would.
+    async fn hold_time_series_generation_policies_lock(
+        &self,
+    ) -> time_series_generation::TimeSeriesGenerationPoliciesGuard<'_> {
+        self.time_series_generation_policies_lock.hold().await
     }
 
-    /// Returns how many operations hold or wait for the sampling policies
-    /// lock.
-    fn sampling_policies_lock_users(&self) -> usize {
-        self.sampling_policies_lock.users()
+    /// Returns how many operations hold or wait for the time series generation
+    /// policies lock.
+    fn time_series_generation_policies_lock_users(&self) -> usize {
+        self.time_series_generation_policies_lock.users()
     }
 
     async fn execute_as_system_admin(&self, query: &str) -> async_graphql::Response {

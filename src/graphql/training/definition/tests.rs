@@ -1,14 +1,16 @@
 use std::{net::IpAddr, sync::LazyLock};
 
-use review_database::{SamplingInterval, SamplingKind, SamplingPeriod};
+use review_database::{
+    ConnField, CounterpartScope, EndpointRole, Measure, RawEventKind, SlotSize, WindowSize,
+};
 use serde_json::Value;
 
 use super::*;
 use crate::graphql::{
-    sampling_test_support::{
+    time_series_generation_test_support::{
         OTHER_POLICY_CUSTOMER, OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape,
-        generator_config, insert_assigned_policy, insert_policy, sensor_name, set_generator_config,
-        timeseries_definition,
+        generator_config, insert_assigned_policy, insert_internal_network, insert_policy,
+        sensor_name, set_generator_config, timeseries_definition,
     },
     training_test_support::{
         custom_timeseries_definition, http_url_definition, prefix_definition, window_end,
@@ -360,7 +362,9 @@ fn timeseries_takes_its_event_kind_and_no_csv() {
     let reparsed = TrainingDocument::parse_and_validate(&document.to_text().unwrap()).unwrap();
     assert_eq!(reparsed, document);
 
-    for kind in ["conn", "log", "periodic_time_series", ""] {
+    // review-database takes only a network raw event kind, by its
+    // snake-case name.
+    for kind in ["timeseries", "log", "periodic_time_series", ""] {
         let text = with(
             &TIMESERIES,
             "raw_event_kind",
@@ -487,13 +491,13 @@ fn the_record_kinds_follow_the_method() {
         ("log".to_string(), Some("syslog".to_string()))
     );
     // The engine records a time-series model's kind under its Giganto name,
-    // while the text keeps `timeseries`.
+    // while the text keeps its network raw event kind.
     assert_eq!(
         kinds(&TIMESERIES),
         ("periodic_time_series".to_string(), None)
     );
     let (document, _) = TrainingDocument::check(&TIMESERIES).unwrap();
-    assert_eq!(document.raw_event_kind, "timeseries");
+    assert_eq!(document.raw_event_kind, "conn");
 }
 
 #[test]
@@ -867,26 +871,26 @@ fn a_source_must_be_an_assigned_policy_of_the_customer() {
     for (source, message) in [
         (
             policy_b.to_string(),
-            format!("\"{policy_b}\" is not a sampling policy of customer {A}"),
+            format!("\"{policy_b}\" is not a time series generation policy of customer {A}"),
         ),
         (
             "999".to_string(),
-            format!("\"999\" is not a sampling policy of customer {A}"),
+            format!("\"999\" is not a time series generation policy of customer {A}"),
         ),
         (
             unassigned.to_string(),
-            format!("sampling policy {unassigned} has no assignee"),
+            format!("time series generation policy {unassigned} has no assignee"),
         ),
         (
             sensor_name("gen-a.example.com"),
             format!(
-                "\"{}\" is not a sampling policy of customer {A}",
+                "\"{}\" is not a time series generation policy of customer {A}",
                 sensor_name("gen-a.example.com")
             ),
         ),
         (
             format!("0{p1}"),
-            format!("\"0{p1}\" is not a sampling policy of customer {A}"),
+            format!("\"0{p1}\" is not a time series generation policy of customer {A}"),
         ),
     ] {
         let text = f
@@ -904,54 +908,73 @@ fn a_source_must_be_an_assigned_policy_of_the_customer() {
 #[test]
 fn sources_must_have_one_shape() {
     let f = PolicyFixture::new();
-    let [p1, _] = f.assigned;
+    insert_internal_network(&f.store, POLICY_CUSTOMER);
+    let base = PolicyShape::grouped(EndpointRole::Destination);
+    let first = f.assigned_policy("first", &f.generator, base);
     let shapes = [
         (
-            "kind",
+            "raw_event_kind",
             PolicyShape {
-                kind: SamplingKind::Dns,
-                ..PolicyShape::default()
+                raw_event_kind: RawEventKind::Dns,
+                ..base
             },
         ),
         (
-            "column",
+            "measure",
             PolicyShape {
-                column: Some(2),
-                ..PolicyShape::default()
+                measure: Measure::Sum(ConnField::OrigBytes),
+                ..base
             },
         ),
         (
-            "interval",
+            "group_by",
             PolicyShape {
-                interval: SamplingInterval::FiveMinutes,
-                ..PolicyShape::default()
+                group_by: Some(EndpointRole::Source),
+                ..base
             },
         ),
         (
-            "period",
+            "counterpart_scope",
             PolicyShape {
-                period: SamplingPeriod::SixHours,
-                ..PolicyShape::default()
+                counterpart_scope: CounterpartScope::Internal,
+                ..base
             },
         ),
         (
-            "offset",
+            "slot_size",
             PolicyShape {
-                offset: 9,
-                ..PolicyShape::default()
+                slot_size: SlotSize::FiveMinutes,
+                ..base
+            },
+        ),
+        (
+            "window_size",
+            PolicyShape {
+                window_size: WindowSize::SixHours,
+                ..base
+            },
+        ),
+        (
+            "utc_offset",
+            PolicyShape {
+                utc_offset: 3600,
+                ..base
             },
         ),
     ];
-    for (attribute, shape) in shapes {
-        let other = f.assigned_policy(attribute, &f.generator, shape);
-        let ((code, field, value), message) = f.refused(&f.definition(&[p1, other]));
+    for (field_name, shape) in shapes {
+        let other = f.assigned_policy(field_name, &f.generator, shape);
+        let ((code, field, value), message) = f.refused(&f.definition(&[first, other]));
         assert_eq!(
             (code.as_str(), field.as_str(), value),
             ("SOURCES_INCOMPATIBLE", "sources[1]", other.to_string())
         );
         assert_eq!(
             message,
-            format!("sampling policy {other} differs in {attribute} from sampling policy {p1}")
+            format!(
+                "time series generation policy {other} differs in {field_name} from time series \
+                 generation policy {first}"
+            )
         );
     }
 }
@@ -970,7 +993,8 @@ fn sources_must_be_kept_in_the_data_store_read() {
     assert_eq!(
         message,
         format!(
-            "sampling policy {elsewhere} keeps its series in Data Store {:?}, not {:?}",
+            "time series generation policy {elsewhere} keeps its series in Data Store {:?}, not \
+             {:?}",
             f.other_server_name, f.server_name
         )
     );
@@ -983,7 +1007,7 @@ fn sources_must_be_kept_in_the_data_store_read() {
         ("SOURCES_INCOMPATIBLE", "data_store.server_name")
     );
     assert!(
-        message.starts_with(&format!("sampling policy {p1} keeps")),
+        message.starts_with(&format!("time series generation policy {p1} keeps")),
         "{message}"
     );
 }
@@ -1007,7 +1031,8 @@ fn an_assignee_writing_to_another_data_store_is_refused() {
     assert_eq!(
         message,
         format!(
-            "the Time Series Generator of sampling policy {} writes to Data Store {:?}, not {:?}",
+            "the Time Series Generator of time series generation policy {} writes to Data Store \
+             {:?}, not {:?}",
             f.assigned[0], f.other_server_name, f.server_name
         )
     );
@@ -1030,7 +1055,8 @@ fn an_assignee_with_no_applied_data_store_is_refused_first() {
         assert_eq!(
             message,
             format!(
-                "the Time Series Generator of sampling policy {} has no applied Data Store",
+                "the Time Series Generator of time series generation policy {} has no applied \
+                 Data Store",
                 f.assigned[0]
             )
         );

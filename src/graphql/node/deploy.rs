@@ -1116,7 +1116,7 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use review_database::{
         Agent, AgentKind, AgentStatus, BuildSelector, Lifecycle, ListenerBinding,
-        ListenerTransport, Node, NodeProfile, PortOwner, RequestKeyError, Role,
+        ListenerTransport, ModelInstance, Node, NodeProfile, PortOwner, RequestKeyError, Role,
     };
     use review_protocol::types::{
         capability::{NODE_PACKAGE, ROLLBACK_SUPERVISOR},
@@ -1864,7 +1864,7 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn get_resource_usage(
             &self,

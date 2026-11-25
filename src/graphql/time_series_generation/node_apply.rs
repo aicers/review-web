@@ -1,5 +1,5 @@
-//! What an apply of a node does to the sampling policies of its Time Series
-//! Generators and sensors.
+//! What an apply of a node does to the time series generation policies of its
+//! Time Series Generators and sensors.
 
 use std::collections::HashSet;
 
@@ -41,7 +41,7 @@ pub(in crate::graphql) fn giganto_name(config: &review_database::AgentConfig) ->
 /// generator again after the update, which
 /// [`refresh_data_stores`] does; that assignment checks the policy against
 /// the node as updated, so an update that also moves the node to another
-/// customer, or drops the sensor name the policy reads, is refused here
+/// customer, or drops any sensor name the policy reads, is refused here
 /// rather than leaving the policy's Data Store behind. The caller holds the
 /// engine configuration lock from before this check until
 /// [`refresh_data_stores`] returns, as every writer that checks uses does.
@@ -73,13 +73,13 @@ pub(in crate::graphql) fn check_data_store_changes(
             node_id,
             agent_key: agent.key.clone(),
         };
-        for policy in store.sampling_policies_assigned_to(&instance)? {
-            let uses = store.sampling_policy_uses(policy.id)?;
+        for policy in store.time_series_generation_policies_assigned_to(&instance)? {
+            let uses = store.time_series_generation_policy_uses(policy.id)?;
             if uses.is_empty() {
                 unused.push((&agent.key, policy));
             } else {
                 in_use.push(format!(
-                    "sampling policy {:?} of agent {:?} is in use by {}",
+                    "time series generation policy {:?} of agent {:?} is in use by {}",
                     policy.name,
                     agent.key,
                     list_uses(&uses)
@@ -90,8 +90,8 @@ pub(in crate::graphql) fn check_data_store_changes(
     }
     if !in_use.is_empty() {
         return Err(format!(
-            "the Data Store of a Time Series Generator cannot change while a sampling policy \
-             assigned to it is in use: {}",
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it is in use: {}",
             in_use.join("; ")
         )
         .into());
@@ -108,31 +108,29 @@ pub(in crate::graphql) fn check_data_store_changes(
     let unassignable: Vec<_> = unused
         .iter()
         .filter_map(|(agent_key, policy)| {
-            let reason = match (policy.customer_id, customer_id) {
-                (None, _) => "has no customer".to_string(),
-                (Some(policy_customer), None) => format!(
+            let policy_customer = policy.customer_id;
+            let reason = match customer_id {
+                None => format!(
                     "belongs to customer {policy_customer}, and the node has no customer after \
                      this change"
                 ),
-                (Some(policy_customer), Some(node_customer))
-                    if policy_customer != node_customer =>
-                {
+                Some(node_customer) if policy_customer != node_customer => format!(
+                    "belongs to customer {policy_customer}, and the node's customer becomes \
+                     {node_customer}"
+                ),
+                Some(_) => {
+                    let sensor = policy
+                        .sensors
+                        .iter()
+                        .find(|sensor| !sensors.contains(sensor.as_str()))?;
                     format!(
-                        "belongs to customer {policy_customer}, and the node's customer becomes \
-                         {node_customer}"
+                        "reads {sensor:?}, which is not a sensor name of customer \
+                         {policy_customer} after this change"
                     )
                 }
-                (Some(policy_customer), Some(_)) => match &policy.node {
-                    Some(node) if sensors.contains(node) => return None,
-                    Some(node) => format!(
-                        "reads {node:?}, which is not a sensor name of customer \
-                         {policy_customer} after this change"
-                    ),
-                    None => "reads no sensor".to_string(),
-                },
             };
             Some(format!(
-                "sampling policy {:?} of agent {agent_key:?} {reason}",
+                "time series generation policy {:?} of agent {agent_key:?} {reason}",
                 policy.name
             ))
         })
@@ -141,10 +139,10 @@ pub(in crate::graphql) fn check_data_store_changes(
         Ok(changed)
     } else {
         Err(format!(
-            "the Data Store of a Time Series Generator cannot change while a sampling policy \
-             assigned to it could not be assigned to it again to record the new Data Store: \
-             {}; unassign the policy first, or change the Data Store in an apply that leaves \
-             the profile as it is",
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it could not be assigned to it again to record the \
+             new Data Store: {}; unassign the policy first, or change the Data Store in an apply \
+             that leaves the profile as it is",
             unassignable.join("; ")
         )
         .into())
@@ -191,16 +189,17 @@ fn sensor_names_after(
 /// a failure is logged rather than returned. [`check_data_store_changes`]
 /// has already refused every update an assignment here would refuse, so
 /// only a storage failure is left; assigning the policy to the same agent
-/// with `assignSamplingPolicy` records the Data Store then.
+/// with `assignTimeSeriesGenerationPolicy` records the Data Store then.
 pub(in crate::graphql) fn refresh_data_stores(store: &Store, generators: &[ModelInstance]) {
-    let map = store.sampling_policy_map();
+    let map = store.time_series_generation_policy_map();
     for generator in generators {
-        let policies = match store.sampling_policies_assigned_to(generator) {
+        let policies = match store.time_series_generation_policies_assigned_to(generator) {
             Ok(policies) => policies,
             Err(e) => {
                 error!(
-                    "cannot read the sampling policies of agent {:?} of node {} to record its \
-                     new Data Store; assign each policy to the agent again to record it: {e:#}",
+                    "cannot read the time series generation policies of agent {:?} of node {} to \
+                     record its new Data Store; assign each policy to the agent again to record \
+                     it: {e:#}",
                     generator.agent_key, generator.node_id
                 );
                 continue;
@@ -209,8 +208,9 @@ pub(in crate::graphql) fn refresh_data_stores(store: &Store, generators: &[Model
         for policy in policies {
             if let Err(e) = map.assign(policy.id, Some(generator), false) {
                 error!(
-                    "cannot record the new Data Store of agent {:?} of node {} for sampling \
-                     policy {:?}; assign the policy to the agent again to record it: {e:#}",
+                    "cannot record the new Data Store of agent {:?} of node {} for time series \
+                     generation policy {:?}; assign the policy to the agent again to record it: \
+                     {e:#}",
                     generator.agent_key, generator.node_id, policy.name
                 );
             }
@@ -218,27 +218,31 @@ pub(in crate::graphql) fn refresh_data_stores(store: &Store, generators: &[Model
     }
 }
 
-/// Returns the generators that hold a policy whose `node` is one of
-/// `sensor_names` or that is assigned to an agent of node `node_id`.
+/// Returns the generators that hold a policy any of whose `sensors` is one
+/// of `sensor_names`, or that is assigned to an agent of node `node_id`.
 ///
 /// # Errors
 ///
-/// Returns an error if the sampling policy database could not be read.
+/// Returns an error if the time series generation policy database could not
+/// be read.
 pub(in crate::graphql) fn generators_of_node(
     store: &Store,
     node_id: u32,
     sensor_names: &[String],
 ) -> Result<Vec<ModelInstance>> {
     let mut generators = Vec::new();
-    for entry in store.sampling_policy_map().iter(Direction::Forward, None) {
+    for entry in store
+        .time_series_generation_policy_map()
+        .iter(Direction::Forward, None)
+    {
         let policy = entry?;
         let Some(assignee) = policy.assignee else {
             continue;
         };
         let reads_node = policy
-            .node
-            .as_ref()
-            .is_some_and(|node| sensor_names.contains(node));
+            .sensors
+            .iter()
+            .any(|sensor| sensor_names.contains(sensor));
         if (reads_node || assignee.node_id == node_id) && !generators.contains(&assignee) {
             generators.push(assignee);
         }

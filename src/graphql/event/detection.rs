@@ -26,7 +26,7 @@ pub(in crate::graphql) enum ThreatRole {
 /// The side of the traffic an address was observed on.
 #[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
 #[graphql(remote = "protocol::EndpointRole")]
-pub(super) enum EndpointRole {
+pub(in crate::graphql) enum EndpointRole {
     Source,
     Destination,
 }

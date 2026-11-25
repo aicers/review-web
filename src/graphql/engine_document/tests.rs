@@ -1,11 +1,12 @@
-use review_database::{ClusteringModelTypeRef, SamplingInterval};
+use review_database::{ClusteringModelTypeRef, SlotSize};
 use serde_json::Value;
 
 use super::*;
 use crate::graphql::{
     model_test_support::{TestModel, http_url, insert_engine_node, insert_label_db},
-    sampling_test_support::{
-        OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, sensor_name,
+    time_series_generation_test_support::{
+        OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, generator_config,
+        insert_generator_node_with, sensor_name,
     },
     training_test_support::HTTP_URL_CSV,
 };
@@ -601,6 +602,7 @@ fn kept_pairs_come_from_completed_documents_and_not_from_the_old_shape() {
         AgentKind::Unsupervised,
         &on("completed.example.com", VALID),
         &|_| Some(http_url(1)),
+        &|_| None,
         CompletionMode::Apply,
     )
     .unwrap();
@@ -630,6 +632,66 @@ fn kept_pairs_come_from_completed_documents_and_not_from_the_old_shape() {
             "10.0.0.5:38371".parse().unwrap()
         )])
     );
+}
+
+/// A document the database write completes for a detector of a time-series
+/// type's model, `source_sensors` included, parses, and its Data Store pairs
+/// are kept.
+#[test]
+fn completed_time_series_documents_parse_and_keep_their_pairs() {
+    let draft = with(
+        &VALID.replace("001.giganto.node1.example.com", "ts.example.com"),
+        "sources",
+        "sources = [\"42\", \"43\"]",
+    );
+    let completed = complete_engine_document(
+        AgentKind::Unsupervised,
+        &draft,
+        &|_| {
+            Some(ClusteringModelTypeRef::Catalog {
+                id: "server_daily_tls".to_string(),
+                version: 1,
+            })
+        },
+        &|id| match id {
+            42 => Some(vec!["s1".to_string()]),
+            43 => Some(vec!["s2".to_string(), "s1".to_string()]),
+            _ => None,
+        },
+        CompletionMode::Apply,
+    )
+    .unwrap();
+    assert!(
+        completed.contains("source_sensors = { \"42\" = [\"s1\"], \"43\" = [\"s2\", \"s1\"] }"),
+        "{completed}"
+    );
+
+    let document = EngineDocument::parse_and_validate(&completed).expect(&completed);
+    let detector = document.detectors.first().expect("one detector");
+    assert_eq!(
+        detector.source_sensors,
+        Some(BTreeMap::from([
+            ("42".to_string(), vec!["s1".to_string()]),
+            ("43".to_string(), vec!["s2".to_string(), "s1".to_string()]),
+        ]))
+    );
+    assert_eq!(document.server_names(), BTreeSet::from(["ts.example.com"]));
+    assert_eq!(
+        kept_pairs([completed.as_str()]),
+        HashSet::from([(
+            "ts.example.com".to_string(),
+            "10.0.0.5:38371".parse().unwrap()
+        )])
+    );
+
+    // The key holds a table of sensor lists, as the completion writes it.
+    let error = EngineDocument::parse_and_validate(&with(
+        &draft,
+        "source_sensors",
+        "source_sensors = [\"s1\"]",
+    ))
+    .expect_err("a list is not a table of sensors");
+    assert_eq!(parts(&error).0, "INVALID_DOCUMENT");
 }
 
 // ---------------------------------------------------------------------------
@@ -759,7 +821,7 @@ fn a_timeseries_detector_refuses_a_sensor() {
     assert_eq!(detector_id, 7);
     assert_eq!(
         message,
-        format!("{sensor:?} is not a sampling policy of customer {POLICY_CUSTOMER}")
+        format!("{sensor:?} is not a time series generation policy of customer {POLICY_CUSTOMER}")
     );
 }
 
@@ -770,7 +832,7 @@ fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
         "other",
         &f.policies.generator,
         PolicyShape {
-            interval: SamplingInterval::OneHour,
+            slot_size: SlotSize::OneHour,
             ..PolicyShape::default()
         },
     );
@@ -789,8 +851,8 @@ fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
     assert_eq!(
         message,
         format!(
-            "sampling policy {other} differs in interval from the sampling policies model \
-             {TIMESERIES_MODEL:?} was trained on"
+            "time series generation policy {other} differs in slot_size from the time series \
+             generation policies model {TIMESERIES_MODEL:?} was trained on"
         )
     );
 }
@@ -832,11 +894,42 @@ fn a_timeseries_detector_of_a_model_of_unknown_shape_is_refused() {
         assert_eq!(
             message,
             format!(
-                "none of the sampling policies model {name:?} was trained on is stored, so the \
-                 shape its sources must have is unknown"
+                "none of the time series generation policies model {name:?} was trained on is \
+                 stored, so the shape its sources must have is unknown"
             )
         );
     }
+}
+
+#[test]
+fn a_timeseries_detector_whose_source_cannot_be_read_is_refused_with_the_error() {
+    const NODES_TABLE: &str = "nodes";
+    const BROKEN_HOST: &str = "gen-broken.example.com";
+
+    let Detectors { policies, instance } = Detectors::new();
+    let generator = insert_generator_node_with(
+        &policies.store,
+        BROKEN_HOST,
+        POLICY_CUSTOMER,
+        Some(generator_config(&policies.server_name)),
+    );
+    let source = policies.assigned_policy("broken", &generator, PolicyShape::default());
+    // Every policy still reads, so the source is checked up to its
+    // generator's applied Data Store, the record that does not read.
+    let f = Detectors {
+        policies: policies.with_undecodable_row(NODES_TABLE, BROKEN_HOST),
+        instance,
+    };
+    let error = f
+        .check(&f.document(TIMESERIES_MODEL, &[source.to_string()], ""))
+        .expect_err("a source that cannot be read refuses the document");
+    assert!(
+        error
+            .message
+            .starts_with("cannot read time series generation policies: "),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

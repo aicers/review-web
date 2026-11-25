@@ -151,7 +151,7 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use review_database::{ExternalServiceKind, Lifecycle, Node, NodeProfile, Role};
+    use review_database::{ExternalServiceKind, Lifecycle, ModelInstance, Node, NodeProfile, Role};
     use serde_json::{Value, json};
 
     use super::super::test_support::{installed_service, put_node};
@@ -258,7 +258,7 @@ mod tests {
             unimplemented!("this stub answers the endpoint read only")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(
             &self,

@@ -496,6 +496,7 @@ mod tests {
                                             review_database::AgentKind::SemiSupervised,
                                             "my_val=2",
                                             &|_| None,
+                                            &|_| None,
                                             review_database::CompletionMode::Apply,
                                         )
                                         .unwrap(),

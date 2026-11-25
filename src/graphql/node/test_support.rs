@@ -1,6 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
+use review_database::ModelInstance;
 use review_protocol::types::ResourceUsage;
 
 use crate::graphql::{
@@ -48,7 +49,7 @@ impl AgentManager for MockAgentManager {
         Ok(self.online_apps_by_host_id.clone())
     }
 
-    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+    async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
     async fn capabilities(
         &self,

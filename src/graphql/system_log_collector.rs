@@ -277,7 +277,7 @@ mod tests {
 
     use assert_json_diff::assert_json_eq;
     use review_database::{
-        BuildSelector, ListenerBinding, ListenerTransport, OperationAction,
+        BuildSelector, ListenerBinding, ListenerTransport, ModelInstance, OperationAction,
         OperationAttempt as Record, OperationOutcome, OperationPhase, OperationRetryPolicy,
         PortOwner, Role, SystemLogCollector as Row, SystemLogCollectorRefusal as Refusal,
     };
@@ -704,7 +704,7 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(&self, _generators: &[ModelInstance]) {}
 
         async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             self.reads.lock().unwrap().push(hostname.to_string());

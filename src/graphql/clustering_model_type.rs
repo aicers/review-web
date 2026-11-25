@@ -13,6 +13,7 @@ use super::{
     Role, RoleGuard,
     filter::{DetectionModel, RawEventKind},
     model::ModelMethod,
+    time_series_type::TimeSeriesType,
     timestamp::Timestamp,
 };
 
@@ -30,6 +31,19 @@ impl ClusteringModelTypeQuery {
         database::clustering_model_types()
             .iter()
             .map(ClusteringModelType)
+            .collect()
+    }
+
+    /// Every time-series type of the catalog, in catalog order: the fixed
+    /// recipes a time series generation policy can be made from.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn time_series_types(&self) -> Vec<TimeSeriesType> {
+        database::time_series_types()
+            .iter()
+            .map(TimeSeriesType::from)
             .collect()
     }
 
@@ -161,29 +175,7 @@ impl ClusteringModelType {
     /// The shortest training window, from `window_start` to `window_end`, in
     /// seconds; null when the type sets no minimum.
     async fn min_window_seconds(&self) -> Result<Option<i32>> {
-        let Some(min) = self
-            .0
-            .operator_values
-            .iter()
-            .filter_map(|value| match value.range {
-                Some(database::DefinitionValueRange::Window { min }) => Some(min),
-                Some(
-                    database::DefinitionValueRange::Integer { .. }
-                    | database::DefinitionValueRange::NonEmpty,
-                )
-                | None => None,
-            })
-            .max()
-        else {
-            return Ok(None);
-        };
-        i32::try_from(min.as_secs()).map(Some).map_err(|_| {
-            format!(
-                "the shortest window of {} is too long to report in seconds",
-                self.0.id
-            )
-            .into()
-        })
+        min_window_seconds(self.0.id, self.0.operator_values)
     }
 
     /// The detection models allowed to run on the model, in detection model
@@ -205,6 +197,36 @@ impl ClusteringModelType {
     async fn description_ko(&self) -> &'static str {
         self.0.description_ko
     }
+}
+
+/// Returns the shortest training window the operator values of the catalog
+/// type `id` allow, from `window_start` to `window_end`, in seconds; `None`
+/// when they set no minimum.
+///
+/// # Errors
+///
+/// Returns an error if the minimum does not fit in an `i32` of seconds.
+pub(super) fn min_window_seconds(
+    id: &str,
+    operator_values: &[database::TypeOperatorValue],
+) -> Result<Option<i32>> {
+    let Some(min) = operator_values
+        .iter()
+        .filter_map(|value| match value.range {
+            Some(database::DefinitionValueRange::Window { min }) => Some(min),
+            Some(
+                database::DefinitionValueRange::Integer { .. }
+                | database::DefinitionValueRange::NonEmpty,
+            )
+            | None => None,
+        })
+        .max()
+    else {
+        return Ok(None);
+    };
+    i32::try_from(min.as_secs())
+        .map(Some)
+        .map_err(|_| format!("the shortest window of {id} is too long to report in seconds").into())
 }
 
 /// How a clustering model type groups raw events.

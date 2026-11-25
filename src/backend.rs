@@ -29,7 +29,7 @@ use crate::customer_data_deletion::{
 use crate::graphql::customer::{
     NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
 };
-pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
+pub use crate::graphql::{ParsedCertificate, TimeSeriesGenerationPolicy};
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
@@ -142,17 +142,17 @@ pub trait AgentManager: Send + Sync {
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>; // (hostname, (agent_key, app_name))
 
-    /// Tells the given Time Series Generators that the sampling policies they
-    /// pull have changed.
+    /// Tells the given Time Series Generators that the time series generation
+    /// policies they pull have changed.
     ///
     /// It is called after a change is stored, with every generator whose
-    /// list [`sampling_policies_for_generator`] returns may differ. An
-    /// implementor delivers the new lists and logs a failure to reach a
-    /// generator rather than returning it: the change is already stored, and
-    /// a generator pulls its list again when it reconnects.
+    /// list [`time_series_generation_policies_for_generator`] returns may
+    /// differ. An implementor delivers the new lists and logs a failure to
+    /// reach a generator rather than returning it: the change is already
+    /// stored, and a generator pulls its list again when it reconnects.
     ///
-    /// [`sampling_policies_for_generator`]: crate::graphql::sampling_policies_for_generator
-    async fn sampling_policies_changed(&self, generators: &[ModelInstance]);
+    /// [`time_series_generation_policies_for_generator`]: crate::graphql::time_series_generation_policies_for_generator
+    async fn time_series_generation_policies_changed(&self, generators: &[ModelInstance]);
 
     /// Returns the capability tags the given host advertises.
     ///

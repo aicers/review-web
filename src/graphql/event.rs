@@ -30,7 +30,7 @@ use tokio::time;
 use tracing::{error, warn};
 
 use self::detection::DetectionEvent;
-pub(super) use self::detection::ThreatRole;
+pub(super) use self::detection::{EndpointRole, ThreatRole};
 pub(super) use self::group::EventGroupQuery;
 use super::{
     Role, RoleGuard,
@@ -671,6 +671,12 @@ fn from_filter_input(
         // `sensors_for_user` reads.
         sensors_for_user(ctx, store).map_err(|e| anyhow!("{}", e.message))?
     };
+    // A header-less time-series event is selected through the sensors of
+    // the policy its time-series id names.
+    let sensors = match sensors {
+        Some(sensors) => Some((sensors, store.time_series_policy_sensors()?)),
+        None => None,
+    };
 
     Ok(EventFilter::new(
         networks,
@@ -728,8 +734,10 @@ fn convert_endpoint_input(
 }
 
 /// Returns the networks each event is tested against for `directions`: the
-/// `Intranet` and `Gateway` networks its own customer owns, found through the
-/// node its sensor belongs to.
+/// addresses internal to its own customer, found through the node its sensor
+/// belongs to. An address is internal when the narrowest network of the
+/// customer that contains it is an `Intranet` or `Gateway` network, so an
+/// `Extranet` network nested inside an `Intranet` network is outside.
 ///
 /// An event whose sensor maps to no node has no internal network, so it
 /// matches no direction.
@@ -815,7 +823,10 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<DetectionEvent>
     // helper, which reads the request's `CustomerIds`. SystemAdministrator
     // (no customer_ids) sees every sensor; everyone else is restricted to
     // sensors owned by their accessible customers.
-    let sensors = sensors_for_user(ctx, &store)?;
+    let sensors = match sensors_for_user(ctx, &store)? {
+        Some(sensors) => Some((sensors, store.time_series_policy_sensors()?)),
+        None => None,
+    };
     let filter = EventFilter::new(
         None, None, None, None, None, None, None, None, None, sensors, None, None, None,
     );

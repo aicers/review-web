@@ -80,11 +80,15 @@ async fn corrupted_event_store() -> (TestSchema, Vec<i128>, i128, i128) {
     };
     review_database::backup::create(&schema.store, true, 1).unwrap();
     let new_files = sst_files(&db_dir);
-    let created: Vec<_> = new_files.difference(&existing).collect();
-    assert_eq!(created.len(), 1);
+    // The flush writes every column family holding unflushed data; the
+    // events, by far the most of it, are in the largest new file.
+    let created = new_files
+        .difference(&existing)
+        .max_by_key(|path| std::fs::metadata(path).unwrap().len())
+        .expect("the flush writes the events");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .open(created[0])
+        .open(created)
         .unwrap();
     file.seek(SeekFrom::Start(file.metadata().unwrap().len() / 3))
         .unwrap();
@@ -2921,6 +2925,7 @@ mod detection_event {
             "UnusualDestinationPattern",
             "LabelDbMatch",
             "FarOutlier",
+            "WindowOutlier",
         ]
         .iter()
         .map(|model| format!("{model}Detail"))
@@ -4212,7 +4217,9 @@ mod filter_conditions {
         for model in (0..=u32::from(u8::MAX)).filter_map(|n| DetectionModel::try_from(n).ok()) {
             let expected = if matches!(
                 model,
-                DetectionModel::LabelDbMatch | DetectionModel::FarOutlier
+                DetectionModel::LabelDbMatch
+                    | DetectionModel::FarOutlier
+                    | DetectionModel::WindowOutlier
             ) {
                 review_database::event::LearningMethod::Unsupervised
             } else {
@@ -4719,5 +4726,248 @@ mod raw_event_keys {
             .await;
         assert_eq!(res.data, async_graphql::Value::Null);
         assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+    }
+}
+
+/// Header-less time-series detection events: their `WindowOutlier` detail,
+/// and their selection through the sensors of the policy their time-series
+/// id names.
+mod time_series_events {
+    use review_protocol::types::{
+        DetectionModel, PrimarySubject, RawEventKind, SlotDeviation, ThreatRole,
+        WindowOutlierDetail,
+    };
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::graphql::{
+        event_test_support::subject_event,
+        time_series_generation_test_support::{
+            PolicyShape, insert_generator_node, insert_shaped_policy, sensor_name,
+        },
+    };
+
+    const HOST_1: &str = "s1.example.com";
+    const HOST_2: &str = "s2.example.com";
+    const OTHER_HOST: &str = "d.example.com";
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_700_000_000 + second).expect("a test time")
+    }
+
+    /// A store with two sensor nodes of customer 1, one of customer 2, a
+    /// policy of customer 1 reading both of customer 1's sensors, and two
+    /// header-less `WindowOutlier` events of that policy.
+    struct Fixture {
+        schema: TestSchema,
+        second_node: u32,
+        other_node: u32,
+        /// The key of the first event.
+        first: i128,
+    }
+
+    /// Returns a header-less `WindowOutlier` event of the series `series` at
+    /// `second`, whose session lookup cut `pcap_truncated` sessions.
+    fn window_outlier(second: i64, series: &str, pcap_truncated: Option<u64>) -> DetectionEvent {
+        let mut event = subject_event(
+            at(second),
+            None,
+            PrimarySubject::Host {
+                ip: "10.0.0.1".parse().unwrap(),
+                role: ThreatRole::Target,
+            },
+            Vec::new(),
+            Detail::WindowOutlier(WindowOutlierDetail {
+                time_series_id: series.to_string(),
+                window_start: at(second),
+                nearest_cluster_id: u32::MAX,
+                distance: 12.5,
+                top_slots: vec![
+                    SlotDeviation {
+                        slot_start: at(second + 300),
+                        value: 310.0,
+                        centroid_value: 12.0,
+                    },
+                    SlotDeviation {
+                        slot_start: at(second),
+                        value: 95.0,
+                        centroid_value: 10.5,
+                    },
+                ],
+                truncated: u64::MAX,
+                pcap_truncated,
+            }),
+        );
+        event.raw_event_kind = RawEventKind::Tls;
+        event.score = 12.5;
+        event
+    }
+
+    async fn seed() -> Fixture {
+        let schema = TestSchema::new().await;
+        let (second_node, other_node, first) = {
+            let store = schema.store();
+            insert_generator_node(&store, HOST_1, 1);
+            let second = insert_generator_node(&store, HOST_2, 1);
+            let other = insert_generator_node(&store, OTHER_HOST, 2);
+            let policy = insert_shaped_policy(
+                &store,
+                "series",
+                1,
+                &[&sensor_name(HOST_1), &sensor_name(HOST_2)],
+                PolicyShape::default(),
+            );
+            let events = store.events();
+            let series = format!("{policy}/10.0.0.1");
+            let first = events
+                .put_event(&window_outlier(0, &series, Some(17)))
+                .unwrap();
+            events.put_event(&window_outlier(1, &series, None)).unwrap();
+            (second.node_id, other.node_id, first)
+        };
+        Fixture {
+            schema,
+            second_node,
+            other_node,
+            first,
+        }
+    }
+
+    fn times(res: async_graphql::Response) -> Vec<String> {
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["eventList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["time"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn list(filter: &str) -> String {
+        format!(
+            "{{ eventList(filter: {{ {filter} }}) {{ \
+                edges {{ node {{ ... on DetectionEvent {{ time }} }} }} \
+            }} }}"
+        )
+    }
+
+    #[tokio::test]
+    async fn a_window_outlier_event_returns_its_detail() {
+        let f = seed().await;
+        let res = f
+            .schema
+            .execute_as_system_admin(&list("detectionModels: [WINDOW_OUTLIER]").replace(
+                "{ time }",
+                "{ time sensor detectionModel detail { __typename ... on WindowOutlierDetail { \
+                    timeSeriesId windowStart nearestClusterId distance \
+                    topSlots { slotStart value centroidValue } truncated pcapTruncated } } }",
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let nodes: Vec<Value> = data["eventList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"].clone())
+            .collect();
+        let expected = |second: i64, pcap_truncated: Value| {
+            json!({
+                "time": at(second).to_string(),
+                "sensor": null,
+                "detectionModel": "WINDOW_OUTLIER",
+                "detail": {
+                    "__typename": "WindowOutlierDetail",
+                    "timeSeriesId": "0/10.0.0.1",
+                    "windowStart": at(second).to_string(),
+                    "nearestClusterId": u32::MAX.to_string(),
+                    "distance": 12.5,
+                    "topSlots": [
+                        {
+                            "slotStart": at(second + 300).to_string(),
+                            "value": 310.0,
+                            "centroidValue": 12.0,
+                        },
+                        {
+                            "slotStart": at(second).to_string(),
+                            "value": 95.0,
+                            "centroidValue": 10.5,
+                        },
+                    ],
+                    "truncated": u64::MAX.to_string(),
+                    "pcapTruncated": pcap_truncated,
+                },
+            })
+        };
+        assert_eq!(nodes, [expected(0, json!("17")), expected(1, Value::Null)]);
+
+        // `detectionModels` selects the model.
+        let res = f
+            .schema
+            .execute_as_system_admin(&list("detectionModels: [FAR_OUTLIER]"))
+            .await;
+        assert_eq!(times(res), Vec::<String>::new());
+        assert_eq!(
+            DetectionModel::from(crate::graphql::filter::DetectionModel::WindowOutlier),
+            DetectionModel::WindowOutlier
+        );
+    }
+
+    #[tokio::test]
+    async fn a_header_less_event_is_selected_through_its_policys_sensors() {
+        let f = seed().await;
+        let both = vec![at(0).to_string(), at(1).to_string()];
+
+        let res = f
+            .schema
+            .execute_as_scoped_user(&list(""), Role::SecurityMonitor, Some(vec![1]))
+            .await;
+        assert_eq!(times(res), both);
+        let res = f
+            .schema
+            .execute_as_scoped_user(&list(""), Role::SecurityMonitor, Some(vec![2]))
+            .await;
+        assert_eq!(times(res), Vec::<String>::new());
+
+        // A sensor filter naming the policy's second sensor selects it, and
+        // one naming another customer's sensor does not.
+        let res = f
+            .schema
+            .execute_as_system_admin(&list(&format!("sensors: [\"{}\"]", f.second_node)))
+            .await;
+        assert_eq!(times(res), both);
+        let res = f
+            .schema
+            .execute_as_scoped_user(
+                &list(&format!("sensors: [\"{}\"]", f.second_node)),
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(times(res), both);
+        let res = f
+            .schema
+            .execute_as_system_admin(&list(&format!("sensors: [\"{}\"]", f.other_node)))
+            .await;
+        assert_eq!(times(res), Vec::<String>::new());
+
+        // Reading one event by its ID takes the customer scope too.
+        let query = format!(
+            "{{ event(id: \"{}\") {{ ... on DetectionEvent {{ time }} }} }}",
+            f.first
+        );
+        let res = f
+            .schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{time: "{}"}}}}"#, at(0))
+        );
+        let res = f
+            .schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![2]))
+            .await;
+        assert_eq!(res.data.to_string(), r"{event: null}");
     }
 }

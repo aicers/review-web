@@ -191,7 +191,7 @@ mod tests {
                 Ok(())
             }
 
-            async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+            async fn time_series_generation_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
         }
         unreachable {
             fn request_customer_data_deletion(&self, _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget]) -> ();

@@ -94,6 +94,7 @@ impl<'a> TestModel<'a> {
             clustering_model_type: self.clustering_model_type,
             training_read: self.training_read,
             detection_model_states: Vec::new(),
+            cluster_count_at_training: None,
         };
         let owner = ModelOwner {
             customer_id: self.customer_id,

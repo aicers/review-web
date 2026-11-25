@@ -1,15 +1,18 @@
-//! Tests of what `applyNode` and `applyNodeDraft` do to the sampling policies
-//! of the node's Time Series Generators and sensors.
+//! Tests of what `applyNode` and `applyNodeDraft` do to the time series
+//! generation policies of the node's Time Series Generators and sensors.
 
 use review_database::{ModelInstance, NodeProfile};
 
 use super::test_support::{node_draft_input, node_input, stored_node};
 use crate::graphql::{
     TestSchema,
+    logging_test_support::CapturedEvents,
     model_test_support::insert_engine_node,
-    sampling_test_support::{
-        Deliveries, DeliveryRecorder, NO_DELIVERIES, data_store_name, generator_config,
-        insert_generator_node, insert_policy, sensor_name, use_policy,
+    time_series_generation_policies_for_generator,
+    time_series_generation_test_support::{
+        Deliveries, DeliveryRecorder, NO_DELIVERIES, PolicyShape, data_store_name,
+        generator_config, insert_generator_node, insert_policy, insert_shaped_policy, sensor_name,
+        use_policy,
     },
 };
 
@@ -81,7 +84,7 @@ fn assigned_policy(
     let store = schema.store();
     let id = insert_policy(&store, name, customer_id, &sensor_name(sensor_host));
     store
-        .sampling_policy_map()
+        .time_series_generation_policy_map()
         .assign(id, Some(generator), true)
         .expect("assign policy");
     id
@@ -90,7 +93,7 @@ fn assigned_policy(
 fn data_store_of(schema: &TestSchema, id: u32) -> Option<String> {
     schema
         .store()
-        .sampling_policy_map()
+        .time_series_generation_policy_map()
         .get_by_id(id)
         .expect("read policy")
         .expect("policy exists")
@@ -197,9 +200,9 @@ async fn a_generator_holding_a_used_policy_keeps_its_data_store() {
         let res = change_data_store(&schema, mutation, &generator, "002.giganto.x").await;
         assert_eq!(
             res.errors.first().expect("a refusal").message,
-            "the Data Store of a Time Series Generator cannot change while a sampling policy \
-             assigned to it is in use: sampling policy \"used\" of agent \"crusher@test\" is in \
-             use by training definition \"series\"",
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it is in use: time series generation policy \"used\" \
+             of agent \"crusher@test\" is in use by training definition \"series\"",
             "{mutation}"
         );
         let configs = |node: &review_database::Node| {
@@ -270,10 +273,10 @@ async fn a_data_store_change_its_policies_could_not_follow_is_refused() {
         .await;
         assert_eq!(
             res.errors.first().expect("a refusal").message,
-            "the Data Store of a Time Series Generator cannot change while a sampling policy \
-             assigned to it could not be assigned to it again to record the new Data Store: \
-             sampling policy \"own\" of agent \"crusher@test\" reads \
-             \"piglet.g.example.com\", which is not a sensor name of customer 1 after this \
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it could not be assigned to it again to record the \
+             new Data Store: time series generation policy \"own\" of agent \"crusher@test\" \
+             reads \"piglet.g.example.com\", which is not a sensor name of customer 1 after this \
              change; unassign the policy first, or change the Data Store in an apply that leaves \
              the profile as it is",
             "{mutation}"
@@ -290,13 +293,41 @@ async fn a_data_store_change_its_policies_could_not_follow_is_refused() {
         .await;
         assert_eq!(
             res.errors.first().expect("a refusal").message,
-            "the Data Store of a Time Series Generator cannot change while a sampling policy \
-             assigned to it could not be assigned to it again to record the new Data Store: \
-             sampling policy \"elsewhere\" of agent \"crusher@test\" belongs to customer 1, \
-             and the node's customer becomes 2; sampling policy \"own\" of agent \
-             \"crusher@test\" belongs to customer 1, and the node's customer becomes 2; \
-             unassign the policy first, or change the Data Store in an apply that leaves the \
-             profile as it is",
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it could not be assigned to it again to record the \
+             new Data Store: time series generation policy \"elsewhere\" of agent \
+             \"crusher@test\" belongs to customer 1, and the node's customer becomes 2; time \
+             series generation policy \"own\" of agent \"crusher@test\" belongs to customer 1, \
+             and the node's customer becomes 2; unassign the policy first, or change the Data \
+             Store in an apply that leaves the profile as it is",
+            "{mutation}"
+        );
+
+        // The node has no customer after the change.
+        let node = stage(&schema, generator.node_id, |node| {
+            node.profile_draft = None;
+            let agent = node
+                .agents
+                .iter_mut()
+                .find(|agent| agent.key == generator.agent_key)
+                .expect("the generator is on the node");
+            agent.draft = Some(
+                generator_config("002.giganto.x")
+                    .try_into()
+                    .expect("a valid configuration"),
+            );
+        })
+        .await;
+        let res = apply(&schema, mutation, generator.node_id, &node).await;
+        assert_eq!(
+            res.errors.first().expect("a refusal").message,
+            "the Data Store of a Time Series Generator cannot change while a time series \
+             generation policy assigned to it could not be assigned to it again to record the \
+             new Data Store: time series generation policy \"elsewhere\" of agent \
+             \"crusher@test\" belongs to customer 1, and the node has no customer after this \
+             change; time series generation policy \"own\" of agent \"crusher@test\" belongs to \
+             customer 1, and the node has no customer after this change; unassign the policy \
+             first, or change the Data Store in an apply that leaves the profile as it is",
             "{mutation}"
         );
         let after = stored_node(&schema.store(), generator.node_id);
@@ -366,5 +397,110 @@ async fn a_data_store_change_its_policies_could_not_follow_is_refused() {
                 "{mutation}"
             );
         }
+    }
+}
+
+/// Moves node `node_id` to `customer_id`, keeping its hostname, applied, in
+/// the store.
+fn move_to_customer(schema: &TestSchema, node_id: u32, customer_id: u32) {
+    let store = schema.store();
+    let mut map = store.node_map();
+    let node = stored_node(&store, node_id);
+    let hostname = node
+        .profile
+        .as_ref()
+        .expect("an applied node")
+        .hostname
+        .clone();
+    let old = review_database::NodeUpdate::from(node.clone());
+    let mut new = review_database::NodeUpdate::from(node);
+    new.profile = Some(profile(customer_id, &hostname));
+    new.profile_draft = Some(profile(customer_id, &hostname));
+    map.update(node_id, &old, &new).expect("move node");
+}
+
+/// A policy whose second sensor's node moves to another customer is
+/// withheld from its generator, with a warning naming that sensor, its
+/// delivery is `WITHHELD`, and a Data Store change of its generator is
+/// refused, as the policy could not be assigned to it again.
+#[tokio::test]
+async fn a_policy_whose_second_sensor_left_is_withheld() {
+    let (schema, _) = recording_schema().await;
+    let generator = insert_generator_node(&schema.store(), "g.example.com", 1);
+    insert_generator_node(&schema.store(), "s1.example.com", 1);
+    let second = insert_generator_node(&schema.store(), "s2.example.com", 1);
+    let sensors = [sensor_name("s1.example.com"), sensor_name("s2.example.com")];
+    let id = {
+        let store = schema.store();
+        let id = insert_shaped_policy(
+            &store,
+            "two",
+            1,
+            &[&sensors[0], &sensors[1]],
+            PolicyShape::default(),
+        );
+        store
+            .time_series_generation_policy_map()
+            .assign(id, Some(&generator), true)
+            .expect("assign policy");
+        id
+    };
+    let delivery = || async {
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ timeSeriesGenerationPolicy(id: "{id}") {{ delivery }} }}"#
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["timeSeriesGenerationPolicy"]["delivery"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let pulled = || {
+        time_series_generation_policies_for_generator(&schema.store(), &generator)
+            .expect("list policies")
+            .into_iter()
+            .map(|policy| policy.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pulled(), [id]);
+    assert_eq!(delivery().await, "ASSIGNEE_OFFLINE");
+
+    move_to_customer(&schema, second.node_id, 2);
+
+    let (events, guard) = CapturedEvents::start();
+    assert_eq!(pulled(), Vec::<u32>::new());
+    drop(guard);
+    let warnings = events.messages();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings.iter().any(|message| message.contains(&format!(
+            "the policy reads {:?}, which is not a sensor name of customer 1",
+            sensors[1]
+        ))),
+        "{warnings:?}"
+    );
+    assert_eq!(delivery().await, "WITHHELD");
+
+    for mutation in MUTATIONS {
+        let res = change_data_store(&schema, mutation, &generator, "002.giganto.x").await;
+        assert_eq!(
+            res.errors.first().expect("a refusal").message,
+            format!(
+                "the Data Store of a Time Series Generator cannot change while a time series \
+                 generation policy assigned to it could not be assigned to it again to record \
+                 the new Data Store: time series generation policy \"two\" of agent \
+                 \"crusher@test\" reads {:?}, which is not a sensor name of customer 1 after \
+                 this change; unassign the policy first, or change the Data Store in an apply \
+                 that leaves the profile as it is",
+                sensors[1]
+            ),
+            "{mutation}"
+        );
+        assert_eq!(
+            data_store_of(&schema, id),
+            Some(data_store_name("g.example.com"))
+        );
     }
 }
