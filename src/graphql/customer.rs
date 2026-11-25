@@ -214,10 +214,16 @@ struct IpRange {
     end: String,
 }
 
-/// Returns the networks the customer owns, merged into one group whatever
-/// their type, as stored in the customer networks table.
+/// Returns the addresses internal to the customer, as stored in the customer
+/// networks table, as one group.
 ///
-/// A customer with no stored row owns no networks, and gets an empty group.
+/// An address is internal when the narrowest network the customer owns that
+/// contains it is an `Intranet` or `Gateway` network, and no `Extranet`
+/// network contains it as narrowly. An `Extranet` network's addresses are
+/// therefore not internal, also where it is nested inside an `Intranet` or
+/// `Gateway` network, unless a narrower `Intranet` or `Gateway` network holds
+/// them. A customer with no stored row owns no networks, and gets an empty
+/// group.
 ///
 /// # Errors
 ///
@@ -226,7 +232,7 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
     Ok(db
         .customer_networks_map()
         .get(customer_id)?
-        .map_or_default(|set| set.merged_group()))
+        .map_or_default(|set| set.internal_group()))
 }
 
 /// Returns a list of agents that received the internal networks.
