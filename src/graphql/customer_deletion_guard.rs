@@ -1,13 +1,12 @@
 //! What a customer's data deletion refuses elsewhere, and what refuses it.
 //!
-//! From the first write of a customer's deletion job until every result of
-//! it is `Succeeded`, also while the deletion is stopped, the writes that
-//! would change what it works from are refused with
-//! `CUSTOMER_DELETION_IN_PROGRESS`: those of the customer's nodes, services,
-//! sampling policies, models and training definitions, and any node write
-//! that takes a host name saved in the job. A retry rebuilds its targets from
-//! those saved names, so a name another node took in the meantime would have
-//! that node's data deleted.
+//! From the first write of a customer's deletion job until every result of it
+//! is `Succeeded`, also while the deletion is stopped, the writes that would
+//! change what it works from are refused with `CUSTOMER_DELETION_IN_PROGRESS`:
+//! those of the customer's nodes, services, time series generation policies,
+//! models and training definitions, and any node write that takes a host name
+//! saved in the job. A retry rebuilds its targets from those saved names, so a
+//! name another node took in the meantime would have that node's data deleted.
 //!
 //! The check is a read before the resolver's write, not one transaction with
 //! it. The deletion's own stages write through the store and the deployer,
@@ -29,7 +28,7 @@ use review_database::{
 
 use super::{
     customer_access::derive_customer_id_from_hostname, engine_document::EngineDocument,
-    node::listed_rows, sampling::giganto_name, training::TrainingDocument,
+    node::listed_rows, time_series_generation::giganto_name, training::TrainingDocument,
 };
 use crate::customer_data_deletion::data_store_server_name;
 
@@ -92,8 +91,8 @@ pub(super) fn check_customers(
         if customer_deletion_in_progress(store, customer_id).map_err(|e| format!("{e:#}"))? {
             return Err(in_progress(format!(
                 "the data of customer {customer_id} is being deleted; its nodes, services, \
-                 sampling policies, models and training definitions cannot change until the \
-                 deletion completes"
+                 time series generation policies, models and training definitions cannot \
+                 change until the deletion completes"
             )));
         }
     }
@@ -873,6 +872,7 @@ server_name = "{server_name}"
             AgentKind::Unsupervised,
             &engine_document(OWN),
             &|_| Some(http_url(1)),
+            &|_| None,
             review_database::CompletionMode::Apply,
         )
         .unwrap();

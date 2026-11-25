@@ -127,7 +127,11 @@ mod mtls_integration {
             Ok(std::collections::HashMap::new())
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         // The stub host advertises nothing, which is the answer of a host
         // that sent no capability set.

@@ -14,11 +14,11 @@ pub(super) mod deploy;
 mod input;
 mod installed_guard;
 mod privilege_profile;
-#[cfg(test)]
-mod sampling_tests;
 mod status;
 #[cfg(test)]
 pub(super) mod test_support;
+#[cfg(test)]
+mod time_series_generation_tests;
 mod time_sync;
 
 use std::{borrow::Cow, time::Duration};

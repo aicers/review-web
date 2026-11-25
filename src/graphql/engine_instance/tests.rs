@@ -14,7 +14,7 @@ use crate::graphql::{
         Relay, RelayAnswer, RelayCall, insert_agent_node, insert_data_store_node,
         insert_engine_instance, insert_sensor_node, relay_schema,
     },
-    sampling_test_support::{
+    time_series_generation_test_support::{
         PolicyShape, generator_config, insert_assigned_policy, insert_generator_node_with,
     },
 };

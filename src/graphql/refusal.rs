@@ -83,8 +83,8 @@ pub(crate) enum RefusalCode {
     /// A cancel of a run that has finished.
     RunNotActive,
     /// A source that is not a source name of the instance's customer, a
-    /// timeseries source that is not an assigned sampling policy of it, or
-    /// any detector on a node without an applied profile.
+    /// timeseries source that is not an assigned time series generation policy
+    /// of it, or any detector on a node without an applied profile.
     SourceNotAllowed,
     /// Timeseries sources of different shapes, or not all kept in the Data
     /// Store the definition or detector reads.

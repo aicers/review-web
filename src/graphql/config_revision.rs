@@ -174,6 +174,7 @@ mod tests {
             AgentKind::SemiSupervised,
             document,
             &|_| None,
+            &|_| None,
             review_database::CompletionMode::Apply,
         )
         .expect("completes")

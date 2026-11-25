@@ -704,7 +704,11 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             self.reads.lock().unwrap().push(hostname.to_string());

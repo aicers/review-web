@@ -114,12 +114,15 @@ fn schema_has_no_data_source_api() {
     );
 }
 
-/// A sampling policy has a state instead of `immutable`, and no input takes
-/// `immutable`.
+/// A time series generation policy has a state instead of `immutable`, and
+/// no input takes `immutable`.
 #[test]
-fn sampling_policies_have_no_immutable_api() {
+fn time_series_generation_policies_have_no_immutable_api() {
     let sdl = rendered_sdl();
-    for header in ["type SamplingPolicy {", "input SamplingPolicyInput {"] {
+    for header in [
+        "type TimeSeriesGenerationPolicy {",
+        "input TimeSeriesGenerationPolicyInput {",
+    ] {
         assert!(
             !definition(&sdl, header).contains("immutable"),
             "{header}: {REGENERATE}"
@@ -127,14 +130,132 @@ fn sampling_policies_have_no_immutable_api() {
     }
     let insert = sdl
         .lines()
-        .find(|line| line.trim_start().starts_with("insertSamplingPolicy("))
-        .expect("the schema defines insertSamplingPolicy");
+        .find(|line| {
+            line.trim_start()
+                .starts_with("insertTimeSeriesGenerationPolicy(")
+        })
+        .expect("the schema defines insertTimeSeriesGenerationPolicy");
     assert!(!insert.contains("immutable"), "{REGENERATE}");
     assert!(insert.contains("customerId: ID!"), "{REGENERATE}");
     assert!(
-        definition(&sdl, "type SamplingPolicy {").contains("state: SamplingPolicyState!"),
+        definition(&sdl, "type TimeSeriesGenerationPolicy {")
+            .contains("state: TimeSeriesGenerationPolicyState!"),
         "{REGENERATE}"
     );
+}
+
+/// The time series generation policy API has its new names and fields, and a
+/// policy made from a type is inserted by its own mutation.
+#[test]
+fn time_series_generation_policies_have_the_spec_fields() {
+    let sdl = rendered_sdl();
+    let policy = definition(&sdl, "type TimeSeriesGenerationPolicy {");
+    for field in [
+        "rawEventKind: RawEventKind!",
+        "measure: Measure!",
+        "groupBy: EndpointRole\n",
+        "groupByUnit: GroupByUnit!",
+        "counterpartScope: CounterpartScope!",
+        "slotSize: SlotSize!",
+        "windowSize: WindowSize!",
+        "utcOffset: Int!",
+        "srcIp: String",
+        "dstIp: String",
+        "sensors: [String!]!",
+        "timeSeriesType: TimeSeriesTypeRef\n",
+        "customerId: ID!",
+    ] {
+        assert!(policy.contains(field), "{field}: {REGENERATE}");
+    }
+    let input = definition(&sdl, "input TimeSeriesGenerationPolicyInput {");
+    assert!(input.contains("sensors: [String!]!"), "{REGENERATE}");
+    let insert = sdl
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .starts_with("insertTimeSeriesGenerationPolicy(")
+        })
+        .expect("the schema defines insertTimeSeriesGenerationPolicy");
+    for text in [input, insert] {
+        assert!(!text.contains("timeSeriesType"), "{REGENERATE}");
+    }
+    for removed in ["kind", "interval", "period", "offset", "node", "column"] {
+        for text in [policy, input] {
+            assert!(
+                !text.contains(&format!("\n\t{removed}:")),
+                "{removed}: {REGENERATE}"
+            );
+        }
+    }
+    let from_type = sdl
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .starts_with("insertTimeSeriesGenerationPolicyFromType(")
+        })
+        .expect("the schema defines insertTimeSeriesGenerationPolicyFromType");
+    assert!(
+        from_type.contains(
+            "(customerId: ID!, name: String!, timeSeriesType: TimeSeriesTypeRefInput!, \
+             sensors: [String!]!, utcOffset: Int!): ID!"
+        ),
+        "{from_type}: {REGENERATE}"
+    );
+}
+
+/// The enums of a time series generation policy have their values, and the
+/// enums they replaced are gone.
+#[test]
+fn time_series_generation_policy_enums_have_their_values() {
+    let sdl = rendered_sdl();
+    for removed in ["enum Kind {", "enum Interval {", "enum Period {"] {
+        assert!(!sdl.contains(removed), "{removed}: {REGENERATE}");
+    }
+    for (header, values) in [
+        (
+            "enum SlotSize {",
+            &[
+                "FIVE_MINUTES",
+                "TEN_MINUTES",
+                "FIFTEEN_MINUTES",
+                "THIRTY_MINUTES",
+                "ONE_HOUR",
+            ][..],
+        ),
+        (
+            "enum WindowSize {",
+            &["SIX_HOURS", "TWELVE_HOURS", "ONE_DAY"][..],
+        ),
+        ("enum GroupByUnit {", &["IP", "OWNED_NETWORK"][..]),
+        (
+            "enum CounterpartScope {",
+            &["ANY", "INTERNAL", "EXTERNAL"][..],
+        ),
+        (
+            "enum Measure {",
+            &[
+                "COUNT",
+                "SUM_DURATION",
+                "SUM_ORIG_BYTES",
+                "SUM_RESP_BYTES",
+                "SUM_ORIG_PKTS",
+                "SUM_RESP_PKTS",
+            ][..],
+        ),
+    ] {
+        let found: Vec<_> = definition(&sdl, header)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('"'))
+            .map(ToString::to_string)
+            .collect();
+        let found: Vec<&str> = found
+            .iter()
+            .map(String::as_str)
+            .filter(|line| values.contains(line))
+            .collect();
+        assert_eq!(found, values, "{header}: {REGENERATE}");
+    }
 }
 
 /// Category counts preserve the nullable uncategorized bucket without making
@@ -670,6 +791,7 @@ fn detection_models_cross_as_the_detection_model_enum() {
             "UNUSUAL_DESTINATION_PATTERN",
             "LABEL_DB_MATCH",
             "FAR_OUTLIER",
+            "WINDOW_OUTLIER",
         ],
         "{REGENERATE}"
     );

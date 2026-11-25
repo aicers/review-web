@@ -1,10 +1,10 @@
-use review_database::{ClusteringModelTypeRef, SamplingInterval};
+use review_database::{ClusteringModelTypeRef, SlotSize};
 use serde_json::Value;
 
 use super::*;
 use crate::graphql::{
     model_test_support::{TestModel, http_url, insert_engine_node, insert_label_db},
-    sampling_test_support::{
+    time_series_generation_test_support::{
         OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, sensor_name,
     },
     training_test_support::HTTP_URL_CSV,
@@ -601,6 +601,7 @@ fn kept_pairs_come_from_completed_documents_and_not_from_the_old_shape() {
         AgentKind::Unsupervised,
         &on("completed.example.com", VALID),
         &|_| Some(http_url(1)),
+        &|_| None,
         CompletionMode::Apply,
     )
     .unwrap();
@@ -759,7 +760,7 @@ fn a_timeseries_detector_refuses_a_sensor() {
     assert_eq!(detector_id, 7);
     assert_eq!(
         message,
-        format!("{sensor:?} is not a sampling policy of customer {POLICY_CUSTOMER}")
+        format!("{sensor:?} is not a time series generation policy of customer {POLICY_CUSTOMER}")
     );
 }
 
@@ -770,7 +771,7 @@ fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
         "other",
         &f.policies.generator,
         PolicyShape {
-            interval: SamplingInterval::OneHour,
+            slot_size: SlotSize::OneHour,
             ..PolicyShape::default()
         },
     );
@@ -789,8 +790,8 @@ fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
     assert_eq!(
         message,
         format!(
-            "sampling policy {other} differs in interval from the sampling policies model \
-             {TIMESERIES_MODEL:?} was trained on"
+            "time series generation policy {other} differs in slot_size from the time series \
+             generation policies model {TIMESERIES_MODEL:?} was trained on"
         )
     );
 }
@@ -832,8 +833,8 @@ fn a_timeseries_detector_of_a_model_of_unknown_shape_is_refused() {
         assert_eq!(
             message,
             format!(
-                "none of the sampling policies model {name:?} was trained on is stored, so the \
-                 shape its sources must have is unknown"
+                "none of the time series generation policies model {name:?} was trained on is \
+                 stored, so the shape its sources must have is unknown"
             )
         );
     }

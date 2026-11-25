@@ -35,7 +35,7 @@ use super::{
     gen_agent_lookup_key,
     model::{ModelDigest, ModelInstance, ModelMethod, TIMESERIES_KIND},
     refusal::{RefusalCode, refusal},
-    sampling::{ShapeReference, SourceDelivery, source_deliveries, trained_shape},
+    time_series_generation::{ShapeReference, SourceDelivery, source_deliveries, trained_shape},
     unsupervised::{DataStore, data_store_addrs},
 };
 use crate::backend::EngineRefused;
@@ -172,13 +172,14 @@ impl TrainingMutation {
     /// with `BOUND_VIOLATED` on `window_end` or `window_start`.
     ///
     /// A `prefix` definition takes raw event kind `log` and names the log it
-    /// reads in `log_kind`, which is neither empty nor the name of another
-    /// raw event kind, such as `http`, or is refused with
-    /// `EVENT_KIND_NOT_ALLOWED`. A `timeseries` definition takes event kind
-    /// `timeseries`, and as sources the IDs of sampling policies of the
-    /// customer that are assigned, of one kind, column, interval, period and
-    /// offset, and kept in the Data Store `[data_store]` names, which their
-    /// generators still write to.
+    /// reads in `log_kind`, which is neither empty nor the name of another raw
+    /// event kind, such as `http`, or is refused with `EVENT_KIND_NOT_ALLOWED`.
+    /// A `timeseries` definition takes a network raw event kind, such as
+    /// `conn`, and as sources the IDs of time series generation policies of
+    /// the customer that are assigned, of one raw event kind, measure,
+    /// grouping endpoint, grouping unit, counterpart scope, slot size, window
+    /// size and UTC offset, and kept in the Data Store `[data_store]` names,
+    /// which their generators still write to.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the instance's customer is unfinished, also while it is stopped.
@@ -1403,14 +1404,15 @@ impl TrainingDefinition {
     }
 
     /// The source names the definition reads events of; for the timeseries
-    /// method, the IDs of the sampling policies it reads the series of.
+    /// method, the IDs of the time series generation policies it reads the
+    /// series of.
     async fn sources(&self) -> &[String] {
         &self.inner.sources
     }
 
     /// The delivery of each source, in the order of `sources`. Only a
-    /// timeseries definition's sources are sampling policies; any other
-    /// source's `delivery` is null.
+    /// timeseries definition's sources are time series generation policies; any
+    /// other source's `delivery` is null.
     async fn source_delivery(&self, ctx: &Context<'_>) -> Result<Vec<SourceDelivery>> {
         source_deliveries(
             ctx,

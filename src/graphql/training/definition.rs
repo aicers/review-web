@@ -28,15 +28,13 @@ use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
     rfc3339::{self, LeapAwareTime},
-    sampling::{ShapeReference, check_policy_sources},
+    time_series_generation::{ShapeReference, check_policy_sources},
     toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store, data_store_retention},
 };
 
 /// The most event ids a cluster keeps.
 const MAX_EVENT_ID_NUM: u32 = 100;
-/// The Giganto event kind a `timeseries` definition names.
-const TIMESERIES_EVENT_KIND: &str = "timeseries";
 /// The raw event kind a `timeseries` definition's record stores: the Giganto
 /// canonical name the engine records a time-series model's kind as.
 const TIMESERIES_RECORD_KIND: &str = "periodic_time_series";
@@ -144,6 +142,24 @@ pub(crate) struct TrainingDocument {
     pub(crate) data_store: DataStore,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) csv: Option<CsvConfig>,
+    /// The slot length of a `timeseries` definition's series, in seconds.
+    /// [`check_training_definition`] decides where it may appear; it is not
+    /// matched against the sources here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) slot_size: Option<u64>,
+    /// The endpoint a `timeseries` definition's source policies are grouped
+    /// by; absent means they are not grouped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) group_by: Option<String>,
+    /// The threat role of the detections of a catalog `timeseries` type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) threat_role: Option<String>,
+    /// The smallest cluster a `timeseries` definition's model keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) min_cluster_size: Option<u64>,
+    /// The input transform of a `timeseries` definition's series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) transform: Option<String>,
 }
 
 /// The clustering method of a definition.
@@ -307,27 +323,12 @@ impl TrainingDocument {
         self.check_source_list()
     }
 
-    /// Checks the event kind of a `timeseries` definition and the log kind of
-    /// a `prefix` one; [`check_training_definition`] checks the rest of the
-    /// kinds.
+    /// Checks the log kind of a `prefix` definition;
+    /// [`check_training_definition`] checks the rest of the kinds, a
+    /// `timeseries` definition's network raw event kind included.
     fn check_kinds(&self) -> Result<()> {
         match self.method {
-            Method::Timeseries => {
-                if self.raw_event_kind != TIMESERIES_EVENT_KIND {
-                    return Err(refusal(
-                        RefusalCode::EventKindNotAllowed,
-                        format!(
-                            "the timeseries method takes event kind \"{TIMESERIES_EVENT_KIND}\", \
-                             not {:?}",
-                            self.raw_event_kind
-                        ),
-                        "raw_event_kind",
-                        self.raw_event_kind.as_str(),
-                    ));
-                }
-                Ok(())
-            }
-            Method::Multidimension => Ok(()),
+            Method::Timeseries | Method::Multidimension => Ok(()),
             Method::Prefix => {
                 let Some(log_kind) = self.log_kind.as_deref() else {
                     return Err(refusal(
@@ -498,7 +499,7 @@ impl TrainingDocument {
 
     /// Checks the sources for the customer `customer_id`.
     ///
-    /// A timeseries definition's sources must be assigned sampling policies
+    /// A timeseries definition's sources must be assigned time series generation policies
     /// of the customer, of the shape `shape` gives, all kept in the Data
     /// Store `[data_store]` names, as [`check_policy_sources`] checks them.
     /// Any other definition's sources must be source names of the customer,

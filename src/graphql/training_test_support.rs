@@ -174,10 +174,10 @@ long_pattern_len = 16000
     with_extra(&template, extra)
 }
 
-/// Returns a complete custom `timeseries` definition reading the sampling
-/// policies `sources` from the Data Store `server_name` at `address`, with
-/// `extra` top-level lines in place of those of their keys, or after the
-/// window.
+/// Returns a complete custom `timeseries` definition reading the time series
+/// generation policies `sources` from the Data Store `server_name` at
+/// `address`, with `extra` top-level lines in place of those of their keys,
+/// or after the window.
 pub(crate) fn custom_timeseries_definition(
     sources: &[&str],
     server_name: &str,
@@ -186,7 +186,7 @@ pub(crate) fn custom_timeseries_definition(
 ) -> String {
     let template = format!(
         r#"type = "custom"
-raw_event_kind = "timeseries"
+raw_event_kind = "conn"
 method = "timeseries"
 sources = {sources}
 window_start = "{start}"
@@ -197,6 +197,9 @@ algorithm = "dbscan"
 eps = 2.0
 precision = 2
 numbers_of_top_n = []
+slot_size = 900
+min_cluster_size = 3
+transform = "none"
 
 {data_store}"#,
         sources = source_list(sources),

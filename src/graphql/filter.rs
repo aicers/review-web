@@ -53,6 +53,7 @@ pub(super) enum DetectionModel {
     UnusualDestinationPattern,
     LabelDbMatch,
     FarOutlier,
+    WindowOutlier,
 }
 
 /// The kind of the raw event a detection event is about.

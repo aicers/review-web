@@ -248,7 +248,11 @@ mod tests {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(&self, _hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")

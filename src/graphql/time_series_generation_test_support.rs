@@ -1,6 +1,6 @@
-//! Test support for sampling policies: an `AgentManager` that records the
-//! generators it is told about, and the nodes, generators and uses that
-//! policies need.
+//! Test support for time series generation policies: an `AgentManager` that
+//! records the generators it is told about, and the nodes, generators, uses
+//! and networks that policies need.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -10,9 +10,10 @@ use std::{
 
 use async_trait::async_trait;
 use review_database::{
-    Agent, AgentKind, AgentStatus, Lifecycle, ModelInstance, ModelMethod, NewSamplingPolicy,
-    NewTrainingDefinition, Node, NodeProfile, NodeUpdate, SamplingInterval, SamplingKind,
-    SamplingPeriod, Store,
+    Agent, AgentKind, AgentStatus, CounterpartScope, EndpointRole, GroupByUnit, HostNetworkGroup,
+    Lifecycle, Measure, ModelInstance, ModelMethod, NewTimeSeriesGenerationPolicy,
+    NewTrainingDefinition, Node, NodeProfile, NodeUpdate, OwnedNetwork, RawEventKind, SlotSize,
+    Store, WindowSize, event::NetworkType,
 };
 use review_protocol::types::ResourceUsage;
 use tempfile::TempDir;
@@ -119,52 +120,103 @@ pub(super) fn insert_generator_node_with(
 /// The shape of a policy from [`insert_shaped_policy`].
 #[derive(Clone, Copy)]
 pub(super) struct PolicyShape {
-    pub(super) kind: SamplingKind,
-    pub(super) column: Option<u32>,
-    pub(super) interval: SamplingInterval,
-    pub(super) period: SamplingPeriod,
-    pub(super) offset: i32,
+    pub(super) raw_event_kind: RawEventKind,
+    pub(super) measure: Measure,
+    pub(super) group_by: Option<EndpointRole>,
+    pub(super) group_by_unit: GroupByUnit,
+    pub(super) counterpart_scope: CounterpartScope,
+    pub(super) slot_size: SlotSize,
+    pub(super) window_size: WindowSize,
+    pub(super) utc_offset: i32,
 }
 
 impl Default for PolicyShape {
+    /// An ungrouped `Conn` count, which needs no customer network.
     fn default() -> Self {
         Self {
-            kind: SamplingKind::Conn,
-            column: None,
-            interval: SamplingInterval::FifteenMinutes,
-            period: SamplingPeriod::OneDay,
-            offset: 0,
+            raw_event_kind: RawEventKind::Conn,
+            measure: Measure::Count,
+            group_by: None,
+            group_by_unit: GroupByUnit::Ip,
+            counterpart_scope: CounterpartScope::Any,
+            slot_size: SlotSize::FifteenMinutes,
+            window_size: WindowSize::OneDay,
+            utc_offset: 0,
         }
     }
 }
 
-/// Stores a draft policy `name` of `customer_id` reading `node`, and returns
-/// its ID.
-pub(super) fn insert_policy(store: &Store, name: &str, customer_id: u32, node: &str) -> u32 {
-    insert_shaped_policy(store, name, customer_id, node, PolicyShape::default())
+impl PolicyShape {
+    /// The default shape grouped by `group_by`, which needs an internal
+    /// network of the policy's customer; see [`insert_internal_network`].
+    pub(super) fn grouped(group_by: EndpointRole) -> Self {
+        Self {
+            group_by: Some(group_by),
+            ..Self::default()
+        }
+    }
 }
 
-/// Stores a draft policy `name` of `customer_id` reading `node` with
-/// `shape`, and returns its ID.
+/// Stores `10.0.0.0/8` as the only network of `customer_id`, an `Intranet`
+/// network, so its policies can group by an endpoint.
+pub(super) fn insert_internal_network(store: &Store, customer_id: u32) {
+    store_networks(store, customer_id, NetworkType::Intranet);
+}
+
+/// Stores `10.0.0.0/8` as the only network of `customer_id`, of
+/// `network_type`.
+pub(super) fn store_networks(store: &Store, customer_id: u32, network_type: NetworkType) {
+    let network = OwnedNetwork {
+        name: "office".to_string(),
+        network_type,
+        group: HostNetworkGroup::new(
+            vec![],
+            vec!["10.0.0.0/8".parse().expect("a valid network")],
+            vec![],
+        ),
+    };
+    let revision = store
+        .customer_networks_map()
+        .get(customer_id)
+        .expect("read customer networks")
+        .map_or(1, |set| set.revision + 1);
+    store
+        .customer_networks_map()
+        .replace(customer_id, revision, vec![network])
+        .expect("store customer networks");
+}
+
+/// Stores a draft policy `name` of `customer_id` reading `sensor`, and
+/// returns its ID.
+pub(super) fn insert_policy(store: &Store, name: &str, customer_id: u32, sensor: &str) -> u32 {
+    insert_shaped_policy(store, name, customer_id, &[sensor], PolicyShape::default())
+}
+
+/// Stores a draft custom policy `name` of `customer_id` reading `sensors`
+/// with `shape`, and returns its ID.
 pub(super) fn insert_shaped_policy(
     store: &Store,
     name: &str,
     customer_id: u32,
-    node: &str,
+    sensors: &[&str],
     shape: PolicyShape,
 ) -> u32 {
     store
-        .sampling_policy_map()
-        .insert(NewSamplingPolicy {
+        .time_series_generation_policy_map()
+        .insert(NewTimeSeriesGenerationPolicy {
             name: name.to_string(),
-            kind: shape.kind,
-            interval: shape.interval,
-            period: shape.period,
-            offset: shape.offset,
+            raw_event_kind: shape.raw_event_kind,
+            measure: shape.measure,
+            group_by: shape.group_by,
+            group_by_unit: shape.group_by_unit,
+            counterpart_scope: shape.counterpart_scope,
+            slot_size: shape.slot_size,
+            window_size: shape.window_size,
+            utc_offset: shape.utc_offset,
             src_ip: None,
             dst_ip: None,
-            node: Some(node.to_string()),
-            column: shape.column,
+            sensors: sensors.iter().map(ToString::to_string).collect(),
+            time_series_type: None,
             customer_id,
         })
         .expect("insert policy")
@@ -185,9 +237,9 @@ pub(super) fn insert_assigned_policy(
         .expect("read generator node")
         .expect("generator node exists");
     let hostname = node.profile.expect("generator node is applied").hostname;
-    let id = insert_shaped_policy(store, name, customer_id, &sensor_name(&hostname), shape);
+    let id = insert_shaped_policy(store, name, customer_id, &[&sensor_name(&hostname)], shape);
     store
-        .sampling_policy_map()
+        .time_series_generation_policy_map()
         .assign(id, Some(generator), true)
         .expect("assign policy");
     id
@@ -265,7 +317,7 @@ pub(super) fn use_policy(
 /// The calls a [`DeliveryRecorder`] received when it received none.
 pub(super) const NO_DELIVERIES: [Vec<ModelInstance>; 0] = [];
 
-/// The calls of `sampling_policies_changed` a [`DeliveryRecorder`] received,
+/// The calls of `time_series_generation_policies_changed` a [`DeliveryRecorder`] received,
 /// in order.
 #[derive(Clone, Default)]
 pub(super) struct Deliveries(Arc<Mutex<Vec<Vec<ModelInstance>>>>);
@@ -280,7 +332,7 @@ impl Deliveries {
     }
 }
 
-/// An `AgentManager` that records every `sampling_policies_changed` call,
+/// An `AgentManager` that records every `time_series_generation_policies_changed` call,
 /// reaching no generator, accepts every configuration update, and refuses
 /// everything else.
 pub(super) struct DeliveryRecorder {
@@ -333,7 +385,7 @@ impl AgentManager for DeliveryRecorder {
         Ok(HashMap::new())
     }
 
-    async fn sampling_policies_changed(&self, generators: &[ModelInstance]) {
+    async fn time_series_generation_policies_changed(&self, generators: &[ModelInstance]) {
         self.deliveries
             .0
             .lock()

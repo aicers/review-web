@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 use super::{
     super::{
         Role, RoleGuard, SharedAgentManager, customer_access, engine_config::lock_engine_config,
-        sampling,
+        time_series_generation,
     },
     AgentKind, Node, NodeControlMutation, SEMI_SUPERVISED_AGENT,
     deploy::{FailurePolicy, check_rollback_support},
@@ -240,19 +240,20 @@ impl NodeControlMutation {
     /// A Semi-supervised Engine agent whose draft is empty is notified when the apply changes its
     /// stored completed config, since completion gives it a populated document.
     ///
-    /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-    /// policy assigned to it is in use, naming the policies and their uses. It is also refused
-    /// before anything is committed while a policy assigned to it, even an unused one, could not
-    /// be assigned to that generator again once the apply is stored, naming each such policy and
-    /// why. This includes an apply that also changes the node's customer away from the policy's
-    /// customer, or removes the policy's sensor name from that customer's sensors; the sensor names
-    /// are counted across all of the customer's nodes after the apply, so removing the name from
-    /// this node refuses the change only if no other node of that customer still provides it. To
-    /// make such a change, unassign the affected policy first, or apply the Data Store change with
-    /// the profile unchanged and apply the profile change separately. Only once these checks permit
-    /// the apply do the generator's policies record the new Data Store. When the apply changes the
-    /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
-    /// whose sensor or assignee is on the node is told that its policies changed.
+    /// A change of a Time Series Generator's applied `giganto_name` is refused while a time
+    /// series generation policy assigned to it is in use, naming the policies and their uses. It
+    /// is also refused before anything is committed while a policy assigned to it, even an unused
+    /// one, could not be assigned to that generator again once the apply is stored, naming each
+    /// such policy and why. This includes an apply that also changes the node's customer away from
+    /// the policy's customer, or removes any of the policy's sensor names from that customer's
+    /// sensors; the sensor names are counted across all of the customer's nodes after the apply,
+    /// so removing a name from this node refuses the change only if no other node of that customer
+    /// still provides it. To make such a change, unassign the affected policy first, or apply the
+    /// Data Store change with the profile unchanged and apply the profile change separately. Only
+    /// once these checks permit the apply do the generator's policies record the new Data Store.
+    /// When the apply changes the node's applied customer or hostname, every Time Series Generator
+    /// holding a time series generation policy any of whose sensors or whose assignee is on the
+    /// node is told that its policies changed.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
     /// customer, or of the customer the new profile gives it, is unfinished, also while it is
@@ -306,7 +307,7 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-            sampling::notify_generators(ctx, generators).await;
+            time_series_generation::notify_generators(ctx, generators).await;
             Some((updated_node, completed_drafts))
         } else {
             None
@@ -407,19 +408,20 @@ impl NodeControlMutation {
     /// offending part, empty for a document that does not parse; its `value` is the offending
     /// value as TOML, or the parser's message, or empty; and `agentKey` names the refused agent.
     ///
-    /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-    /// policy assigned to it is in use, naming the policies and their uses. It is also refused
-    /// before anything is committed while a policy assigned to it, even an unused one, could not
-    /// be assigned to that generator again once the apply is stored, naming each such policy and
-    /// why. This includes an apply that also changes the node's customer away from the policy's
-    /// customer, or removes the policy's sensor name from that customer's sensors; the sensor names
-    /// are counted across all of the customer's nodes after the apply, so removing the name from
-    /// this node refuses the change only if no other node of that customer still provides it. To
-    /// make such a change, unassign the affected policy first, or apply the Data Store change with
-    /// the profile unchanged and apply the profile change separately. Only once these checks permit
-    /// the apply do the generator's policies record the new Data Store. When the apply changes the
-    /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
-    /// whose sensor or assignee is on the node is told that its policies changed.
+    /// A change of a Time Series Generator's applied `giganto_name` is refused while a time
+    /// series generation policy assigned to it is in use, naming the policies and their uses. It
+    /// is also refused before anything is committed while a policy assigned to it, even an unused
+    /// one, could not be assigned to that generator again once the apply is stored, naming each
+    /// such policy and why. This includes an apply that also changes the node's customer away from
+    /// the policy's customer, or removes any of the policy's sensor names from that customer's
+    /// sensors; the sensor names are counted across all of the customer's nodes after the apply,
+    /// so removing a name from this node refuses the change only if no other node of that customer
+    /// still provides it. To make such a change, unassign the affected policy first, or apply the
+    /// Data Store change with the profile unchanged and apply the profile change separately. Only
+    /// once these checks permit the apply do the generator's policies record the new Data Store.
+    /// When the apply changes the node's applied customer or hostname, every Time Series Generator
+    /// holding a time series generation policy any of whose sensors or whose assignee is on the
+    /// node is told that its policies changed.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
     /// customer, or of the customer the new profile gives it, is unfinished, also while it is
@@ -465,7 +467,7 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-            sampling::notify_generators(ctx, updated.generators).await;
+            time_series_generation::notify_generators(ctx, updated.generators).await;
             Ok(updated.node.into())
         } else {
             Ok(current_node.into())
@@ -965,7 +967,8 @@ async fn update_db(
         new.profile.as_ref(),
         system_admin,
     )?;
-    let data_store_changes = sampling::check_data_store_changes(&store, i, &stored, &new)?;
+    let data_store_changes =
+        time_series_generation::check_data_store_changes(&store, i, &stored, &new)?;
     let updated = map
         .update_with_engine_documents(
             i,
@@ -980,7 +983,7 @@ async fn update_db(
     let completed_drafts = completed_empty_drafts(node, &stored, &updated);
 
     // Still under the lock: an assignment checks the policy's uses.
-    sampling::refresh_data_stores(&store, &data_store_changes);
+    time_series_generation::refresh_data_stores(&store, &data_store_changes);
     let generators = if applied_customer_and_hostname(&stored)
         == applied_customer_and_hostname(&updated)
     {
@@ -988,7 +991,7 @@ async fn update_db(
     } else {
         let mut sensor_names = customer_access::event_sensor_names(&stored);
         sensor_names.extend(customer_access::event_sensor_names(&updated));
-        sampling::generators_of_node(&store, i, &sensor_names).unwrap_or_else(|e| {
+        time_series_generation::generators_of_node(&store, i, &sensor_names).unwrap_or_else(|e| {
             error_with_caller!(
                 ctx,
                 "Failed to find the Time Series Generators of node {i} to tell of its customer or hostname change: {}",
@@ -1039,9 +1042,9 @@ fn completed_empty_drafts(
 /// A node an apply stored.
 struct AppliedNode {
     node: review_database::Node,
-    /// The Time Series Generators whose sampling policies the apply changed: those that hold a
-    /// policy whose sensor or assignee is on the node, if the apply changed its applied customer
-    /// or hostname.
+    /// The Time Series Generators whose time series generation policies the apply changed: those
+    /// that hold a policy any of whose sensors or whose assignee is on the node, if the apply
+    /// changed its applied customer or hostname.
     generators: Vec<review_database::ModelInstance>,
     /// The keys of the Semi-supervised Engine agents whose empty draft the apply stored as a
     /// completed `config` that differs from the stored one.
@@ -3337,7 +3340,11 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(
             &self,
@@ -3435,7 +3442,11 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(
             &self,
@@ -5730,7 +5741,11 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(
             &self,

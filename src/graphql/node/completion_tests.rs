@@ -26,7 +26,7 @@ use crate::graphql::{
     AgentManager, SharedAgentManager, TestSchema,
     customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
     model_test_support::TestModel,
-    sampling_test_support::{insert_generator_node, insert_policy, sensor_name},
+    time_series_generation_test_support::{insert_generator_node, insert_policy, sensor_name},
 };
 
 const MUTATIONS: [&str; 2] = ["applyNode", "applyNodeDraft"];
@@ -46,7 +46,7 @@ struct Recorded {
     configs: Vec<String>,
     /// `internal`, `allow` or `block`, per network broadcast.
     networks: Vec<&'static str>,
-    /// The generators of each `sampling_policies_changed`.
+    /// The generators of each `time_series_generation_policies_changed`.
     generators: Vec<Vec<ModelInstance>>,
 }
 
@@ -126,7 +126,7 @@ impl AgentManager for Recorder {
         Ok(HashMap::new())
     }
 
-    async fn sampling_policies_changed(&self, generators: &[ModelInstance]) {
+    async fn time_series_generation_policies_changed(&self, generators: &[ModelInstance]) {
         self.0
             .0
             .lock()
@@ -167,8 +167,9 @@ impl AgentManager for Recorder {
 }
 
 /// A test schema with a node [`HOST`] of customer 1 carrying a Sensor and a
-/// Time Series Generator, and another generator that holds a sampling policy
-/// reading that Sensor, so that a customer change of the node tells it.
+/// Time Series Generator, and another generator that holds a time series
+/// generation policy reading that Sensor, so that a customer change of the node
+/// tells it.
 struct Fixture {
     schema: TestSchema,
     calls: Calls,
@@ -190,7 +191,7 @@ impl Fixture {
             let generator = insert_generator_node(&store, "g.example.com", 1);
             let policy = insert_policy(&store, "on h", 1, &sensor_name(HOST));
             store
-                .sampling_policy_map()
+                .time_series_generation_policy_map()
                 .assign(policy, Some(&generator), true)
                 .expect("assign policy");
             update_node(&store, node_id, |node| {
@@ -342,6 +343,7 @@ fn completed(document: &str) -> String {
     complete_engine_document(
         AgentKind::SemiSupervised,
         document,
+        &|_| None,
         &|_| None,
         CompletionMode::Apply,
     )
@@ -826,6 +828,7 @@ fn unsupervised_error(document: &str) -> DetectionModelsSectionError {
         AgentKind::Unsupervised,
         document,
         &model_type,
+        &|_| None,
         CompletionMode::Apply,
     )
     .expect_err(document)
@@ -1165,6 +1168,7 @@ async fn the_refused_unsupervised_agent_is_found_with_the_stored_model_types() {
     let refused = complete_engine_document(
         AgentKind::SemiSupervised,
         hog_document,
+        &|_| None,
         &|_| None,
         CompletionMode::Apply,
     )

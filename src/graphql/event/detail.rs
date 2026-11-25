@@ -9,7 +9,7 @@ use async_graphql::{Object, SimpleObject, StringNumber, Union};
 use review_protocol::types as protocol;
 
 use super::detection::EndpointRole;
-use crate::graphql::filter::DetectionModel;
+use crate::graphql::{filter::DetectionModel, timestamp::Timestamp};
 
 /// What a detection model found, as its own detail.
 #[derive(Union)]
@@ -34,6 +34,7 @@ pub(super) enum Detail<'a> {
     UnusualDestinationPattern(UnusualDestinationPatternDetail<'a>),
     LabelDbMatch(LabelDbMatchDetail<'a>),
     FarOutlier(FarOutlierDetail<'a>),
+    WindowOutlier(WindowOutlierDetail<'a>),
 }
 
 impl<'a> From<&'a protocol::Detail> for Detail<'a> {
@@ -84,6 +85,9 @@ impl<'a> From<&'a protocol::Detail> for Detail<'a> {
                 Self::LabelDbMatch(LabelDbMatchDetail(detail))
             }
             protocol::Detail::FarOutlier(detail) => Self::FarOutlier(FarOutlierDetail(detail)),
+            protocol::Detail::WindowOutlier(detail) => {
+                Self::WindowOutlier(WindowOutlierDetail(detail))
+            }
         }
     }
 }
@@ -509,4 +513,77 @@ pub(super) struct LdapCredential<'a> {
     user: &'a str,
     /// The password.
     password: &'a str,
+}
+
+/// The detail of a `WindowOutlier` detection event: a window of a time
+/// series that lies far from every cluster of the model.
+pub(super) struct WindowOutlierDetail<'a>(&'a protocol::WindowOutlierDetail);
+
+/// The detail of a `WindowOutlier` detection event: a window of a time
+/// series that lies far from every cluster of the model.
+#[Object]
+impl WindowOutlierDetail<'_> {
+    /// The time series the window belongs to, `<policy id>/<IP>`.
+    async fn time_series_id(&self) -> &str {
+        &self.0.time_series_id
+    }
+
+    /// The start of the window that is the outlier.
+    async fn window_start(&self) -> Timestamp {
+        self.0.window_start.into()
+    }
+
+    /// The cluster whose centroid is nearest to the window.
+    async fn nearest_cluster_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.nearest_cluster_id)
+    }
+
+    /// The Euclidean distance from the window, after the time-series type's
+    /// input transform, to the centroid of the nearest cluster.
+    async fn distance(&self) -> f64 {
+        self.0.distance
+    }
+
+    /// At most 3 slots of the window that differ most from the centroid.
+    async fn top_slots(&self) -> Vec<SlotDeviation<'_>> {
+        self.0.top_slots.iter().map(SlotDeviation).collect()
+    }
+
+    /// The number of `WindowOutlier` detections of this round and this
+    /// policy that the per-round output cap cut.
+    async fn truncated(&self) -> StringNumber<u64> {
+        StringNumber(self.0.truncated)
+    }
+
+    /// The number of sessions in the detection's time window that were not
+    /// requested as PCAP because of the PCAP request cap; null when the
+    /// engine could not look the sessions up.
+    async fn pcap_truncated(&self) -> Option<StringNumber<u64>> {
+        self.0.pcap_truncated.map(StringNumber)
+    }
+}
+
+/// One slot of a `WindowOutlier` window and how far it lies from the nearest
+/// centroid.
+pub(super) struct SlotDeviation<'a>(&'a protocol::SlotDeviation);
+
+/// One slot of a `WindowOutlier` window and how far it lies from the nearest
+/// centroid.
+#[Object]
+impl SlotDeviation<'_> {
+    /// The start of the slot.
+    async fn slot_start(&self) -> Timestamp {
+        self.0.slot_start.into()
+    }
+
+    /// The slot's value, before the time-series type's input transform.
+    async fn value(&self) -> f64 {
+        self.0.value
+    }
+
+    /// The nearest centroid's value for this slot, with the input transform
+    /// reversed.
+    async fn centroid_value(&self) -> f64 {
+        self.0.centroid_value
+    }
 }

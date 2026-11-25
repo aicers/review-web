@@ -1,13 +1,16 @@
 //! The source rule of the timeseries method (RFC 0006 §9, G1): a timeseries
 //! training definition, and a detector of a timeseries model, read the
-//! series of sampling policies, named by their decimal IDs.
+//! series of time series generation policies, named by their decimal IDs.
 //!
 //! Every source must be an assigned policy of the customer, all sources must
 //! have one shape, and they must all be kept in the one Data Store the
 //! definition or the detector reads. The caller holds the engine
 //! configuration lock, as every writer that checks a source does.
 
-use review_database::{SamplingInterval, SamplingKind, SamplingPeriod, SamplingPolicy, Store};
+use review_database::{
+    CounterpartScope, EndpointRole, GroupByUnit, Measure, RawEventKind, SlotSize, Store,
+    TimeSeriesGenerationPolicy, WindowSize,
+};
 
 use super::generator_data_store;
 use crate::graphql::refusal::{RefusalCode, refusal};
@@ -16,37 +19,49 @@ use crate::graphql::refusal::{RefusalCode, refusal};
 /// vectors of the same length and meaning, on the same scale.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::graphql) struct Shape {
-    kind: SamplingKind,
-    column: Option<u32>,
-    interval: SamplingInterval,
-    period: SamplingPeriod,
-    offset: i32,
+    raw_event_kind: RawEventKind,
+    measure: Measure,
+    group_by: Option<EndpointRole>,
+    group_by_unit: GroupByUnit,
+    counterpart_scope: CounterpartScope,
+    slot_size: SlotSize,
+    window_size: WindowSize,
+    utc_offset: i32,
 }
 
 impl Shape {
-    fn of(policy: &SamplingPolicy) -> Self {
+    fn of(policy: &TimeSeriesGenerationPolicy) -> Self {
         Self {
-            kind: policy.kind,
-            column: policy.column,
-            interval: policy.interval,
-            period: policy.period,
-            offset: policy.offset,
+            raw_event_kind: policy.raw_event_kind,
+            measure: policy.measure,
+            group_by: policy.group_by,
+            group_by_unit: policy.group_by_unit,
+            counterpart_scope: policy.counterpart_scope,
+            slot_size: policy.slot_size,
+            window_size: policy.window_size,
+            utc_offset: policy.utc_offset,
         }
     }
 
-    /// Returns the name of the first attribute in which `other` differs from
+    /// Returns the name of the first field in which `other` differs from
     /// this shape, or `None` if it does not.
     fn difference(&self, other: &Self) -> Option<&'static str> {
-        if self.kind != other.kind {
-            Some("kind")
-        } else if self.column != other.column {
-            Some("column")
-        } else if self.interval != other.interval {
-            Some("interval")
-        } else if self.period != other.period {
-            Some("period")
-        } else if self.offset != other.offset {
-            Some("offset")
+        if self.raw_event_kind != other.raw_event_kind {
+            Some("raw_event_kind")
+        } else if self.measure != other.measure {
+            Some("measure")
+        } else if self.group_by != other.group_by {
+            Some("group_by")
+        } else if self.group_by_unit != other.group_by_unit {
+            Some("group_by_unit")
+        } else if self.counterpart_scope != other.counterpart_scope {
+            Some("counterpart_scope")
+        } else if self.slot_size != other.slot_size {
+            Some("slot_size")
+        } else if self.window_size != other.window_size {
+            Some("window_size")
+        } else if self.utc_offset != other.utc_offset {
+            Some("utc_offset")
         } else {
             None
         }
@@ -57,7 +72,7 @@ impl Shape {
 #[derive(Clone, Copy, Debug)]
 pub(in crate::graphql) enum ShapeReference<'a> {
     /// The shape of the first source: a definition whose model is not yet
-    /// trained on sampling policies.
+    /// trained on time series generation policies.
     FirstSource,
     /// The shape of the policies the model `name` was trained on, as
     /// [`trained_shape`] reads it; `None` if none of them is stored, and the
@@ -109,7 +124,7 @@ pub(in crate::graphql) fn trained_shape<'a>(
     name: &'a str,
     trained_sources: &[String],
 ) -> anyhow::Result<ShapeReference<'a>> {
-    let map = store.sampling_policy_map();
+    let map = store.time_series_generation_policy_map();
     let mut shape = None;
     for source in trained_sources {
         let Some(id) = policy_id(source) else {
@@ -129,13 +144,15 @@ pub(in crate::graphql) fn trained_shape<'a>(
 ///
 /// In this order:
 ///
-/// 1. Every source is the decimal ID of a sampling policy of the customer
-///    that has an assignee; otherwise `SOURCE_NOT_ALLOWED` at the source.
-/// 2. Every source has the shape `reference` gives: the same kind, column,
-///    interval, period and offset; otherwise `SOURCES_INCOMPATIBLE` at the
-///    first source that differs. A model whose shape is unknown gives none
-///    a source can have, so any source is refused with
-///    `SOURCES_INCOMPATIBLE` at `sources[0]`.
+/// 1. Every source is the decimal ID of a time series generation policy of
+///    the customer that has an assignee; otherwise `SOURCE_NOT_ALLOWED` at
+///    the source.
+/// 2. Every source has the shape `reference` gives: the same raw event
+///    kind, measure, grouping endpoint, grouping unit, counterpart scope,
+///    slot size, window size and UTC offset; otherwise
+///    `SOURCES_INCOMPATIBLE` at the first source that differs. A model whose
+///    shape is unknown gives none a source can have, so any source is
+///    refused with `SOURCES_INCOMPATIBLE` at `sources[0]`.
 /// 3. Every source's assignee has a non-empty `giganto_name` in its applied
 ///    configuration; otherwise `DATA_STORE_NOT_INSTALLED` at
 ///    `data_store.server_name`.
@@ -155,7 +172,7 @@ pub(in crate::graphql) fn check_policy_sources(
     reference: ShapeReference<'_>,
     server_name: &str,
 ) -> anyhow::Result<Option<SourceRefusal>> {
-    let map = store.sampling_policy_map();
+    let map = store.time_series_generation_policy_map();
     let mut policies = Vec::with_capacity(sources.len());
     for (j, source) in sources.iter().enumerate() {
         let not_allowed = |message: String| SourceRefusal {
@@ -168,14 +185,14 @@ pub(in crate::graphql) fn check_policy_sources(
             Some(id) => map.get_by_id(id)?,
             None => None,
         };
-        let Some(policy) = policy.filter(|policy| policy.customer_id == Some(customer_id)) else {
+        let Some(policy) = policy.filter(|policy| policy.customer_id == customer_id) else {
             return Ok(Some(not_allowed(format!(
-                "{source:?} is not a sampling policy of customer {customer_id}"
+                "{source:?} is not a time series generation policy of customer {customer_id}"
             ))));
         };
         if policy.assignee.is_none() {
             return Ok(Some(not_allowed(format!(
-                "sampling policy {} has no assignee",
+                "time series generation policy {} has no assignee",
                 policy.id
             ))));
         }
@@ -194,8 +211,8 @@ pub(in crate::graphql) fn check_policy_sources(
                 return Ok(Some(SourceRefusal {
                     code: RefusalCode::DataStoreNotInstalled,
                     message: format!(
-                        "the Time Series Generator of sampling policy {} has no applied Data \
-                         Store",
+                        "the Time Series Generator of time series generation policy {} has no \
+                         applied Data Store",
                         policy.id
                     ),
                     source: None,
@@ -208,14 +225,15 @@ pub(in crate::graphql) fn check_policy_sources(
     for (policy, giganto_name) in policies.iter().zip(&generators) {
         let message = if policy.data_store.as_deref() != Some(server_name) {
             format!(
-                "sampling policy {} keeps its series in Data Store {:?}, not {server_name:?}",
+                "time series generation policy {} keeps its series in Data Store {:?}, not \
+                 {server_name:?}",
                 policy.id,
                 policy.data_store.as_deref().unwrap_or_default()
             )
         } else if giganto_name != server_name {
             format!(
-                "the Time Series Generator of sampling policy {} writes to Data Store \
-                 {giganto_name:?}, not {server_name:?}",
+                "the Time Series Generator of time series generation policy {} writes to Data \
+                 Store {giganto_name:?}, not {server_name:?}",
                 policy.id
             )
         } else {
@@ -235,29 +253,32 @@ pub(in crate::graphql) fn check_policy_sources(
 /// `policies` the `sources` name, in order; `None` if every one has the shape
 /// `reference` gives.
 fn check_shape(
-    policies: &[SamplingPolicy],
+    policies: &[TimeSeriesGenerationPolicy],
     sources: &[String],
     reference: ShapeReference<'_>,
 ) -> Option<SourceRefusal> {
     let (shape, origin) = match reference {
         ShapeReference::FirstSource => {
             let first = policies.first()?;
-            (Shape::of(first), format!("sampling policy {}", first.id))
+            (
+                Shape::of(first),
+                format!("time series generation policy {}", first.id),
+            )
         }
         ShapeReference::Model {
             name,
             shape: Some(shape),
         } => (
             shape,
-            format!("the sampling policies model {name:?} was trained on"),
+            format!("the time series generation policies model {name:?} was trained on"),
         ),
         ShapeReference::Model { name, shape: None } => {
             let first = sources.first()?;
             return Some(SourceRefusal {
                 code: RefusalCode::SourcesIncompatible,
                 message: format!(
-                    "none of the sampling policies model {name:?} was trained on is stored, so \
-                     the shape its sources must have is unknown"
+                    "none of the time series generation policies model {name:?} was trained on \
+                     is stored, so the shape its sources must have is unknown"
                 ),
                 source: Some(0),
                 value: first.clone(),
@@ -272,7 +293,7 @@ fn check_shape(
     Some(SourceRefusal {
         code: RefusalCode::SourcesIncompatible,
         message: format!(
-            "sampling policy {} differs in {attribute} from {origin}",
+            "time series generation policy {} differs in {attribute} from {origin}",
             policy.id
         ),
         source: Some(j),
@@ -293,7 +314,10 @@ pub(in crate::graphql) fn policy_id(source: &str) -> Option<u32> {
 /// Returns the non-empty `giganto_name` in the applied configuration of the
 /// assignee of `policy`; `None` if it has no assignee, its agent is gone, or
 /// its applied configuration has none.
-fn applied_giganto_name(store: &Store, policy: &SamplingPolicy) -> anyhow::Result<Option<String>> {
+fn applied_giganto_name(
+    store: &Store,
+    policy: &TimeSeriesGenerationPolicy,
+) -> anyhow::Result<Option<String>> {
     let Some(assignee) = policy.assignee.as_ref() else {
         return Ok(None);
     };

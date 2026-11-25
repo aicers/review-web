@@ -2159,3 +2159,111 @@ async fn a_stored_completed_config_keeps_its_data_store_pair() {
     ok(f.apply(f.engine_a.node_id).await);
     assert_eq!(f.stored_sections(), Some(sections(DEFAULT_SECTIONS)));
 }
+
+/// An applied detector of a model of a time-series type carries the sensors
+/// of the policies its sources name in `source_sensors`; its draft is stored
+/// as written, and recompleting the applied documents at startup changes
+/// nothing.
+#[tokio::test]
+async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
+    use crate::graphql::{
+        model::TIMESERIES_KIND,
+        time_series_generation_test_support::{
+            PolicyShape, generator_config, insert_generator_node_with, insert_shaped_policy,
+            sensor_name,
+        },
+    };
+
+    let f = fixture().await;
+    let generator_sensor = sensor_name("gen-a.example.com");
+    let policies = {
+        let store = f.store();
+        let generator = insert_generator_node_with(
+            &store,
+            "gen-a.example.com",
+            A,
+            Some(generator_config(&f.server_name)),
+        );
+        let sensors: [&[&str]; 2] = [&[&f.sensor_a], &[&generator_sensor, &f.sensor_a]];
+        let policies = [("first", sensors[0]), ("second", sensors[1])].map(|(name, sensors)| {
+            let id = insert_shaped_policy(&store, name, A, sensors, PolicyShape::default());
+            store
+                .time_series_generation_policy_map()
+                .assign(id, Some(&generator), true)
+                .expect("assign policy");
+            id
+        });
+        TestModel {
+            instance: f.engine_a.clone(),
+            kind: TIMESERIES_KIND,
+            clustering_model_type: ClusteringModelTypeRef::Catalog {
+                id: "server_daily_tls".to_string(),
+                version: 1,
+            },
+            trained_sources: policies.iter().map(ToString::to_string).collect(),
+            ..TestModel::new("tls-a", A)
+        }
+        .replace(&store);
+        policies
+    };
+    let sources = policies.map(|id| id.to_string());
+    let document = f.doc("tls-a", &[&sources[0], &sources[1]], "");
+
+    ok(f.save(&f.engine_a, Some(&document)).await);
+    let agent = f.agent(&f.engine_a);
+    assert_eq!(
+        agent.draft.as_ref().map(AsRef::as_ref),
+        Some(document.as_str()),
+        "a draft is stored as written"
+    );
+    assert_eq!(agent.config, None);
+
+    ok(f.apply(f.engine_a.node_id).await);
+    let applied = f
+        .agent(&f.engine_a)
+        .config
+        .map(|config| config.as_ref().to_string())
+        .expect("an applied document");
+    let expected_sensors = format!(
+        "source_sensors = {{ \"{}\" = [{:?}], \"{}\" = [{:?}, {:?}] }}",
+        sources[0], f.sensor_a, sources[1], generator_sensor, f.sensor_a
+    );
+    assert!(applied.contains(&expected_sensors), "{applied}");
+    let completed = complete_engine_document(
+        AgentKind::Unsupervised,
+        &document,
+        &|_| {
+            Some(ClusteringModelTypeRef::Catalog {
+                id: "server_daily_tls".to_string(),
+                version: 1,
+            })
+        },
+        &|id| match policies.iter().position(|&policy| policy == id) {
+            Some(0) => Some(vec![f.sensor_a.clone()]),
+            Some(_) => Some(vec![generator_sensor.clone(), f.sensor_a.clone()]),
+            None => None,
+        },
+        CompletionMode::Apply,
+    )
+    .expect("completes");
+    assert_eq!(applied, completed);
+    assert_eq!(
+        f.agent(&f.engine_a).draft.as_ref().map(AsRef::as_ref),
+        Some(document.as_str())
+    );
+
+    // The startup recompletion finds the applied document complete.
+    assert_eq!(
+        f.store()
+            .recomplete_applied_documents()
+            .expect("recomplete")
+            .len(),
+        0
+    );
+    assert_eq!(
+        f.agent(&f.engine_a)
+            .config
+            .map(|config| config.as_ref().to_string()),
+        Some(applied)
+    );
+}

@@ -44,6 +44,16 @@ impl CapturedEvents {
         (events, guard)
     }
 
+    /// Returns the message of every captured event, in order.
+    pub(super) fn messages(&self) -> Vec<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|fields| fields.get("message").cloned())
+            .collect()
+    }
+
     pub(super) fn assert_fields(&self, message: &str, caller: &str, role: Option<&str>) {
         let events = self.events.lock().unwrap();
         let matching: Vec<_> = events

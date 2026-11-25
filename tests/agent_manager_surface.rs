@@ -108,7 +108,11 @@ impl AgentManager for OutsideAgentManager {
         Ok(HashMap::new())
     }
 
-    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+    async fn time_series_generation_policies_changed(
+        &self,
+        _generators: &[review_database::ModelInstance],
+    ) {
+    }
 
     async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
         anyhow::bail!("{hostname} is unreachable")
@@ -247,4 +251,51 @@ fn the_payload_round_trips_through_serde() {
             .len(),
         0
     );
+}
+
+/// The policies a generator is given are built and listed from outside the
+/// crate, with review-protocol's types for the spec and review-web's slot and
+/// window sizes, as the Central Manager converting them does.
+#[test]
+fn time_series_generation_policies_are_listed_and_read_outside_the_crate() {
+    use review_protocol::types::{
+        CounterpartScope, EndpointRole, GroupByUnit, Measure, RawEventKind, TimeSeriesTypeRef,
+    };
+    use review_web::graphql::{
+        SlotSize, TimeSeriesGenerationPolicy, WindowSize,
+        time_series_generation_policies_for_generator,
+    };
+
+    let db_dir = tempfile::tempdir().unwrap();
+    let backup_dir = tempfile::tempdir().unwrap();
+    let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+    let generator = review_database::ModelInstance {
+        node_id: 0,
+        agent_key: "crusher".to_string(),
+    };
+    let listed: Vec<TimeSeriesGenerationPolicy> =
+        time_series_generation_policies_for_generator(&store, &generator).unwrap();
+    assert_eq!(listed, Vec::new());
+
+    let policy = TimeSeriesGenerationPolicy {
+        id: 3,
+        customer_id: CUSTOMER_ID,
+        raw_event_kind: RawEventKind::Tls,
+        measure: Measure::Count,
+        group_by: Some(EndpointRole::Destination),
+        group_by_unit: GroupByUnit::Ip,
+        counterpart_scope: CounterpartScope::Any,
+        slot_size: SlotSize::FiveMinutes,
+        window_size: WindowSize::OneDay,
+        utc_offset: 32_400,
+        src_ip: None,
+        dst_ip: None,
+        sensors: vec!["piglet.a.example.com".to_string()],
+        time_series_type: Some(TimeSeriesTypeRef {
+            id: "server_daily_tls".to_string(),
+            version: 1,
+        }),
+    };
+    assert_eq!(policy.clone(), policy);
+    assert_eq!(policy.sensors.len(), 1);
 }

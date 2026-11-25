@@ -2,14 +2,15 @@
 //!
 //! The customer networks table holds a copy of every customer's owned networks
 //! as the writer last sent them, and is the source of the internal network list
-//! hog receives. It keeps no other customer data.
+//! hog receives and of the internal networks a Time Series Generator is sent
+//! with each policy. It keeps no other customer data.
 
 use std::collections::HashSet;
 
 use async_graphql::{
     Context, Enum, ErrorExtensions, InputObject, Object, Result, StringNumber, types::ID,
 };
-use review_database::{self as database, ReplaceOutcome, Store};
+use review_database::{self as database, ModelInstance, ReplaceOutcome, Store};
 use tracing::{error, info};
 
 use super::customer::{
@@ -18,6 +19,7 @@ use super::customer::{
 };
 use super::customer_access::check_customer_membership;
 use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
+use super::time_series_generation::{generators_of_customer, notify_generators};
 use super::{Role, RoleGuard, agent_lookup_keys_by_customer_id};
 use crate::graphql::timestamp::Timestamp;
 use crate::{error_with_caller, info_with_caller};
@@ -62,6 +64,11 @@ impl CustomerNetworkMutation {
     /// none. A `revision` lower than the stored one is refused with the error
     /// code `STALE_REVISION`, whose `storedRevision` extension holds the stored
     /// revision.
+    ///
+    /// Once the networks are stored, every Time Series Generator holding an
+    /// assigned time series generation policy of the customer is told that
+    /// its policies changed, since a policy is sent with its customer's
+    /// internal networks.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn replace_customer_networks(
@@ -82,7 +89,7 @@ impl CustomerNetworkMutation {
             updated_at: jiff::Timestamp::now(),
         };
         let merged = set.merged_group();
-        let push = {
+        let (push, generators) = {
             let store = crate::graphql::get_store(ctx)?;
             let outcome =
                 store
@@ -98,43 +105,51 @@ impl CustomerNetworkMutation {
             );
             // hog restarts its workers on every push, so a write that leaves
             // the merged group as it was is not pushed.
-            if previous.is_some_and(|previous| previous.merged_group() == merged) {
+            let push = if previous.is_some_and(|previous| previous.merged_group() == merged) {
                 None
             } else {
                 hog_push(ctx, &store, customer_id, merged)
-            }
+            };
+            (push, policy_generators(ctx, &store, customer_id))
         };
         if let Some(push) = push {
             send_push(ctx, customer_id, push).await;
         }
+        notify_generators(ctx, generators).await;
 
         Ok(StringNumber(revision))
     }
 
     /// Removes the networks the customer owns, returning whether any were
     /// stored.
+    ///
+    /// Once stored networks are removed, every Time Series Generator holding
+    /// an assigned time series generation policy of the customer is told
+    /// that its policies changed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_customer_networks(&self, ctx: &Context<'_>, customer_id: ID) -> Result<bool> {
         check_customer_membership(ctx, &customer_id)?;
         let customer_id = parse_customer_id(&customer_id)?;
 
-        let push = {
+        let (push, generators) = {
             let store = crate::graphql::get_store(ctx)?;
             if !store.customer_networks_map().remove(customer_id)? {
                 return Ok(false);
             }
             info_with_caller!(ctx, "Networks of customer {customer_id} have been removed");
-            hog_push(
+            let push = hog_push(
                 ctx,
                 &store,
                 customer_id,
                 database::HostNetworkGroup::default(),
-            )
+            );
+            (push, policy_generators(ctx, &store, customer_id))
         };
         if let Some(push) = push {
             send_push(ctx, customer_id, push).await;
         }
+        notify_generators(ctx, generators).await;
 
         Ok(true)
     }
@@ -338,6 +353,27 @@ pub(super) fn hog_agent_lookup_keys(
     }
 }
 
+/// Returns the Time Series Generators holding an assigned time series
+/// generation policy of the customer, each once.
+///
+/// A policy is sent with its customer's internal networks, so every such
+/// generator is told when the stored networks change, whether or not the
+/// merged group hog receives changes: a change of a network's type alone
+/// changes which addresses are internal. The networks are already stored
+/// when this runs, so a failure to read the policies is logged rather than
+/// failing the call; the generators pull their policies again when they
+/// reconnect.
+fn policy_generators(ctx: &Context<'_>, store: &Store, customer_id: u32) -> Vec<ModelInstance> {
+    generators_of_customer(store, customer_id).unwrap_or_else(|e| {
+        error_with_caller!(
+            ctx,
+            "Failed to find the Time Series Generators of customer {customer_id} to tell that \
+             its networks changed: {e:#}"
+        );
+        Vec::new()
+    })
+}
+
 /// Sends `push`, logging a failure rather than returning it: the networks are
 /// already stored, and hog pulls the list again when it reconnects.
 async fn send_push(ctx: &Context<'_>, customer_id: u32, push: NetworksTargetAgentLookupKeysPair) {
@@ -351,12 +387,15 @@ async fn send_push(ctx: &Context<'_>, customer_id: u32, push: NetworksTargetAgen
 
 #[cfg(test)]
 mod tests {
-    use review_database::{HostNetworkGroup, OwnedNetwork, event::NetworkType};
+    use review_database::{HostNetworkGroup, ModelInstance, OwnedNetwork, event::NetworkType};
     use serde_json::{Value, json};
 
     use crate::graphql::{
         Role, TestSchema, get_customer_networks,
         push_test_support::{Push, group, insert_node, recording_schema},
+        time_series_generation_test_support::{
+            DeliveryRecorder, insert_generator_node, insert_policy, sensor_name,
+        },
     };
 
     fn replace(customer_id: &str, revision: &str, networks: &str) -> String {
@@ -933,6 +972,101 @@ mod tests {
                 &["172.16.0.0/12"],
                 &[("10.1.0.1", "10.1.0.9")]
             )
+        );
+    }
+
+    /// Stores a fixed policy `name` of `customer_id` reading the sensor of
+    /// node `sensor_host`, and assigns it to `generator` unless that is
+    /// `None`.
+    fn policy_of(
+        schema: &TestSchema,
+        name: &str,
+        customer_id: u32,
+        sensor_host: &str,
+        generator: Option<&ModelInstance>,
+    ) {
+        let store = schema.store();
+        let id = insert_policy(&store, name, customer_id, &sensor_name(sensor_host));
+        let map = store.time_series_generation_policy_map();
+        match generator {
+            Some(generator) => map.assign(id, Some(generator), true),
+            None => map.fix(id),
+        }
+        .expect("store the policy");
+    }
+
+    #[tokio::test]
+    async fn a_network_write_tells_the_generators_of_the_customers_policies() {
+        let (agent_manager, deliveries) = DeliveryRecorder::boxed();
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
+        let first = insert_generator_node(&schema.store(), "g1.example.com", 7);
+        let second = insert_generator_node(&schema.store(), "g2.example.com", 7);
+        let other = insert_generator_node(&schema.store(), "d.example.com", 8);
+        policy_of(&schema, "a1", 7, "g1.example.com", Some(&first));
+        policy_of(&schema, "a2", 7, "g2.example.com", Some(&first));
+        policy_of(&schema, "b", 7, "g2.example.com", Some(&second));
+        policy_of(&schema, "unassigned", 7, "g1.example.com", None);
+        policy_of(&schema, "d", 8, "d.example.com", Some(&other));
+        let generators_of_7 = vec![first.clone(), second.clone()];
+
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        assert_eq!(deliveries.calls(), std::slice::from_ref(&generators_of_7));
+
+        // Only the type changes, and the generators are still told.
+        let res = schema
+            .execute_as_system_admin(&replace("7", "2", &network("office", "EXTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "2" }));
+        assert_eq!(
+            deliveries.calls(),
+            [generators_of_7.clone(), generators_of_7.clone()]
+        );
+
+        // A stale write tells nobody.
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(error_message(&res), "stale revision");
+        assert_eq!(deliveries.calls().len(), 2);
+
+        let res = schema.execute_as_system_admin(REMOVE_7).await;
+        assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
+        assert_eq!(
+            deliveries.calls(),
+            [
+                generators_of_7.clone(),
+                generators_of_7.clone(),
+                generators_of_7.clone()
+            ]
+        );
+
+        // Removing nothing tells nobody.
+        let res = schema.execute_as_system_admin(REMOVE_7).await;
+        assert_eq!(data(res), json!({ "removeCustomerNetworks": false }));
+        assert_eq!(deliveries.calls().len(), 3);
+
+        // A customer without an assigned policy tells nobody.
+        let res = schema
+            .execute_as_system_admin(&replace("9", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        assert_eq!(deliveries.calls().len(), 3);
+
+        // Customer 8's generator is told only of customer 8's networks.
+        let res = schema
+            .execute_as_system_admin(&replace("8", "1", &network("office", "INTRANET", OFFICE)))
+            .await;
+        assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
+        assert_eq!(deliveries.calls().last(), Some(&vec![other]));
+        assert!(
+            deliveries
+                .calls()
+                .iter()
+                .take(3)
+                .all(|call| call == &generators_of_7)
         );
     }
 }

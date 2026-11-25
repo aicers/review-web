@@ -1,5 +1,5 @@
-//! Whether a sampling policy's series reach its Data Store (RFC 0006 §9,
-//! G1).
+//! Whether a time series generation policy's series reach its Data Store
+//! (RFC 0006 §9, G1).
 //!
 //! The Data Store reports a time-series source as served whether or not a
 //! series exists, so only the Central Manager can tell that a policy's
@@ -9,26 +9,26 @@
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use async_graphql::{Context, Enum, Result, SimpleObject};
-use review_database::{SamplingPolicy, Store};
+use review_database::{Store, TimeSeriesGenerationPolicy};
 
 use super::{policy_id, withholding_reason};
 use crate::graphql::{
     SharedAgentManager, customer_access::customer_sensor_names, gen_agent_lookup_key, get_store,
 };
 
-/// Whether the series of a sampling policy are being produced, as far as the
-/// Central Manager can tell.
+/// Whether the series of a time series generation policy are being produced, as
+/// far as the Central Manager can tell.
 ///
-/// An assigned policy whose generator is online has no window yet for up to
-/// one period and the generator's grace after it is assigned, which is
-/// normal and not told apart here.
+/// An assigned policy whose generator is online has no window yet for up to one
+/// window and the generator's grace after it is assigned, which is normal and
+/// not told apart here.
 #[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
-pub(in crate::graphql) enum SamplingPolicyDelivery {
+pub(in crate::graphql) enum TimeSeriesGenerationPolicyDelivery {
     /// The policy has no assignee.
     Unassigned,
     /// The policy is assigned, but its generator is not given it: the
-    /// generator's node is not of the policy's customer, or the policy's
-    /// `node` is not a sensor name of that customer.
+    /// generator's node is not of the policy's customer, or an entry of the
+    /// policy's `sensors` is not a sensor name of that customer.
     Withheld,
     /// The policy's generator is not connected.
     AssigneeOffline,
@@ -41,15 +41,15 @@ pub(in crate::graphql) enum SamplingPolicyDelivery {
 pub(in crate::graphql) struct SourceDelivery {
     /// The source, as the definition or the detector names it.
     source: String,
-    /// The delivery of the sampling policy the source names, or null for a
-    /// source that is not a sampling policy.
-    delivery: Option<SamplingPolicyDelivery>,
+    /// The delivery of the time series generation policy the source names, or
+    /// null for a source that is not a time series generation policy.
+    delivery: Option<TimeSeriesGenerationPolicyDelivery>,
 }
 
 /// What the store tells of a policy's delivery.
 enum Stored {
     /// The delivery, decided without asking the agent manager.
-    Decided(SamplingPolicyDelivery),
+    Decided(TimeSeriesGenerationPolicyDelivery),
     /// The policy is given to its generator, which is online if the hostname
     /// of its node lists its agent lookup key.
     Given {
@@ -66,8 +66,8 @@ enum Stored {
 /// tell which agents are online.
 pub(in crate::graphql) async fn policy_delivery(
     ctx: &Context<'_>,
-    policy: &SamplingPolicy,
-) -> Result<SamplingPolicyDelivery> {
+    policy: &TimeSeriesGenerationPolicy,
+) -> Result<TimeSeriesGenerationPolicyDelivery> {
     let stored = {
         let store = get_store(ctx)?;
         stored_delivery(&store, policy, &mut HashMap::new())?
@@ -82,10 +82,10 @@ pub(in crate::graphql) async fn policy_delivery(
 /// Returns the delivery of each of `sources`, in order, read for the
 /// customer `customer_id`.
 ///
-/// A source is a sampling policy only if `timeseries`, the method of the
-/// definition or the model of the detector naming it is timeseries, and it
-/// is the decimal ID of a policy of the customer; any other source has no
-/// delivery.
+/// A source is a time series generation policy only if `timeseries`, the
+/// method of the definition or the model of the detector naming it is
+/// timeseries, and it is the decimal ID of a policy of the customer; any
+/// other source has no delivery.
 ///
 /// # Errors
 ///
@@ -99,14 +99,14 @@ pub(in crate::graphql) async fn source_deliveries(
 ) -> Result<Vec<SourceDelivery>> {
     let stored = if timeseries {
         let store = get_store(ctx)?;
-        let map = store.sampling_policy_map();
+        let map = store.time_series_generation_policy_map();
         let mut sensors = HashMap::new();
         let mut stored = Vec::with_capacity(sources.len());
         for source in sources {
             let policy = match policy_id(source) {
                 Some(id) => map
                     .get_by_id(id)?
-                    .filter(|policy| policy.customer_id == Some(customer_id)),
+                    .filter(|policy| policy.customer_id == customer_id),
                 None => None,
             };
             stored.push(match policy {
@@ -134,11 +134,13 @@ pub(in crate::graphql) async fn source_deliveries(
 /// `sensors` caches the sensor names of each customer read so far.
 fn stored_delivery(
     store: &Store,
-    policy: &SamplingPolicy,
+    policy: &TimeSeriesGenerationPolicy,
     sensors: &mut HashMap<u32, HashSet<String>>,
 ) -> Result<Stored> {
     let Some(assignee) = policy.assignee.as_ref() else {
-        return Ok(Stored::Decided(SamplingPolicyDelivery::Unassigned));
+        return Ok(Stored::Decided(
+            TimeSeriesGenerationPolicyDelivery::Unassigned,
+        ));
     };
     let profile = store
         .node_map()
@@ -154,7 +156,9 @@ fn stored_delivery(
         None => &none,
     };
     if withholding_reason(policy, customer_id, customer_sensors).is_some() {
-        return Ok(Stored::Decided(SamplingPolicyDelivery::Withheld));
+        return Ok(Stored::Decided(
+            TimeSeriesGenerationPolicyDelivery::Withheld,
+        ));
     }
     let hostname = profile.map_or_default(|profile| profile.hostname);
     let agent_lookup_key = gen_agent_lookup_key(&assignee.agent_key, &hostname);
@@ -169,7 +173,7 @@ fn stored_delivery(
 async fn resolve(
     ctx: &Context<'_>,
     stored: Vec<Option<Stored>>,
-) -> Result<Vec<Option<SamplingPolicyDelivery>>> {
+) -> Result<Vec<Option<TimeSeriesGenerationPolicyDelivery>>> {
     let online = if stored
         .iter()
         .any(|stored| matches!(stored, Some(Stored::Given { .. })))
@@ -194,9 +198,9 @@ async fn resolve(
                         .get(&hostname)
                         .is_some_and(|apps| apps.iter().any(|(key, _)| *key == agent_lookup_key));
                     if is_online {
-                        SamplingPolicyDelivery::AssigneeOnline
+                        TimeSeriesGenerationPolicyDelivery::AssigneeOnline
                     } else {
-                        SamplingPolicyDelivery::AssigneeOffline
+                        TimeSeriesGenerationPolicyDelivery::AssigneeOffline
                     }
                 }
             })

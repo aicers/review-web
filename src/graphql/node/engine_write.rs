@@ -28,6 +28,7 @@ use crate::graphql::{
         indicator_not_allowed, kept_pairs, model_not_of_instance, retired_id,
     },
     refusal::{RefusalCode, refusal},
+    time_series_generation::policy_sensors,
     unsupervised::data_store_addrs,
 };
 
@@ -499,7 +500,9 @@ pub(super) fn store_refusal(
 ///
 /// The clustering model type of a model an Unsupervised Engine document
 /// names is that of the stored model record of that name, and none when
-/// there is no record or it cannot be read. The completed documents only
+/// there is no record or it cannot be read; the sensors of a policy are those
+/// of the stored policy, and none when the policies cannot be read. The
+/// completed documents only
 /// attribute the refusal; none is stored.
 pub(super) fn completion_refusal(
     error: &anyhow::Error,
@@ -514,6 +517,8 @@ pub(super) fn completion_refusal(
             .flatten()
             .map(|model| model.clustering_model_type)
     };
+    let sensors = policy_sensors(store).unwrap_or_default();
+    let policy_sensors = |id: u32| sensors.get(&id).cloned();
     let fails_alike = |agent: &&Agent| {
         matches!(
             agent.kind,
@@ -523,6 +528,7 @@ pub(super) fn completion_refusal(
                 agent.kind,
                 config.as_ref(),
                 &model_type,
+                &policy_sensors,
                 CompletionMode::Apply,
             )
             .err()

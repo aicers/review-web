@@ -20,7 +20,7 @@ use super::{
     gen_agent_lookup_key,
     model::TIMESERIES_KIND,
     refusal::{RefusalCode, refusal},
-    sampling::{SourceDelivery, source_deliveries},
+    time_series_generation::{SourceDelivery, source_deliveries},
     training::{TargetInstance, relay_refusal, resolve_instance},
 };
 use crate::graphql::timestamp::Timestamp;
@@ -338,10 +338,10 @@ impl DetectorStatus {
 
 #[ComplexObject]
 impl DetectorStatus {
-    /// The delivery of each source of the applied document's detector, in
-    /// its order; empty if the applied document has no detector of this id.
-    /// Only a timeseries model's sources are sampling policies; any other
-    /// source's `delivery` is null.
+    /// The delivery of each source of the applied document's detector, in its
+    /// order; empty if the applied document has no detector of this id. Only a
+    /// timeseries model's sources are time series generation policies; any
+    /// other source's `delivery` is null.
     async fn source_delivery(&self, ctx: &Context<'_>) -> Result<Vec<SourceDelivery>> {
         source_deliveries(
             ctx,

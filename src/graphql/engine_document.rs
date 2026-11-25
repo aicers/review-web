@@ -31,7 +31,7 @@ use super::{
     customer_access::{customer_source_names, model_by_name},
     model::TIMESERIES_KIND,
     refusal::{RefusalCode, refusal},
-    sampling::{check_policy_sources, trained_shape},
+    time_series_generation::{check_policy_sources, policy_sensors, trained_shape},
     toml_refusal::parse_refusal,
     training::is_customer_indicator,
     unsupervised::{DataStore, check_data_store},
@@ -301,9 +301,9 @@ impl EngineDocument {
     /// of the `[csv]` table of the model's trained definition (none if it has
     /// no such list), and, in `db`, a stored label DB.
     ///
-    /// A detector of a timeseries model reads sampling policies of the
-    /// customer, as [`check_policy_sources`] checks them, each of the shape
-    /// of the policies the model was trained on; while none of those is
+    /// A detector of a timeseries model reads time series generation policies
+    /// of the customer, as [`check_policy_sources`] checks them, each of the
+    /// shape of the policies the model was trained on; while none of those is
     /// stored, the shape is unknown and any source is refused. Any other
     /// detector reads source names of the customer.
     ///
@@ -371,7 +371,7 @@ impl EngineDocument {
                     shape,
                     &detector.data_store.server_name,
                 )
-                .map_err(|e| format!("cannot read sampling policies: {e:#}"))?;
+                .map_err(|e| format!("cannot read time series generation policies: {e:#}"))?;
                 if let Some(refused) = refused {
                     let id = detector.id;
                     return Err(refused
@@ -449,10 +449,13 @@ impl EngineDocument {
             }
         }
         let model_type = |name: &str| types.get(name).cloned();
+        let sensors = policy_sensors(store)?;
+        let policy_sensors = |id: u32| sensors.get(&id).cloned();
         Ok(complete_engine_document(
             AgentKind::Unsupervised,
             text,
             &model_type,
+            &policy_sensors,
             CompletionMode::Apply,
         )
         .err()
@@ -470,12 +473,15 @@ impl EngineDocument {
 /// refusal of the database write, so the refusal does not depend on which
 /// layer reports it.
 fn check_detectors_shape(text: &str) -> Result<()> {
-    // The shape is checked before any detector is, so no model type is needed.
+    // The shape is checked before any detector is, so no model type or
+    // policy is needed.
     let no_type = |_: &str| None;
+    let no_policy = |_: u32| None;
     match complete_engine_document(
         AgentKind::Unsupervised,
         text,
         &no_type,
+        &no_policy,
         CompletionMode::Apply,
     ) {
         Err(refused @ DetectionModelsSectionError::DetectorsNotAnArrayOfTables) => {

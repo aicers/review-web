@@ -258,7 +258,11 @@ mod tests {
             unimplemented!("this stub answers the endpoint read only")
         }
 
-        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
+        async fn time_series_generation_policies_changed(
+            &self,
+            _generators: &[review_database::ModelInstance],
+        ) {
+        }
 
         async fn capabilities(
             &self,
