@@ -344,6 +344,7 @@ mod tests {
         EndpointRefusalCode, SharedEndpointManager,
     };
     use crate::graphql::TestSchema;
+    use crate::graphql::logging_test_support::CapturedEvents;
 
     const CUSTOMER_ENDPOINT_ID: &str = "0b5d3c1e-7a4f-4e8b-9c2d-1f3a5b7c9d0e";
     const ATTEMPT_ID: &str = "6f1e2d3c-4b5a-4987-8a6b-5c4d3e2f1a0b";
@@ -809,9 +810,8 @@ mod tests {
             &manager,
         )
         .await;
-        let [error] = response.errors.as_slice() else {
-            panic!("one error expected: {:?}", response.errors);
-        };
+        assert_eq!(response.errors.len(), 1, "{:?}", response.errors);
+        let error = &response.errors[0];
         assert_eq!(error.message, "no senta endpoint install \"install-1\"");
         assert!(error.extensions.is_none(), "{error:?}");
     }
@@ -1044,5 +1044,84 @@ mod tests {
         }
         .into();
         assert!(matches!(error, EndpointManagerError::Other(_)), "{error:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mutations_log_the_request_with_the_caller() {
+        let schema = TestSchema::new().await;
+        let messages = [
+            (
+                "registerEndpointCustomer",
+                "Received a request to register customer 7 for Clumit Endpoint",
+            ),
+            (
+                "registerEndpointInstall",
+                "Received a request to register Clumit Endpoint install \"install-1\"",
+            ),
+            (
+                "setEndpointActiveList",
+                "Received a request to set the Clumit Endpoint active list",
+            ),
+            (
+                "putEndpointDocuments",
+                "Received a request to put 1 Clumit Endpoint documents",
+            ),
+            (
+                "resolveEndpointEnrollment",
+                "Received a request to resolve Clumit Endpoint enrollment attempt 6f1e2d3c-4b5a-4987-8a6b-5c4d3e2f1a0b",
+            ),
+            (
+                "submitEndpointCommand",
+                "Received a request to submit a Clumit Endpoint command",
+            ),
+        ];
+        for case in cases() {
+            let (_, message) = messages
+                .iter()
+                .find(|(field, _)| *field == case.field)
+                .unwrap();
+            let manager = Arc::new(FakeEndpointManager::with_outcomes(vec![
+                EndpointDocumentOutcome::Accepted,
+            ]));
+            let (events, _guard) = CapturedEvents::start();
+            let response = execute_as_system_admin(&schema, case.query, &manager).await;
+            assert!(response.errors.is_empty(), "{}: {:?}", case.field, response);
+            assert_eq!(events.messages(), [*message], "{}", case.field);
+            events.assert_fields(
+                message,
+                "an unauthenticated caller",
+                Some("SystemAdministrator"),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_default_test_manager_is_not_supported() {
+        let schema = TestSchema::new().await;
+        for case in cases() {
+            let response = schema.execute_as_system_admin(case.query).await;
+            assert_eq!(
+                codes(&response),
+                [Some(Value::from(ENDPOINT_NOT_SUPPORTED))],
+                "{}: {:?}",
+                case.field,
+                response.errors
+            );
+        }
+        let error = crate::graphql::MockEndpointManager
+            .customer_endpoint_data_deleted(7)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, EndpointManagerError::NotSupported),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_fake_manager_records_customer_endpoint_data_deleted() {
+        let manager = FakeEndpointManager::default();
+        manager.customer_endpoint_data_deleted(7).await.unwrap();
+        assert_eq!(manager.calls(), [Call::CustomerEndpointDataDeleted(7)]);
     }
 }
