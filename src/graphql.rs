@@ -23,6 +23,7 @@ pub mod customer;
 pub mod customer_access;
 mod customer_deletion_guard;
 mod customer_network;
+mod dai;
 mod db_management;
 mod detection_model;
 mod engine_config;
@@ -193,7 +194,13 @@ where
 
 /// A set of queries defined in the schema.
 #[derive(MergedObject, Default)]
-pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
+pub struct Query(
+    SubQueryOneA,
+    SubQueryOneB,
+    SubQueryTwoA,
+    SubQueryTwoB,
+    dai::DaiQuery,
+);
 
 #[derive(MergedObject, Default)]
 struct SubQueryOneA(
@@ -257,6 +264,7 @@ pub struct Mutation(
     SubMutationOneB,
     SubMutationTwoA,
     SubMutationTwoB,
+    dai::DaiMutation,
 );
 
 #[derive(MergedObject, Default)]

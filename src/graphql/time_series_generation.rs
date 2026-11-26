@@ -19,6 +19,7 @@ use tracing::{error, warn};
 use super::{IpAddress, Role, RoleGuard, SharedAgentManager};
 use crate::graphql::customer_access::{customer_sensor_names, is_member, users_customers};
 use crate::graphql::customer_deletion_guard;
+use crate::graphql::dai::sensors_span_sites;
 use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::event::EndpointRole;
 use crate::graphql::filter::RawEventKind;
@@ -535,11 +536,18 @@ fn list_uses(uses: &[PolicyUse]) -> String {
 
 /// Maps a refusal of a time series generation policy write to the error a
 /// resolver returns, passing every other error through.
+///
+/// A policy whose sensors span two device identification sites is refused
+/// with the error code `SENSORS_SPAN_SITES`, whose `sites` extension lists
+/// each site with the policy's sensors in it.
 fn policy_refusal(error: &anyhow::Error) -> async_graphql::Error {
     match error.downcast_ref::<TimeSeriesGenerationPolicyError>() {
         Some(TimeSeriesGenerationPolicyError::NotFound { .. }) => NO_SUCH_POLICY.into(),
         Some(TimeSeriesGenerationPolicyError::SpecFixed { .. }) => SPEC_FIXED.into(),
         Some(TimeSeriesGenerationPolicyError::Draft { .. }) => FIX_BEFORE_ASSIGNING.into(),
+        Some(refusal @ TimeSeriesGenerationPolicyError::SensorsSpanSites { sites, .. }) => {
+            sensors_span_sites(refusal.to_string(), sites)
+        }
         Some(refusal) => refusal.to_string().into(),
         None => format!("{error:#}").into(),
     }
@@ -940,6 +948,11 @@ impl TimeSeriesGenerationPolicyMutation {
     /// fix it with `fixTimeSeriesGenerationPolicy`, or with
     /// `assignTimeSeriesGenerationPolicy(fix: true)`.
     ///
+    /// A policy whose sensors are in two device identification sites of the
+    /// customer, under the site assignment in effect or one already
+    /// scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+    /// `sites` extension lists each site as `{ site, sensors }`.
+    ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// `customerId` is unfinished, also while it is stopped.
     #[allow(clippy::too_many_arguments)]
@@ -1001,6 +1014,11 @@ impl TimeSeriesGenerationPolicyMutation {
     /// The caller is checked as `insertTimeSeriesGenerationPolicy` checks it,
     /// every entry of `sensors` must be a sensor name of the customer, and
     /// the policy is then checked as review-database checks any insert.
+    ///
+    /// A policy whose sensors are in two device identification sites of the
+    /// customer, under the site assignment in effect or one already
+    /// scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+    /// `sites` extension lists each site as `{ site, sensors }`.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// `customerId` is unfinished, also while it is stopped.
@@ -1152,6 +1170,11 @@ impl TimeSeriesGenerationPolicyMutation {
     /// from, and a draft made from a type is refused if its new spec is not
     /// the type's. A caller scoped to customers may update only a policy of
     /// a customer in scope.
+    ///
+    /// A draft whose sensors are in two device identification sites of the
+    /// customer, under the site assignment in effect or one already
+    /// scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+    /// `sites` extension lists each site as `{ site, sensors }`.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the policy's customer is unfinished, also while it is stopped.
@@ -2034,8 +2057,8 @@ mod tests {
     }
 
     /// An insert whose sensors are in two device identification sites of
-    /// the customer is refused with review-database's refusal, and stores
-    /// nothing.
+    /// the customer is refused with review-database's refusal, under the
+    /// code `SENSORS_SPAN_SITES`, and stores nothing.
     #[tokio::test]
     async fn an_insert_whose_sensors_span_two_sites_is_refused() {
         const HOST_C: &str = "c.example.com";
@@ -2070,14 +2093,19 @@ mod tests {
         }
         .to_string();
 
-        let res = schema
-            .execute_as_system_admin(&insert_mutation(1, "custom", &[&sensor_a, &sensor_c]))
-            .await;
-        assert_eq!(error_message(&res), refusal);
-        let res = schema
-            .execute_as_system_admin(&from_type_mutation(1, "typed", 1, &[&sensor_a, &sensor_c]))
-            .await;
-        assert_eq!(error_message(&res), refusal);
+        for mutation in [
+            insert_mutation(1, "custom", &[&sensor_a, &sensor_c]),
+            from_type_mutation(1, "typed", 1, &[&sensor_a, &sensor_c]),
+        ] {
+            let res = schema.execute_as_system_admin(&mutation).await;
+            assert_eq!(error_message(&res), refusal);
+            let extensions = res.errors[0].extensions.as_ref().unwrap();
+            assert_eq!(
+                extensions.get("code"),
+                Some(&async_graphql::Value::from("SENSORS_SPAN_SITES"))
+            );
+            assert!(extensions.get("sites").is_some());
+        }
 
         assert_eq!(listed_names_of_store(&schema), Vec::<String>::new());
     }
