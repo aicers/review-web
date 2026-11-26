@@ -102,7 +102,7 @@ const MIN_SERVICE_FQDN_LABELS: usize = 3;
 const DATA_STORE_IN_USE: &str = "DATA_STORE_IN_USE";
 /// The `extensions.code` of a request refused because the customer's data
 /// was already deleted and it holds records created since.
-const CUSTOMER_DATA_ALREADY_DELETED: &str = "CUSTOMER_DATA_ALREADY_DELETED";
+pub(crate) const CUSTOMER_DATA_ALREADY_DELETED: &str = "CUSTOMER_DATA_ALREADY_DELETED";
 /// How often a stage re-reads the job, an attempt or a row it waits for.
 const STAGE_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// How long a Sensor or Semi-supervised result may stay unreported, from the
@@ -5248,6 +5248,8 @@ mod tests {
         let initial = initial_job(&plan, 123);
         // Review, four remote targets, and one `ModuleRemoval` per host.
         assert_eq!(initial.service_results.len(), 7);
+        // The endpoint stages are not part of this crate's deletion yet.
+        assert_eq!(initial.endpoint_ids, Vec::<uuid::Uuid>::new());
         assert_eq!(
             initial
                 .service_results
@@ -5678,6 +5680,8 @@ mod tests {
             .unwrap();
         assert_eq!(review.status, CustomerDataDeletionStatus::Succeeded);
         assert_eq!(review.host_fqdns, ["node.example"]);
+        // Every update of the job carried the empty list the request stored.
+        assert_eq!(job.endpoint_ids, Vec::<uuid::Uuid>::new());
         assert!(review.completed_at.is_some());
         // The reports the agent manager recorded, and the host's uninstall,
         // which had nothing with an instance number to remove.

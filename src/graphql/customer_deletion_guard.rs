@@ -34,7 +34,7 @@ use crate::customer_data_deletion::data_store_server_name;
 
 /// The `extensions.code` of a write refused while a customer's deletion is
 /// unfinished.
-const CUSTOMER_DELETION_IN_PROGRESS: &str = "CUSTOMER_DELETION_IN_PROGRESS";
+pub(super) const CUSTOMER_DELETION_IN_PROGRESS: &str = "CUSTOMER_DELETION_IN_PROGRESS";
 
 /// Returns whether customer `customer_id` has a deletion job with a result
 /// that is not `Succeeded`: one still running, or one stopped with a

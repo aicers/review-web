@@ -523,8 +523,9 @@ mod tests {
     use crate::{
         backend::{BuildId, CertManager, ServableBuild},
         graphql::{
-            LatestBuildStub, MockAgentManager, MockHostOnboarder, MockPackageDeployer,
-            ParsedCertificate, RoleGuard, SharedPackageDeployer, TestSchema, WithdrawalStub,
+            LatestBuildStub, MockAgentManager, MockEndpointManager, MockHostOnboarder,
+            MockPackageDeployer, ParsedCertificate, RoleGuard, SharedPackageDeployer, TestSchema,
+            WithdrawalStub,
         },
     };
 
@@ -2873,6 +2874,7 @@ mod tests {
             MockHostOnboarder {},
             None,
             Arc::new(StubCertManager),
+            Arc::new(MockEndpointManager),
             None,
             Arc::new(Notify::new()),
             crate::maintenance::MaintenanceGate::new(),

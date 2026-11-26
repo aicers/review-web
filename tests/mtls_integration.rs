@@ -28,9 +28,11 @@ mod mtls_integration {
         auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
         backend::{
             AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
-            DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
-            OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
-            RunningRoxydBuild, ServableBuild, TrustActivation, TrustIngestError, TrustManager,
+            DeployOutcome, EndpointDocumentOutcome, EndpointEnrollmentAttemptKey,
+            EndpointEnrollmentResolution, EndpointManager, EndpointManagerError, HostOnboarder,
+            HostOnboardingTicket, IngressStream, IngressStreamError, OperationId, PackageDeployer,
+            PackageIngestError, PackageStoreReceiver, RunningRoxydBuild, ServableBuild,
+            TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
         maintenance::{MAINTENANCE_ERROR_CODE, MaintenanceGate},
@@ -346,6 +348,62 @@ mod mtls_integration {
         }
     }
 
+    /// An endpoint manager of a `REview` without Clumit Endpoint support.
+    struct StubEndpointManager;
+
+    #[async_trait]
+    impl EndpointManager for StubEndpointManager {
+        async fn register_customer(
+            &self,
+            _customer_id: u32,
+            _customer_endpoint_id: uuid::Uuid,
+            _key_name: &str,
+            _install_id: &str,
+            _keyset: &str,
+        ) -> Result<(), EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn register_install(
+            &self,
+            _install_id: &str,
+            _recovery_key: &str,
+            _version: u64,
+        ) -> Result<(), EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn set_active_list(&self, _update: Vec<u8>) -> Result<u64, EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn put_documents(
+            &self,
+            _documents: Vec<String>,
+        ) -> Result<Vec<EndpointDocumentOutcome>, EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn resolve_enrollment(
+            &self,
+            _attempt: EndpointEnrollmentAttemptKey,
+            _resolution: EndpointEnrollmentResolution,
+        ) -> Result<(), EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn submit_command(&self, _command: &str) -> Result<uuid::Uuid, EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+
+        async fn customer_endpoint_data_deleted(
+            &self,
+            _customer_id: u32,
+        ) -> Result<(), EndpointManagerError> {
+            Err(EndpointManagerError::NotSupported)
+        }
+    }
+
     struct StubTrustManager;
 
     #[async_trait]
@@ -596,6 +654,7 @@ mod mtls_integration {
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
             trust_manager: Arc::new(StubTrustManager),
             trust_generation_max_bytes: TRUST_GENERATION_MAX_BYTES,
+            endpoint_manager: Arc::new(StubEndpointManager),
             maintenance_gate: maintenance_gate.clone(),
         };
 
@@ -903,6 +962,36 @@ mod mtls_integration {
     async fn response_json(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
         serde_json::from_str(&response.text().await.context("read response body")?)
             .context("parse response JSON")
+    }
+
+    /// The endpoint manager `ServerConfig` carries is the one the endpoint
+    /// mutations reach.
+    #[tokio::test]
+    async fn mtls_endpoint_mutation_reaches_the_configured_endpoint_manager() -> anyhow::Result<()>
+    {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+
+        let response = send_graphql_document(
+            &client,
+            &server.url,
+            Some(&token),
+            r#"mutation { submitEndpointCommand(command: "a.b.c") }"#,
+        )
+        .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response_json(response).await?;
+        assert_eq!(body["data"], serde_json::Value::Null, "{body}");
+        assert_eq!(
+            body["errors"][0]["extensions"]["code"], "ENDPOINT_NOT_SUPPORTED",
+            "{body}"
+        );
+
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
     }
 
     #[tokio::test]

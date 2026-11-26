@@ -45,8 +45,8 @@ use crate::auth::MtlsAuthError;
 use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 use crate::backend::{
-    AgentManager, CertManager, HostOnboarder, PackageStoreReceiver, SharedPackageDeployer,
-    TrustManager,
+    AgentManager, CertManager, EndpointManager, HostOnboarder, PackageStoreReceiver,
+    SharedPackageDeployer, TrustManager,
 };
 use crate::ingress::{PackageUploadLimit, TrustGenerationLimit};
 
@@ -174,6 +174,12 @@ pub struct ServerConfig {
     /// exactly this many bytes is accepted and one byte more is refused
     /// mid-stream with `413`.
     pub trust_generation_max_bytes: u64,
+    /// Changes `REview`'s Clumit Endpoint (`senta`) state for the endpoint
+    /// write mutations.
+    ///
+    /// It is placed on the GraphQL schema, so a resolver reaches it through
+    /// the request context.
+    pub endpoint_manager: Arc<dyn EndpointManager>,
     /// The gate the embedding application closes during a pending `Rollback`
     /// update.
     ///
@@ -225,6 +231,7 @@ where
         host_onboarder,
         ip_locator,
         config.cert_manager.clone(),
+        config.endpoint_manager.clone(),
         config.manager_node_hostname,
         config.tls_reload_handle.clone(),
         config.maintenance_gate.clone(),
