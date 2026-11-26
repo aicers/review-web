@@ -158,6 +158,8 @@ pub(super) enum DetectionModelSubjectKind {
     Sensor,
     /// A network.
     Network,
+    /// An endpoint, a host running Clumit Endpoint.
+    Endpoint,
 }
 
 /// The primary subject a model's detection events are about.
@@ -166,7 +168,7 @@ pub(super) struct DetectionModelSubject {
     /// The kind of the subject.
     kind: DetectionModelSubjectKind,
     /// Where the subject's threat role comes from; non-null exactly for
-    /// `HOST` and `NETWORK`.
+    /// `HOST`, `NETWORK` and `ENDPOINT`.
     role_source: Option<ThreatRoleSource>,
 }
 
@@ -181,6 +183,9 @@ impl From<database::PrimarySubjectKind> for DetectionModelSubject {
             database::PrimarySubjectKind::Sensor => (DetectionModelSubjectKind::Sensor, None),
             database::PrimarySubjectKind::Network(source) => {
                 (DetectionModelSubjectKind::Network, Some(source.into()))
+            }
+            database::PrimarySubjectKind::Endpoint(source) => {
+                (DetectionModelSubjectKind::Endpoint, Some(source.into()))
             }
         };
         Self { kind, role_source }
@@ -769,6 +774,51 @@ mod tests {
         assert_eq!(numbers, expected);
     }
 
+    /// Returns the expected GraphQL value of the primary subject `subject`,
+    /// built without going through the resolver's conversions.
+    fn expected_subject(subject: database::PrimarySubjectKind) -> serde_json::Value {
+        let (kind, source) = match subject {
+            database::PrimarySubjectKind::RawEvent => ("RAW_EVENT", None),
+            database::PrimarySubjectKind::Host(source) => ("HOST", Some(source)),
+            database::PrimarySubjectKind::Cluster => ("CLUSTER", None),
+            database::PrimarySubjectKind::Sensor => ("SENSOR", None),
+            database::PrimarySubjectKind::Network(source) => ("NETWORK", Some(source)),
+            database::PrimarySubjectKind::Endpoint(source) => ("ENDPOINT", Some(source)),
+        };
+        let role_source = source.map(|source| match source {
+            database::RoleSource::Fixed(role) => serde_json::json!({
+                "kind": "FIXED",
+                "role": ThreatRole::from(role).to_value().into_json().unwrap(),
+            }),
+            database::RoleSource::PerEvent => {
+                serde_json::json!({ "kind": "PER_EVENT", "role": null })
+            }
+            database::RoleSource::TimeSeriesType => {
+                serde_json::json!({ "kind": "TIME_SERIES_TYPE", "role": null })
+            }
+        });
+        serde_json::json!({ "kind": kind, "roleSource": role_source })
+    }
+
+    /// No model has an endpoint subject yet, so the property-table test does
+    /// not reach `ENDPOINT`; this checks its conversion directly.
+    #[test]
+    fn an_endpoint_subject_keeps_its_role_source() {
+        let kind = database::PrimarySubjectKind::Endpoint(database::RoleSource::PerEvent);
+        let subject = DetectionModelSubject::from(kind);
+        let role_source = subject.role_source.expect("an endpoint has a role source");
+        assert_eq!(
+            serde_json::json!({
+                "kind": subject.kind.to_value().into_json().unwrap(),
+                "roleSource": {
+                    "kind": role_source.kind.to_value().into_json().unwrap(),
+                    "role": role_source.role.map(|role| role.to_value().into_json().unwrap()),
+                },
+            }),
+            expected_subject(kind)
+        );
+    }
+
     /// Returns the expected GraphQL value of the entry of `model`, built from
     /// `properties` without going through the resolver's conversions.
     fn expected_entry(model: protocol::DetectionModel) -> serde_json::Value {
@@ -778,25 +828,6 @@ mod tests {
             other => panic!("not an enum: {other:?}"),
         };
         let enum_name = |value: Value| serde_json::Value::String(name(value));
-        let subject = match properties.primary_subject {
-            database::PrimarySubjectKind::RawEvent => ("RAW_EVENT", None),
-            database::PrimarySubjectKind::Host(source) => ("HOST", Some(source)),
-            database::PrimarySubjectKind::Cluster => ("CLUSTER", None),
-            database::PrimarySubjectKind::Sensor => ("SENSOR", None),
-            database::PrimarySubjectKind::Network(source) => ("NETWORK", Some(source)),
-        };
-        let role_source = subject.1.map(|source| match source {
-            database::RoleSource::Fixed(role) => serde_json::json!({
-                "kind": "FIXED",
-                "role": enum_name(ThreatRole::from(role).to_value()),
-            }),
-            database::RoleSource::PerEvent => {
-                serde_json::json!({ "kind": "PER_EVENT", "role": null })
-            }
-            database::RoleSource::TimeSeriesType => {
-                serde_json::json!({ "kind": "TIME_SERIES_TYPE", "role": null })
-            }
-        });
         let operator_values: Vec<_> = properties
             .operator_values
             .iter()
@@ -842,7 +873,7 @@ mod tests {
                 .iter()
                 .map(|k| enum_name(RawEventKind::from(*k).to_value()))
                 .collect::<Vec<_>>(),
-            "primarySubject": { "kind": subject.0, "roleSource": role_source },
+            "primarySubject": expected_subject(properties.primary_subject),
             "scoreMeaning": properties.score_meaning,
             "requiresDeviceAccountIdentification":
                 properties.requires_device_account_identification,

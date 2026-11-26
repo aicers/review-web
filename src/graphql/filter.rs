@@ -99,6 +99,14 @@ pub(super) enum RawEventKind {
     FileDeleteDetected,
     Netflow5,
     Netflow9,
+    DriverLoad,
+    CreateRemoteThread,
+    RawAccessRead,
+    ProcessAccess,
+    RegistryObjectAddDel,
+    WindowsEventLog,
+    Journald,
+    Auditd,
 }
 
 #[cfg(test)]
