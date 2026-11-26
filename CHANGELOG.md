@@ -4,6 +4,19 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0](https://github.com/aicers/review-web/compare/0.63.0...0.64.0) - 2026-11-26
+
+### Added
+
+- add queries for detection events in arrival order and the oldest detection time ([#1303](https://github.com/aicers/review-web/pull/1303))
+- add read queries for Clumit Endpoint enrollment attempts, endpoints, active-list status, document results, commands, events, telemetry entries, trust root adoption and unenroll requests ([#1302](https://github.com/aicers/review-web/pull/1302))
+- add device identification settings, sites, resolve, devices and range candidates to GraphQL, with error codes for policies spanning sites ([#1298](https://github.com/aicers/review-web/pull/1298))
+- [**breaking**] rename the network allowlist and blocklist to exclusion list and watchlist and add exclusion counts per engine ([#1300](https://github.com/aicers/review-web/pull/1300))
+
+### Fixed
+
+- *(deps)* [**breaking**] move review-protocol to 0.34.0 ([#1299](https://github.com/aicers/review-web/pull/1299))
+
 ## [0.63.0](https://github.com/aicers/review-web/compare/0.62.0...0.63.0) - 2026-11-26
 
 ### Added
