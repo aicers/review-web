@@ -10,7 +10,7 @@ use jiff::Timestamp;
 pub(crate) const HTTP_URL_CSV: &str = r#"[csv]
 reader = { delimiter = 9, quote = 0 }
 prefix_columns = [14, 15]
-time_intervals = [60]
+slot_sizes = [60]
 time_column = 0
 count_columns = [0]
 format = [

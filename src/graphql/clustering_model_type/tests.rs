@@ -155,7 +155,7 @@ async fn http_url_version_1_is_returned_with_every_field() {
             "reader",
             "format",
             "prefix_columns",
-            "time_intervals",
+            "slot_sizes",
             "time_column",
             "count_columns",
         ]

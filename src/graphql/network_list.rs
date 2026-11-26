@@ -110,7 +110,7 @@ pub(super) async fn lock_network_lists<'a>(ctx: &Context<'a>) -> Result<NetworkL
 ///
 /// Returns an error if the stored row could not be read or decoded.
 pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
-    Ok(db.network_lists_map().allowlist_items(customer_id)?)
+    Ok(db.network_lists_map().exclusion_list_items(customer_id)?)
 }
 
 /// Returns the blocklist items of a customer, with their IDs, names and
@@ -120,7 +120,7 @@ pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<Vec<database::
 ///
 /// Returns an error if the stored row could not be read or decoded.
 pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
-    Ok(db.network_lists_map().blocklist_items(customer_id)?)
+    Ok(db.network_lists_map().watchlist_items(customer_id)?)
 }
 
 #[derive(Default)]
@@ -252,7 +252,7 @@ impl NetworkListSet {
     /// The entries of the allowlist.
     async fn allowlist(&self) -> Vec<NetworkListEntry<'_>> {
         self.inner
-            .allowlist
+            .exclusion_list
             .iter()
             .map(|inner| NetworkListEntry { inner })
             .collect()
@@ -261,7 +261,7 @@ impl NetworkListSet {
     /// The entries of the blocklist.
     async fn blocklist(&self) -> Vec<NetworkListEntry<'_>> {
         self.inner
-            .blocklist
+            .watchlist
             .iter()
             .map(|inner| NetworkListEntry { inner })
             .collect()
@@ -393,7 +393,7 @@ fn hog_pushes(
 ) -> Vec<(NetworkList, NetworkListItemsTargetAgentLookupKeysPair)> {
     let no_items: &[database::NetworkListEntry] = &[];
     let (previous_allowlist, previous_blocklist) = previous.map_or((no_items, no_items), |set| {
-        (set.allowlist.as_slice(), set.blocklist.as_slice())
+        (set.exclusion_list.as_slice(), set.watchlist.as_slice())
     });
     let (allowlist, blocklist) = current;
     let changed: Vec<_> = [
@@ -722,8 +722,8 @@ mod tests {
         assert_eq!(
             (
                 stored.revision,
-                stored.allowlist.len(),
-                stored.blocklist.len()
+                stored.exclusion_list.len(),
+                stored.watchlist.len()
             ),
             (6, 0, 0)
         );
@@ -849,8 +849,8 @@ mod tests {
         assert_eq!(
             (
                 stored.revision,
-                stored.allowlist.len(),
-                stored.blocklist.len()
+                stored.exclusion_list.len(),
+                stored.watchlist.len()
             ),
             (0, 0, 0)
         );
@@ -1264,11 +1264,15 @@ mod tests {
 
         let stored = schema.store().network_lists_map().get(7).unwrap().unwrap();
         assert_eq!(
-            stored.allowlist.iter().map(|e| e.id).collect::<Vec<_>>(),
+            stored
+                .exclusion_list
+                .iter()
+                .map(|e| e.id)
+                .collect::<Vec<_>>(),
             [WIDE_ID, u64::MAX]
         );
         assert_eq!(
-            stored.blocklist.iter().map(|e| e.id).collect::<Vec<_>>(),
+            stored.watchlist.iter().map(|e| e.id).collect::<Vec<_>>(),
             [WIDE_ID]
         );
 

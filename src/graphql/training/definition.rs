@@ -236,7 +236,7 @@ pub(crate) struct CsvConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) format: Option<Vec<ColumnDescription>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) time_intervals: Option<Vec<u32>>,
+    pub(crate) slot_sizes: Option<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) time_column: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
