@@ -494,6 +494,27 @@ fn prefix_reads_a_log_named_by_its_log_kind() {
     for kind in ["dce rpc", "dns_event", "timeseries", "http"] {
         assert!(NAMED_EVENT_KINDS.contains(&kind));
     }
+    // The kinds giganto-client 0.31.0 added, each a raw event kind rather
+    // than a log kind.
+    assert_eq!(NAMED_EVENT_KINDS.len(), 52);
+    for kind in [
+        "driver_load",
+        "create_remote_thread",
+        "raw_access_read",
+        "process_access",
+        "registry_object_add_del",
+        "endpoint_windows_event_log",
+        "endpoint_journald",
+        "endpoint_auditd",
+    ] {
+        assert!(NAMED_EVENT_KINDS.contains(&kind), "{kind}");
+        let text = with(&PREFIX, "log_kind", &format!("log_kind = \"{kind}\""));
+        assert_eq!(
+            checked(&text),
+            triple("EVENT_KIND_NOT_ALLOWED", "log_kind", kind),
+            "{kind}"
+        );
+    }
 
     // The raw event kind of a prefix definition is always `log`.
     for kind in ["http", "syslog"] {

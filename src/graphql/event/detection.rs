@@ -2,11 +2,16 @@
 
 use std::net::IpAddr;
 
-use async_graphql::{Enum, ID, Object, Result, SimpleObject, StringNumber, Union};
+use async_graphql::{Enum, ID, Object, SimpleObject, StringNumber, Union};
 use review_database::{self as database, StoredDetectionEvent};
 use review_protocol::types as protocol;
 
-use super::{TriageScore, body::RawEventBody, detail::Detail, opaque_event_id};
+use super::{
+    TriageScore,
+    body::{RawEventBody, net_state_source},
+    detail::Detail,
+    opaque_event_id,
+};
 use crate::graphql::{
     clustering_model_type::ClusteringModelTypeRef,
     filter::{DetectionModel, RawEventKind},
@@ -260,8 +265,8 @@ impl<'a> RawEventTarget<'a> {
     }
 
     /// The body of the raw event.
-    async fn body(&self) -> Result<RawEventBody<'a>> {
-        self.body.try_into()
+    async fn body(&self) -> RawEventBody<'a> {
+        self.body.into()
     }
 }
 
@@ -277,8 +282,8 @@ pub(super) struct SubjectTarget<'a> {
 #[Object]
 impl<'a> SubjectTarget<'a> {
     /// The subject the event is primarily about.
-    async fn primary(&self) -> Result<PrimarySubject<'a>> {
-        Ok(match self.primary {
+    async fn primary(&self) -> PrimarySubject<'a> {
+        match self.primary {
             protocol::PrimarySubject::Host { ip, role } => PrimarySubject::Host(HostSubject {
                 ip: *ip,
                 role: (*role).into(),
@@ -302,10 +307,20 @@ impl<'a> SubjectTarget<'a> {
                 name,
                 role: (*role).into(),
             }),
-            protocol::PrimarySubject::Endpoint { .. } => {
-                return Err("the endpoint primary subject is not supported".into());
-            }
-        })
+            protocol::PrimarySubject::Endpoint {
+                endpoint_id,
+                ips,
+                default_route_ip,
+                net_state_source,
+                role,
+            } => PrimarySubject::SentaEndpoint(SentaEndpointSubject {
+                endpoint_id: *endpoint_id,
+                ips,
+                default_route_ip: *default_route_ip,
+                net_state_source,
+                role: (*role).into(),
+            }),
+        }
     }
 
     /// The other addresses involved, each with the side it was observed on.
@@ -326,6 +341,7 @@ pub(super) enum PrimarySubject<'a> {
     Cluster(ClusterSubject),
     Sensor(SensorSubject<'a>),
     Network(NetworkSubject<'a>),
+    SentaEndpoint(SentaEndpointSubject<'a>),
 }
 
 /// A host, named by its IP address.
@@ -373,6 +389,44 @@ pub(super) struct NetworkSubject<'a> {
     name: &'a str,
     /// The role the network plays in the threat.
     role: ThreatRole,
+}
+
+/// An endpoint, a host running Clumit Endpoint, named by its id.
+pub(super) struct SentaEndpointSubject<'a> {
+    endpoint_id: uuid::Uuid,
+    ips: &'a [IpAddr],
+    default_route_ip: Option<IpAddr>,
+    net_state_source: &'a protocol::raw_event::NetStateSource,
+    role: ThreatRole,
+}
+
+#[Object]
+impl SentaEndpointSubject<'_> {
+    /// The id of the endpoint, a lowercase hyphenated UUID.
+    async fn endpoint_id(&self) -> String {
+        self.endpoint_id.hyphenated().to_string()
+    }
+
+    /// The addresses of the endpoint.
+    async fn ips(&self) -> Vec<String> {
+        self.ips.iter().map(ToString::to_string).collect()
+    }
+
+    /// The default route address of the endpoint.
+    async fn default_route_ip(&self) -> Option<String> {
+        self.default_route_ip.map(|ip| ip.to_string())
+    }
+
+    /// How the endpoint's network state was obtained: `observed`, `inferred`,
+    /// `unknown` or another value as sent.
+    async fn net_state_source(&self) -> &str {
+        net_state_source(self.net_state_source)
+    }
+
+    /// The role the endpoint plays in the threat.
+    async fn role(&self) -> ThreatRole {
+        self.role
+    }
 }
 
 /// An address related to a subject.

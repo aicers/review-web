@@ -298,9 +298,11 @@ impl EventQuery {
     /// order they arrived, from after the cursor `after`.
     ///
     /// An event belongs to the customer as it does for `eventList`: through
-    /// its sensor, or, for a time-series event without a sensor, through the
-    /// sensors of its policy. No other condition applies; `policies` only
-    /// scores the events and never removes one.
+    /// its sensor, which is a sensor of one of the customer's nodes or, for a
+    /// detection event about a Clumit Endpoint endpoint, the id of one of the
+    /// customer's endpoints; or, for a time-series event without a sensor,
+    /// through the sensors of its policy. No other condition applies;
+    /// `policies` only scores the events and never removes one.
     ///
     /// One call scans at most 10,000 arrival index rows and returns at most
     /// `first` events (1 to 100, 100 when absent). `cursor` is the last row
@@ -762,22 +764,27 @@ fn convert_endpoint_input(
 
 /// Returns the networks each event is tested against for `directions`: the
 /// addresses internal to its own customer, found through the node its sensor
-/// belongs to. An address is internal when the narrowest network of the
-/// customer that contains it is an `Intranet` or `Gateway` network, so an
-/// `Extranet` network nested inside an `Intranet` network is outside.
+/// belongs to, or, for a detection event about a Clumit Endpoint endpoint,
+/// whose sensor is the endpoint id, through the endpoint's row. An address is
+/// internal when the narrowest network of the customer that contains it is
+/// an `Intranet` or `Gateway` network, so an `Extranet` network nested
+/// inside an `Intranet` network is outside.
 ///
-/// An event whose sensor maps to no node has no internal network, so it
-/// matches no direction.
+/// An event whose sensor maps to no node and no endpoint row has no internal
+/// network, so it matches no direction.
 fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
     use std::collections::{HashMap, hash_map::Entry};
 
     let sensor_customers = crate::graphql::customer_access::event_sensor_customer_id_map(store)
         .map_err(|e| anyhow!("{}", e.message))?;
+    let endpoints = store
+        .senta_endpoint_map()
+        .all()
+        .context("failed to read endpoints")?;
     let table = store.customer_networks_map();
     let mut by_customer = HashMap::<u32, Vec<HostNetworkGroup>>::new();
-    let mut by_sensor = HashMap::with_capacity(sensor_customers.len());
-    for (sensor, customer_id) in sensor_customers {
-        let groups = match by_customer.entry(customer_id) {
+    let mut groups_of = |customer_id: u32| -> anyhow::Result<Vec<HostNetworkGroup>> {
+        Ok(match by_customer.entry(customer_id) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 let groups = table
@@ -785,8 +792,17 @@ fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
                     .map_or_default(|set| set.internal_groups());
                 entry.insert(groups).clone()
             }
-        };
-        by_sensor.insert(sensor, groups);
+        })
+    };
+    let mut by_sensor = HashMap::with_capacity(sensor_customers.len() + endpoints.len());
+    for (sensor, customer_id) in sensor_customers {
+        by_sensor.insert(sensor, groups_of(customer_id)?);
+    }
+    for endpoint in endpoints {
+        by_sensor.insert(
+            endpoint.endpoint_id.to_string(),
+            groups_of(endpoint.customer_id)?,
+        );
     }
     Ok(InternalNetworks::PerSensor(by_sensor))
 }
@@ -823,23 +839,25 @@ fn convert_sensors(
 }
 
 /// Returns the event sensor names the caller is allowed to see, or `None` for
-/// unscoped (administrator) callers.
+/// unscoped (administrator) callers: the
+/// [`customer_event_sensors`](crate::graphql::customer_access::customer_event_sensors)
+/// of each of the caller's customers.
 ///
-/// A sensor name that maps to no node, such as one left behind in stored
-/// events by a removed node, is never accessible to a scoped caller.
+/// A sensor name that maps to no node and no endpoint row, such as one left
+/// behind in stored events by a removed node, is never accessible to a scoped
+/// caller.
 fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
     let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
         return Ok(None);
     };
-    if customer_ids.is_empty() {
-        return Ok(Some(Vec::new()));
+    let mut sensors = std::collections::HashSet::new();
+    for customer_id in customer_ids {
+        sensors.extend(crate::graphql::customer_access::customer_event_sensors(
+            store,
+            customer_id,
+        )?);
     }
-    let sensors = crate::graphql::customer_access::event_sensor_customer_id_map(store)?
-        .into_iter()
-        .filter(|(_, customer_id)| customer_ids.contains(customer_id))
-        .map(|(sensor, _)| sensor)
-        .collect::<Vec<_>>();
-    Ok(Some(sensors))
+    Ok(Some(sensors.into_iter().collect()))
 }
 
 async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<DetectionEvent>> {

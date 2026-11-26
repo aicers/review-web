@@ -1,13 +1,17 @@
 //! The GraphQL types of raw event bodies, one per review-protocol
-//! `RawEventBody` variant, each exposing every field of its body struct
-//! except the endpoint host header `endpoint` and `ProcessCreate`'s
-//! `logon_id_full`.
+//! `RawEventBody` variant, each exposing every field of its body struct.
 //!
 //! An integer type wider than a signed 32-bit integer is a `StringNumber`,
 //! so that every value keeps its full range.
+//!
+//! The types tied to the host header of a Clumit Endpoint record start with
+//! `SentaEndpoint`. In them, a UUID is a lowercase hyphenated string, and a
+//! process key and a byte log value are lowercase hexadecimal characters.
 
 use async_graphql::{Object, SimpleObject, StringNumber, Union};
 use review_protocol::types::{self as protocol, raw_event};
+
+use crate::graphql::hex;
 
 /// The body of the raw event a detection event is about.
 #[derive(Union)]
@@ -48,15 +52,20 @@ pub(super) enum RawEventBody<'a> {
     FileDeleteDetected(FileDeleteDetectedBody<'a>),
     Netflow5(Netflow5Body<'a>),
     Netflow9(Netflow9Body<'a>),
+    DriverLoad(DriverLoadBody<'a>),
+    CreateRemoteThread(CreateRemoteThreadBody<'a>),
+    RawAccessRead(RawAccessReadBody<'a>),
+    ProcessAccess(ProcessAccessBody<'a>),
+    RegistryObjectAddDel(RegistryObjectAddDelBody<'a>),
+    WindowsEventLog(WindowsEventLogBody<'a>),
+    Journald(JournaldBody<'a>),
+    Auditd(AuditdBody<'a>),
 }
 
-impl<'a> TryFrom<&'a protocol::RawEventBody> for RawEventBody<'a> {
-    type Error = async_graphql::Error;
-
-    /// Fails for a body kind this schema has no type for.
-    fn try_from(body: &'a protocol::RawEventBody) -> Result<Self, Self::Error> {
+impl<'a> From<&'a protocol::RawEventBody> for RawEventBody<'a> {
+    fn from(body: &'a protocol::RawEventBody) -> Self {
         // No wildcard arm: a body added to review-protocol must be mapped.
-        Ok(match body {
+        match body {
             protocol::RawEventBody::Conn(body) => Self::Conn(ConnBody(body)),
             protocol::RawEventBody::Dns(body) => Self::Dns(DnsBody(body)),
             protocol::RawEventBody::Http(body) => Self::Http(HttpBody(body)),
@@ -113,17 +122,25 @@ impl<'a> TryFrom<&'a protocol::RawEventBody> for RawEventBody<'a> {
             }
             protocol::RawEventBody::Netflow5(body) => Self::Netflow5(Netflow5Body(body)),
             protocol::RawEventBody::Netflow9(body) => Self::Netflow9(Netflow9Body(body)),
-            protocol::RawEventBody::DriverLoad(_)
-            | protocol::RawEventBody::CreateRemoteThread(_)
-            | protocol::RawEventBody::RawAccessRead(_)
-            | protocol::RawEventBody::ProcessAccess(_)
-            | protocol::RawEventBody::RegistryObjectAddDel(_)
-            | protocol::RawEventBody::WindowsEventLog(_)
-            | protocol::RawEventBody::Journald(_)
-            | protocol::RawEventBody::Auditd(_) => {
-                return Err("the raw event body of this kind is not supported".into());
+            protocol::RawEventBody::DriverLoad(body) => Self::DriverLoad(DriverLoadBody(body)),
+            protocol::RawEventBody::CreateRemoteThread(body) => {
+                Self::CreateRemoteThread(CreateRemoteThreadBody(body))
             }
-        })
+            protocol::RawEventBody::RawAccessRead(body) => {
+                Self::RawAccessRead(RawAccessReadBody(body))
+            }
+            protocol::RawEventBody::ProcessAccess(body) => {
+                Self::ProcessAccess(ProcessAccessBody(body))
+            }
+            protocol::RawEventBody::RegistryObjectAddDel(body) => {
+                Self::RegistryObjectAddDel(RegistryObjectAddDelBody(body))
+            }
+            protocol::RawEventBody::WindowsEventLog(body) => {
+                Self::WindowsEventLog(WindowsEventLogBody(body))
+            }
+            protocol::RawEventBody::Journald(body) => Self::Journald(JournaldBody(body)),
+            protocol::RawEventBody::Auditd(body) => Self::Auditd(AuditdBody(body)),
+        }
     }
 }
 
@@ -1963,6 +1980,14 @@ impl ProcessCreateBody<'_> {
     async fn parent_user(&self) -> &str {
         &self.0.parent_user
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+
+    async fn logon_id_full(&self) -> Option<StringNumber<u64>> {
+        self.0.logon_id_full.map(StringNumber)
+    }
 }
 
 /// The `FileCreateTime` raw event body.
@@ -2004,6 +2029,10 @@ impl FileCreateTimeBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2083,6 +2112,10 @@ impl NetworkConnectBody<'_> {
     async fn destination_port_name(&self) -> &str {
         &self.0.destination_port_name
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
 }
 
 /// The `ProcessTerminate` raw event body.
@@ -2112,6 +2145,10 @@ impl ProcessTerminateBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2183,6 +2220,10 @@ impl ImageLoadBody<'_> {
     async fn user(&self) -> &str {
         &self.0.user
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
 }
 
 /// The `FileCreate` raw event body.
@@ -2220,6 +2261,10 @@ impl FileCreateBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2263,6 +2308,10 @@ impl RegistryValueSetBody<'_> {
     async fn user(&self) -> &str {
         &self.0.user
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
 }
 
 /// The `RegistryKeyRename` raw event body.
@@ -2304,6 +2353,10 @@ impl RegistryKeyRenameBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2351,6 +2404,10 @@ impl FileCreateStreamHashBody<'_> {
     async fn user(&self) -> &str {
         &self.0.user
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
 }
 
 /// The `PipeEvent` raw event body.
@@ -2388,6 +2445,10 @@ impl PipeEventBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2430,6 +2491,10 @@ impl DnsQueryBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2477,6 +2542,10 @@ impl FileDeleteBody<'_> {
     async fn archived(&self) -> bool {
         self.0.archived
     }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
 }
 
 /// The `ProcessTamper` raw event body.
@@ -2510,6 +2579,10 @@ impl ProcessTamperBody<'_> {
 
     async fn user(&self) -> &str {
         &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2552,6 +2625,10 @@ impl FileDeleteDetectedBody<'_> {
 
     async fn is_executable(&self) -> bool {
         self.0.is_executable
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
     }
 }
 
@@ -2692,6 +2769,539 @@ impl Netflow9Body<'_> {
 
     async fn contents(&self) -> &str {
         &self.0.contents
+    }
+}
+
+/// The `DriverLoad` raw event body.
+pub(super) struct DriverLoadBody<'a>(&'a raw_event::DriverLoad);
+
+#[Object]
+impl DriverLoadBody<'_> {
+    async fn agent_name(&self) -> &str {
+        &self.0.agent_name
+    }
+
+    async fn agent_id(&self) -> &str {
+        &self.0.agent_id
+    }
+
+    async fn image_loaded(&self) -> &str {
+        &self.0.image_loaded
+    }
+
+    async fn hashes(&self) -> &[String] {
+        &self.0.hashes
+    }
+
+    async fn signed(&self) -> bool {
+        self.0.signed
+    }
+
+    async fn signature(&self) -> &str {
+        &self.0.signature
+    }
+
+    async fn signature_status(&self) -> &str {
+        &self.0.signature_status
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+}
+
+/// The `CreateRemoteThread` raw event body.
+pub(super) struct CreateRemoteThreadBody<'a>(&'a raw_event::CreateRemoteThread);
+
+#[Object]
+impl CreateRemoteThreadBody<'_> {
+    async fn agent_name(&self) -> &str {
+        &self.0.agent_name
+    }
+
+    async fn agent_id(&self) -> &str {
+        &self.0.agent_id
+    }
+
+    async fn source_process_guid(&self) -> &str {
+        &self.0.source_process_guid
+    }
+
+    async fn source_process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.source_process_id)
+    }
+
+    async fn source_image(&self) -> &str {
+        &self.0.source_image
+    }
+
+    async fn target_process_guid(&self) -> &str {
+        &self.0.target_process_guid
+    }
+
+    async fn target_process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.target_process_id)
+    }
+
+    async fn target_image(&self) -> &str {
+        &self.0.target_image
+    }
+
+    async fn new_thread_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.new_thread_id)
+    }
+
+    async fn start_address(&self) -> &str {
+        &self.0.start_address
+    }
+
+    async fn start_module(&self) -> &str {
+        &self.0.start_module
+    }
+
+    async fn start_function(&self) -> &str {
+        &self.0.start_function
+    }
+
+    async fn source_user(&self) -> &str {
+        &self.0.source_user
+    }
+
+    async fn target_user(&self) -> &str {
+        &self.0.target_user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+}
+
+/// The `RawAccessRead` raw event body.
+pub(super) struct RawAccessReadBody<'a>(&'a raw_event::RawAccessRead);
+
+#[Object]
+impl RawAccessReadBody<'_> {
+    async fn agent_name(&self) -> &str {
+        &self.0.agent_name
+    }
+
+    async fn agent_id(&self) -> &str {
+        &self.0.agent_id
+    }
+
+    async fn process_guid(&self) -> &str {
+        &self.0.process_guid
+    }
+
+    async fn process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.process_id)
+    }
+
+    async fn image(&self) -> &str {
+        &self.0.image
+    }
+
+    async fn device(&self) -> &str {
+        &self.0.device
+    }
+
+    async fn user(&self) -> &str {
+        &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+}
+
+/// The `ProcessAccess` raw event body.
+pub(super) struct ProcessAccessBody<'a>(&'a raw_event::ProcessAccess);
+
+#[Object]
+impl ProcessAccessBody<'_> {
+    async fn agent_name(&self) -> &str {
+        &self.0.agent_name
+    }
+
+    async fn agent_id(&self) -> &str {
+        &self.0.agent_id
+    }
+
+    async fn source_process_guid(&self) -> &str {
+        &self.0.source_process_guid
+    }
+
+    async fn source_process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.source_process_id)
+    }
+
+    async fn source_thread_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.source_thread_id)
+    }
+
+    async fn source_image(&self) -> &str {
+        &self.0.source_image
+    }
+
+    async fn target_process_guid(&self) -> &str {
+        &self.0.target_process_guid
+    }
+
+    async fn target_process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.target_process_id)
+    }
+
+    async fn target_image(&self) -> &str {
+        &self.0.target_image
+    }
+
+    async fn granted_access(&self) -> StringNumber<u64> {
+        StringNumber(self.0.granted_access)
+    }
+
+    async fn call_trace(&self) -> &str {
+        &self.0.call_trace
+    }
+
+    async fn source_user(&self) -> &str {
+        &self.0.source_user
+    }
+
+    async fn target_user(&self) -> &str {
+        &self.0.target_user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+}
+
+/// The `RegistryObjectAddDel` raw event body.
+pub(super) struct RegistryObjectAddDelBody<'a>(&'a raw_event::RegistryObjectAddDel);
+
+#[Object]
+impl RegistryObjectAddDelBody<'_> {
+    async fn agent_name(&self) -> &str {
+        &self.0.agent_name
+    }
+
+    async fn agent_id(&self) -> &str {
+        &self.0.agent_id
+    }
+
+    async fn event_type(&self) -> &str {
+        &self.0.event_type
+    }
+
+    async fn process_guid(&self) -> &str {
+        &self.0.process_guid
+    }
+
+    async fn process_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.process_id)
+    }
+
+    async fn image(&self) -> &str {
+        &self.0.image
+    }
+
+    async fn target_object(&self) -> &str {
+        &self.0.target_object
+    }
+
+    async fn user(&self) -> &str {
+        &self.0.user
+    }
+
+    async fn endpoint(&self) -> Option<SentaEndpointHeader<'_>> {
+        self.0.endpoint.as_ref().map(SentaEndpointHeader)
+    }
+}
+
+/// The `WindowsEventLog` raw event body.
+pub(super) struct WindowsEventLogBody<'a>(&'a raw_event::WindowsEventLog);
+
+#[Object]
+impl WindowsEventLogBody<'_> {
+    async fn channel(&self) -> Option<&str> {
+        self.0.channel.as_deref()
+    }
+
+    async fn provider(&self) -> Option<&str> {
+        self.0.provider.as_deref()
+    }
+
+    async fn event_id(&self) -> Option<u16> {
+        self.0.event_id
+    }
+
+    async fn version(&self) -> Option<u8> {
+        self.0.version
+    }
+
+    async fn level(&self) -> Option<u8> {
+        self.0.level
+    }
+
+    async fn task(&self) -> Option<u16> {
+        self.0.task
+    }
+
+    async fn opcode(&self) -> Option<u8> {
+        self.0.opcode
+    }
+
+    async fn keywords(&self) -> Option<StringNumber<u64>> {
+        self.0.keywords.map(StringNumber)
+    }
+
+    async fn record_id(&self) -> Option<StringNumber<u64>> {
+        self.0.record_id.map(StringNumber)
+    }
+
+    async fn computer(&self) -> Option<&str> {
+        self.0.computer.as_deref()
+    }
+
+    async fn user_sid(&self) -> Option<&str> {
+        self.0.user_sid.as_deref()
+    }
+
+    async fn event_data(&self) -> Option<Vec<SentaEndpointEventData<'_>>> {
+        self.0
+            .event_data
+            .as_ref()
+            .map(|items| items.iter().map(SentaEndpointEventData).collect())
+    }
+
+    async fn user_data_xml(&self) -> Option<&str> {
+        self.0.user_data_xml.as_deref()
+    }
+
+    async fn endpoint(&self) -> SentaEndpointHeader<'_> {
+        SentaEndpointHeader(&self.0.endpoint)
+    }
+}
+
+/// The `Journald` raw event body.
+pub(super) struct JournaldBody<'a>(&'a raw_event::Journald);
+
+#[Object]
+impl JournaldBody<'_> {
+    async fn fields(&self) -> Option<Vec<SentaEndpointLogField<'_>>> {
+        self.0
+            .fields
+            .as_ref()
+            .map(|fields| fields.iter().map(SentaEndpointLogField).collect())
+    }
+
+    async fn endpoint(&self) -> SentaEndpointHeader<'_> {
+        SentaEndpointHeader(&self.0.endpoint)
+    }
+}
+
+/// The `Auditd` raw event body.
+pub(super) struct AuditdBody<'a>(&'a raw_event::Auditd);
+
+#[Object]
+impl AuditdBody<'_> {
+    async fn serial(&self) -> Option<StringNumber<u64>> {
+        self.0.serial.map(StringNumber)
+    }
+
+    async fn records(&self) -> Option<Vec<SentaEndpointAuditRecord<'_>>> {
+        self.0
+            .records
+            .as_ref()
+            .map(|records| records.iter().map(SentaEndpointAuditRecord).collect())
+    }
+
+    async fn endpoint(&self) -> SentaEndpointHeader<'_> {
+        SentaEndpointHeader(&self.0.endpoint)
+    }
+}
+
+/// The host header of a raw event collected by Clumit Endpoint: the host the
+/// record was collected from and the host's network state at the time.
+pub(super) struct SentaEndpointHeader<'a>(&'a raw_event::EndpointHeader);
+
+#[Object]
+impl SentaEndpointHeader<'_> {
+    /// The id of the endpoint, a lowercase hyphenated UUID.
+    async fn endpoint_id(&self) -> String {
+        self.0.endpoint_id.hyphenated().to_string()
+    }
+
+    /// The stream the record was sent on, a lowercase hyphenated UUID.
+    async fn stream(&self) -> String {
+        self.0.stream.hyphenated().to_string()
+    }
+
+    /// The sequence number of the record within its stream.
+    async fn seq(&self) -> StringNumber<u64> {
+        StringNumber(self.0.seq)
+    }
+
+    /// When the event happened, in nanoseconds since the Unix epoch.
+    async fn event_time(&self) -> StringNumber<i64> {
+        StringNumber(self.0.event_time)
+    }
+
+    /// When the record was collected, in nanoseconds since the Unix epoch.
+    async fn collected_at(&self) -> StringNumber<i64> {
+        StringNumber(self.0.collected_at)
+    }
+
+    /// The measured offset of the endpoint's clock, if one was measured.
+    async fn clock_offset(&self) -> Option<SentaEndpointClockOffset<'_>> {
+        self.0.clock_offset.as_ref().map(SentaEndpointClockOffset)
+    }
+
+    /// The host name of the endpoint.
+    async fn hostname(&self) -> &str {
+        &self.0.hostname
+    }
+
+    /// The addresses of the endpoint.
+    async fn ips(&self) -> Vec<String> {
+        self.0.ips.iter().map(ToString::to_string).collect()
+    }
+
+    /// The default route address of the endpoint.
+    async fn default_route_ip(&self) -> Option<String> {
+        self.0.default_route_ip.map(|ip| ip.to_string())
+    }
+
+    /// How the network state was obtained: `observed`, `inferred`, `unknown`
+    /// or another value as sent.
+    async fn net_state_source(&self) -> &str {
+        net_state_source(&self.0.net_state_source)
+    }
+
+    /// The operating system family: `windows`, `linux`, `macos` or another
+    /// value as sent.
+    async fn os_family(&self) -> &str {
+        match &self.0.os_family {
+            raw_event::OsFamily::Windows => "windows",
+            raw_event::OsFamily::Linux => "linux",
+            raw_event::OsFamily::Macos => "macos",
+            raw_event::OsFamily::Other(family) => family,
+        }
+    }
+
+    /// The operating system version.
+    async fn os_version(&self) -> &str {
+        &self.0.os_version
+    }
+
+    /// The collection mode the endpoint ran in: `extended`, `essential` or
+    /// another value as sent.
+    async fn collection_mode(&self) -> &str {
+        match &self.0.collection_mode {
+            raw_event::CollectionMode::Extended => "extended",
+            raw_event::CollectionMode::Essential => "essential",
+            raw_event::CollectionMode::Other(mode) => mode,
+        }
+    }
+
+    /// The key of the process the record is about, as lowercase hexadecimal
+    /// characters.
+    async fn process_key(&self) -> Option<String> {
+        self.0.process_key.as_deref().map(hex)
+    }
+
+    /// The version of the record's schema.
+    async fn schema(&self) -> u16 {
+        self.0.schema
+    }
+}
+
+/// The measured offset of an endpoint's clock.
+pub(super) struct SentaEndpointClockOffset<'a>(&'a raw_event::ClockOffset);
+
+#[Object]
+impl SentaEndpointClockOffset<'_> {
+    /// The offset of the endpoint's clock, in milliseconds.
+    async fn offset_ms(&self) -> StringNumber<i64> {
+        StringNumber(self.0.offset_ms)
+    }
+
+    /// The uncertainty of the offset, in milliseconds.
+    async fn uncertainty_ms(&self) -> StringNumber<u32> {
+        StringNumber(self.0.uncertainty_ms)
+    }
+
+    /// When the offset was measured, in nanoseconds since the Unix epoch.
+    async fn measured_at(&self) -> StringNumber<i64> {
+        StringNumber(self.0.measured_at)
+    }
+}
+
+/// One `EventData` item of a Windows event log record.
+pub(super) struct SentaEndpointEventData<'a>(&'a raw_event::EventData);
+
+#[Object]
+impl SentaEndpointEventData<'_> {
+    /// The name of the item, null for an unnamed item.
+    async fn name(&self) -> Option<&str> {
+        self.0.name.as_deref()
+    }
+
+    /// The value of the item.
+    async fn value(&self) -> &str {
+        &self.0.value
+    }
+}
+
+/// One named field of a journald entry or an audit record.
+pub(super) struct SentaEndpointLogField<'a>(&'a raw_event::LogField);
+
+#[Object]
+impl SentaEndpointLogField<'_> {
+    /// The name of the field.
+    async fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    /// The value of the field: its text, or its bytes as lowercase
+    /// hexadecimal characters when `valueIsBytes` is true.
+    async fn value(&self) -> String {
+        match &self.0.value {
+            raw_event::LogValue::Text(text) => text.clone(),
+            raw_event::LogValue::Bytes(bytes) => hex(bytes),
+        }
+    }
+
+    /// Whether the value is bytes rather than text.
+    async fn value_is_bytes(&self) -> bool {
+        matches!(self.0.value, raw_event::LogValue::Bytes(_))
+    }
+}
+
+/// One record of an auditd event.
+pub(super) struct SentaEndpointAuditRecord<'a>(&'a raw_event::AuditRecord);
+
+#[Object]
+impl SentaEndpointAuditRecord<'_> {
+    /// The type of the record.
+    async fn record_type(&self) -> &str {
+        &self.0.record_type
+    }
+
+    /// The fields of the record.
+    async fn fields(&self) -> Vec<SentaEndpointLogField<'_>> {
+        self.0.fields.iter().map(SentaEndpointLogField).collect()
+    }
+}
+
+/// Returns how an endpoint's network state was obtained: `observed`,
+/// `inferred`, `unknown`, or the value of `Other` as sent.
+pub(super) fn net_state_source(source: &raw_event::NetStateSource) -> &str {
+    match source {
+        raw_event::NetStateSource::Observed => "observed",
+        raw_event::NetStateSource::Inferred => "inferred",
+        raw_event::NetStateSource::Unknown => "unknown",
+        raw_event::NetStateSource::Other(source) => source,
     }
 }
 

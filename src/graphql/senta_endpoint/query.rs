@@ -13,7 +13,6 @@
 //! Administrator only.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use async_graphql::{
     Context, Enum, ID, Object, Result, SimpleObject, StringNumber,
@@ -25,7 +24,9 @@ use uuid::Uuid;
 
 use super::{parse_customer_id, parse_hash, parse_uuid};
 use crate::graphql::customer_access::{is_member, users_customers};
-use crate::graphql::{Role, RoleGuard, get_store, query_with_constraints, timestamp::Timestamp};
+use crate::graphql::{
+    Role, RoleGuard, get_store, hex, query_with_constraints, timestamp::Timestamp,
+};
 
 /// The error a scoped caller gets for an endpoint or a customer outside its
 /// scope.
@@ -955,16 +956,6 @@ fn timestamp(nanoseconds: i64) -> Result<Timestamp> {
 
 fn uuid_id(id: Uuid) -> ID {
     ID(id.hyphenated().to_string())
-}
-
-/// Returns `bytes` as lowercase hexadecimal characters.
-fn hex(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
-            write!(text, "{byte:02x}").expect("writing to a String does not fail");
-            text
-        })
 }
 
 #[cfg(test)]

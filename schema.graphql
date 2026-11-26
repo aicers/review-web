@@ -413,6 +413,12 @@ enum AttrCmpKind {
 	NOT_RIGHT_OPEN_RANGE
 }
 
+type AuditdBody {
+	serial: StringNumber
+	records: [SentaEndpointAuditRecord!]
+	endpoint: SentaEndpointHeader!
+}
+
 """
 GraphQL output type for backup configuration settings.
 
@@ -1135,6 +1141,24 @@ enum CounterpartScope {
 	Counts only raw events whose other endpoint is external.
 	"""
 	EXTERNAL
+}
+
+type CreateRemoteThreadBody {
+	agentName: String!
+	agentId: String!
+	sourceProcessGuid: String!
+	sourceProcessId: StringNumber!
+	sourceImage: String!
+	targetProcessGuid: String!
+	targetProcessId: StringNumber!
+	targetImage: String!
+	newThreadId: StringNumber!
+	startAddress: String!
+	startModule: String!
+	startFunction: String!
+	sourceUser: String!
+	targetUser: String!
+	endpoint: SentaEndpointHeader
 }
 
 type CryptocurrencyMiningPoolDetail {
@@ -3122,6 +3146,7 @@ type DnsQueryBody {
 	queryResults: [String!]!
 	image: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type DomainGenerationAlgorithmDetail {
@@ -3129,6 +3154,17 @@ type DomainGenerationAlgorithmDetail {
 	The detection model, always `DOMAIN_GENERATION_ALGORITHM`.
 	"""
 	detectionModel: DetectionModel!
+}
+
+type DriverLoadBody {
+	agentName: String!
+	agentId: String!
+	imageLoaded: String!
+	hashes: [String!]!
+	signed: Boolean!
+	signature: String!
+	signatureStatus: String!
+	endpoint: SentaEndpointHeader
 }
 
 type ElementCount {
@@ -3741,6 +3777,7 @@ type FileCreateBody {
 	targetFilename: String!
 	creationUtcTime: StringNumber!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type FileCreateStreamHashBody {
@@ -3754,6 +3791,7 @@ type FileCreateStreamHashBody {
 	hash: [String!]!
 	contents: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type FileCreateTimeBody {
@@ -3766,6 +3804,7 @@ type FileCreateTimeBody {
 	creationUtcTime: StringNumber!
 	previousCreationUtcTime: StringNumber!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type FileDeleteBody {
@@ -3779,6 +3818,7 @@ type FileDeleteBody {
 	hashes: [String!]!
 	isExecutable: Boolean!
 	archived: Boolean!
+	endpoint: SentaEndpointHeader
 }
 
 type FileDeleteDetectedBody {
@@ -3791,6 +3831,7 @@ type FileDeleteDetectedBody {
 	targetFilename: String!
 	hashes: [String!]!
 	isExecutable: Boolean!
+	endpoint: SentaEndpointHeader
 }
 
 """
@@ -4024,6 +4065,7 @@ type ImageLoadBody {
 	signature: String!
 	signatureStatus: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 """
@@ -4089,6 +4131,11 @@ input IpRangeInput {
 A scalar that can represent any JSON value.
 """
 scalar JSON
+
+type JournaldBody {
+	fields: [SentaEndpointLogField!]
+	endpoint: SentaEndpointHeader!
+}
 
 type KerberosBody {
 	origAddr: String!
@@ -6074,6 +6121,7 @@ type NetworkConnectBody {
 	destinationHostname: String!
 	destinationPort: Int!
 	destinationPortName: String!
+	endpoint: SentaEndpointHeader
 }
 
 type NetworkConnection {
@@ -6875,6 +6923,7 @@ type PipeEventBody {
 	pipeName: String!
 	image: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 """
@@ -6961,7 +7010,24 @@ type PreviousTrainingResult {
 """
 The subject a detection event is primarily about.
 """
-union PrimarySubject = HostSubject | ClusterSubject | SensorSubject | NetworkSubject
+union PrimarySubject = HostSubject | ClusterSubject | SensorSubject | NetworkSubject | SentaEndpointSubject
+
+type ProcessAccessBody {
+	agentName: String!
+	agentId: String!
+	sourceProcessGuid: String!
+	sourceProcessId: StringNumber!
+	sourceThreadId: StringNumber!
+	sourceImage: String!
+	targetProcessGuid: String!
+	targetProcessId: StringNumber!
+	targetImage: String!
+	grantedAccess: StringNumber!
+	callTrace: String!
+	sourceUser: String!
+	targetUser: String!
+	endpoint: SentaEndpointHeader
+}
 
 type ProcessCreateBody {
 	agentName: String!
@@ -6987,6 +7053,8 @@ type ProcessCreateBody {
 	parentImage: String!
 	parentCommandLine: String!
 	parentUser: String!
+	endpoint: SentaEndpointHeader
+	logonIdFull: StringNumber
 }
 
 type ProcessTamperBody {
@@ -6997,6 +7065,7 @@ type ProcessTamperBody {
 	image: String!
 	tamperType: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type ProcessTerminateBody {
@@ -7006,6 +7075,7 @@ type ProcessTerminateBody {
 	processId: StringNumber!
 	image: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type Qualifier {
@@ -7194,9 +7264,11 @@ type Query {
 	order they arrived, from after the cursor `after`.
 	
 	An event belongs to the customer as it does for `eventList`: through
-	its sensor, or, for a time-series event without a sensor, through the
-	sensors of its policy. No other condition applies; `policies` only
-	scores the events and never removes one.
+	its sensor, which is a sensor of one of the customer's nodes or, for a
+	detection event about a Clumit Endpoint endpoint, the id of one of the
+	customer's endpoints; or, for a time-series event without a sensor,
+	through the sensors of its policy. No other condition applies;
+	`policies` only scores the events and never removes one.
 	
 	One call scans at most 10,000 arrival index rows and returns at most
 	`first` events (1 to 100, 100 when absent). `cursor` is the last row
@@ -8001,10 +8073,21 @@ type RankedOutlierEdge {
 	cursor: String!
 }
 
+type RawAccessReadBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	device: String!
+	user: String!
+	endpoint: SentaEndpointHeader
+}
+
 """
 The body of the raw event a detection event is about.
 """
-union RawEventBody = ConnBody | DnsBody | HttpBody | RdpBody | SmtpBody | NtlmBody | KerberosBody | SshBody | DceRpcBody | FtpBody | MqttBody | LdapBody | TlsBody | SmbBody | NfsBody | BootpBody | DhcpBody | RadiusBody | MalformedDnsBody | IcmpBody | ProcessCreateBody | FileCreateTimeBody | NetworkConnectBody | ProcessTerminateBody | ImageLoadBody | FileCreateBody | RegistryValueSetBody | RegistryKeyRenameBody | FileCreateStreamHashBody | PipeEventBody | DnsQueryBody | FileDeleteBody | ProcessTamperBody | FileDeleteDetectedBody | Netflow5Body | Netflow9Body
+union RawEventBody = ConnBody | DnsBody | HttpBody | RdpBody | SmtpBody | NtlmBody | KerberosBody | SshBody | DceRpcBody | FtpBody | MqttBody | LdapBody | TlsBody | SmbBody | NfsBody | BootpBody | DhcpBody | RadiusBody | MalformedDnsBody | IcmpBody | ProcessCreateBody | FileCreateTimeBody | NetworkConnectBody | ProcessTerminateBody | ImageLoadBody | FileCreateBody | RegistryValueSetBody | RegistryKeyRenameBody | FileCreateStreamHashBody | PipeEventBody | DnsQueryBody | FileDeleteBody | ProcessTamperBody | FileDeleteDetectedBody | Netflow5Body | Netflow9Body | DriverLoadBody | CreateRemoteThreadBody | RawAccessReadBody | ProcessAccessBody | RegistryObjectAddDelBody | WindowsEventLogBody | JournaldBody | AuditdBody
 
 """
 A raw event, named by its kind, the name of its sensor and its time.
@@ -8121,6 +8204,19 @@ type RegistryKeyRenameBody {
 	targetObject: String!
 	newName: String!
 	user: String!
+	endpoint: SentaEndpointHeader
+}
+
+type RegistryObjectAddDelBody {
+	agentName: String!
+	agentId: String!
+	eventType: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetObject: String!
+	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type RegistryValueSetBody {
@@ -8133,6 +8229,7 @@ type RegistryValueSetBody {
 	targetObject: String!
 	details: String!
 	user: String!
+	endpoint: SentaEndpointHeader
 }
 
 type Regression {
@@ -8560,6 +8657,32 @@ type SentaEndpointAddressDocumentSlot {
 	version: StringNumber!
 }
 
+type SentaEndpointAuditRecord {
+	"""
+	The type of the record.
+	"""
+	recordType: String!
+	"""
+	The fields of the record.
+	"""
+	fields: [SentaEndpointLogField!]!
+}
+
+type SentaEndpointClockOffset {
+	"""
+	The offset of the endpoint's clock, in milliseconds.
+	"""
+	offsetMs: StringNumber!
+	"""
+	The uncertainty of the offset, in milliseconds.
+	"""
+	uncertaintyMs: StringNumber!
+	"""
+	When the offset was measured, in nanoseconds since the Unix epoch.
+	"""
+	measuredAt: StringNumber!
+}
+
 """
 A command for an endpoint.
 """
@@ -8783,6 +8906,17 @@ enum SentaEndpointEnrollmentState {
 	DENIED
 }
 
+type SentaEndpointEventData {
+	"""
+	The name of the item, null for an unnamed item.
+	"""
+	name: String
+	"""
+	The value of the item.
+	"""
+	value: String!
+}
+
 """
 The `DuplicateKey` events and the Giganto loss records of an endpoint.
 """
@@ -8837,6 +8971,73 @@ type SentaEndpointGigantoLoss {
 	fetchedAt: DateTime!
 }
 
+type SentaEndpointHeader {
+	"""
+	The id of the endpoint, a lowercase hyphenated UUID.
+	"""
+	endpointId: String!
+	"""
+	The stream the record was sent on, a lowercase hyphenated UUID.
+	"""
+	stream: String!
+	"""
+	The sequence number of the record within its stream.
+	"""
+	seq: StringNumber!
+	"""
+	When the event happened, in nanoseconds since the Unix epoch.
+	"""
+	eventTime: StringNumber!
+	"""
+	When the record was collected, in nanoseconds since the Unix epoch.
+	"""
+	collectedAt: StringNumber!
+	"""
+	The measured offset of the endpoint's clock, if one was measured.
+	"""
+	clockOffset: SentaEndpointClockOffset
+	"""
+	The host name of the endpoint.
+	"""
+	hostname: String!
+	"""
+	The addresses of the endpoint.
+	"""
+	ips: [String!]!
+	"""
+	The default route address of the endpoint.
+	"""
+	defaultRouteIp: String
+	"""
+	How the network state was obtained: `observed`, `inferred`, `unknown`
+	or another value as sent.
+	"""
+	netStateSource: String!
+	"""
+	The operating system family: `windows`, `linux`, `macos` or another
+	value as sent.
+	"""
+	osFamily: String!
+	"""
+	The operating system version.
+	"""
+	osVersion: String!
+	"""
+	The collection mode the endpoint ran in: `extended`, `essential` or
+	another value as sent.
+	"""
+	collectionMode: String!
+	"""
+	The key of the process the record is about, as lowercase hexadecimal
+	characters.
+	"""
+	processKey: String
+	"""
+	The version of the record's schema.
+	"""
+	schema: Int!
+}
+
 """
 When a Giganto node last received data from an endpoint.
 """
@@ -8853,6 +9054,22 @@ type SentaEndpointLastReceived {
 	When `REview` fetched this time from the node.
 	"""
 	fetchedAt: DateTime!
+}
+
+type SentaEndpointLogField {
+	"""
+	The name of the field.
+	"""
+	name: String!
+	"""
+	The value of the field: its text, or its bytes as lowercase
+	hexadecimal characters when `valueIsBytes` is true.
+	"""
+	value: String!
+	"""
+	Whether the value is bytes rather than text.
+	"""
+	valueIsBytes: Boolean!
 }
 
 """
@@ -8937,6 +9154,30 @@ type SentaEndpointStatusReport {
 	reported none.
 	"""
 	addressDocumentSlot: SentaEndpointAddressDocumentSlot
+}
+
+type SentaEndpointSubject {
+	"""
+	The id of the endpoint, a lowercase hyphenated UUID.
+	"""
+	endpointId: String!
+	"""
+	The addresses of the endpoint.
+	"""
+	ips: [String!]!
+	"""
+	The default route address of the endpoint.
+	"""
+	defaultRouteIp: String
+	"""
+	How the endpoint's network state was obtained: `observed`, `inferred`,
+	`unknown` or another value as sent.
+	"""
+	netStateSource: String!
+	"""
+	The role the endpoint plays in the threat.
+	"""
+	role: ThreatRole!
 }
 
 """
@@ -10626,6 +10867,23 @@ enum WindowSize {
 	SIX_HOURS
 	TWELVE_HOURS
 	ONE_DAY
+}
+
+type WindowsEventLogBody {
+	channel: String
+	provider: String
+	eventId: Int
+	version: Int
+	level: Int
+	task: Int
+	opcode: Int
+	keywords: StringNumber
+	recordId: StringNumber
+	computer: String
+	userSid: String
+	eventData: [SentaEndpointEventData!]
+	userDataXml: String
+	endpoint: SentaEndpointHeader!
 }
 
 """

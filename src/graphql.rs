@@ -486,6 +486,19 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
         .unwrap_or_else(|e| panic!("RwLock poisoned: {e}")))
 }
 
+/// Returns `bytes` as lowercase hexadecimal characters, an empty string for no
+/// bytes.
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
+            write!(text, "{byte:02x}").expect("writing to a String does not fail");
+            text
+        })
+}
+
 #[allow(clippy::type_complexity)]
 fn process_load_edges<'a, T, I, R>(
     table: &'a T,

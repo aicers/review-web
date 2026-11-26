@@ -96,10 +96,22 @@ pub(crate) fn customer_source_names(store: &Store, customer_id: u32) -> Result<H
 /// Returns an error if a database iteration error occurs.
 pub(crate) fn customer_sensor_names(store: &Store, customer_id: u32) -> Result<HashSet<String>> {
     let map = store.node_map();
+    let nodes = map.iter(Direction::Forward, None).map(|entry| {
+        entry.map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))
+    });
+    sensor_names_of_customer(nodes, customer_id)
+}
+
+/// Returns the [`event_sensor_names`] of every node of `nodes` whose applied
+/// profile belongs to `customer_id`, whatever other customer's nodes yield
+/// the same name.
+fn sensor_names_of_customer(
+    nodes: impl IntoIterator<Item = Result<Node>>,
+    customer_id: u32,
+) -> Result<HashSet<String>> {
     let mut names = HashSet::new();
-    for entry in map.iter(Direction::Forward, None) {
-        let node = entry
-            .map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))?;
+    for node in nodes {
+        let node = node?;
         if node
             .profile
             .as_ref()
@@ -109,6 +121,28 @@ pub(crate) fn customer_sensor_names(store: &Store, customer_id: u32) -> Result<H
         }
     }
     Ok(names)
+}
+
+/// Returns the sensor names of the events `customer_id` owns: its
+/// [`customer_sensor_names`], and the id of each of its Clumit Endpoint
+/// endpoints, which is the sensor of a detection event about that endpoint.
+///
+/// # Errors
+///
+/// Returns an error if a database iteration error occurs or a stored
+/// endpoint row is invalid.
+pub(crate) fn customer_event_sensors(store: &Store, customer_id: u32) -> Result<HashSet<String>> {
+    let mut sensors = customer_sensor_names(store, customer_id)?;
+    let endpoints = store
+        .senta_endpoint_map()
+        .of_customer(customer_id)
+        .map_err(|e| async_graphql::Error::new(format!("failed to read endpoints: {e}")))?;
+    sensors.extend(
+        endpoints
+            .into_iter()
+            .map(|endpoint| endpoint.endpoint_id.to_string()),
+    );
+    Ok(sensors)
 }
 
 /// Builds a map from event sensor names to the customer ID of the node that
@@ -446,5 +480,49 @@ mod tests {
             ("piglet.b.example.com".to_string(), 2),
         ]);
         assert_eq!(map, expected);
+    }
+
+    /// A sensor name two customers' nodes both yield is in the sensor names of
+    /// each. The store refuses a hostname already in use, so the nodes are
+    /// given directly rather than read from it.
+    #[test]
+    fn a_shared_sensor_name_belongs_to_every_customer_that_yields_it() {
+        let nodes = || {
+            [
+                node(
+                    "shared-1",
+                    Some(profile(1, "shared.example.com")),
+                    None,
+                    vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+                ),
+                node(
+                    "shared-2",
+                    Some(profile(2, "shared.example.com")),
+                    None,
+                    vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+                ),
+                node(
+                    "own-2",
+                    Some(profile(2, "b.example.com")),
+                    None,
+                    vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+                ),
+            ]
+            .map(Ok)
+        };
+        let names = |customer_id| {
+            let mut names: Vec<_> = sensor_names_of_customer(nodes(), customer_id)
+                .unwrap()
+                .into_iter()
+                .collect();
+            names.sort_unstable();
+            names
+        };
+        assert_eq!(names(1), ["piglet.shared.example.com"]);
+        assert_eq!(
+            names(2),
+            ["piglet.b.example.com", "piglet.shared.example.com"]
+        );
+        assert_eq!(names(3), Vec::<String>::new());
     }
 }
