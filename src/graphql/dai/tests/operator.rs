@@ -312,6 +312,90 @@ async fn a_fixed_ip_without_a_site_is_at_the_one_site_in_use() {
 }
 
 #[tokio::test]
+async fn refused_rows_store_no_default_site() {
+    let schema = TestSchema::new().await;
+    // A single-site customer with no stored default site.
+    sensor(&schema.store(), "a.example.com", CUSTOMER);
+    let sites = || format!(r#"{{ daiSites(customerId: "{CUSTOMER}") {{ token isDefault }} }}"#);
+    let value = data(
+        &schema,
+        &import(
+            CUSTOMER,
+            &[
+                row("A", &[], &[(None, "not-an-ip")], "", ""),
+                row("", &[], &[(None, "10.0.0.60")], "", ""),
+                row(
+                    "GROUP",
+                    &["01:00:00:00:00:01"],
+                    &[(None, "10.0.0.61")],
+                    "",
+                    "",
+                ),
+                row("D", &[], &[], "", ""),
+                row("D", &[], &[(None, "10.0.0.62")], "", ""),
+                row(
+                    "UNKNOWN",
+                    &[],
+                    &[(None, "10.0.0.63"), (Some("nosuchst"), "10.0.0.64")],
+                    "",
+                    "",
+                ),
+            ],
+        ),
+    )
+    .await;
+    let outcomes: Vec<(&Value, &Value)> = results(&value)
+        .iter()
+        .map(|result| (&result["outcome"], &result["error"]["reason"]))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (&json!("ERROR"), &json!("INVALID_IP")),
+            (&json!("ERROR"), &json!("EMPTY_ASSET_ID")),
+            (&json!("ERROR"), &json!("INVALID_MAC")),
+            (&json!("CREATED"), &Value::Null),
+            (&json!("ERROR"), &json!("DUPLICATE_ASSET_ID")),
+            (&json!("ERROR"), &json!("UNKNOWN_SITE")),
+        ]
+    );
+    let message = results(&value)[5]["error"]["message"].as_str().unwrap();
+    assert!(message.contains("nosuchst"), "{message}");
+    assert_eq!(schema.store().dai_sites(CUSTOMER).unwrap(), Vec::new());
+    assert_eq!(
+        data(&schema, &sites()).await,
+        json!({ "daiSites": [{ "token": null, "isDefault": true }] })
+    );
+    for asset in ["A", "GROUP", "UNKNOWN"] {
+        assert_eq!(device_of_asset(&schema, asset), None, "{asset}");
+    }
+
+    // A row that is written stores the default site and its fixed IP at it.
+    let value = data(
+        &schema,
+        &import(
+            CUSTOMER,
+            &[
+                row("B", &[], &[(None, "not-an-ip")], "", ""),
+                row("C", &[], &[(None, "10.0.0.65")], "", ""),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(results(&value)[0]["error"]["reason"], json!("INVALID_IP"));
+    let device = results(&value)[1]["deviceId"].as_str().unwrap().to_string();
+    let site = default_site(&schema.store(), CUSTOMER);
+    assert_eq!(
+        data(&schema, &sites()).await,
+        json!({ "daiSites": [{ "token": site, "isDefault": true }] })
+    );
+    assert_eq!(
+        data(&schema, &detail(&device)).await["daiDevice"]["fixedIps"],
+        json!([{ "site": site, "ip": "10.0.0.65" }])
+    );
+}
+
+#[tokio::test]
 async fn more_than_10000_rows_are_refused_whole() {
     let schema = TestSchema::new().await;
     let rows: Vec<String> = (0..=10_000)
