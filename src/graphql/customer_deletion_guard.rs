@@ -14,10 +14,10 @@
 //!
 //! A deletion in turn is refused while a Data Store on one of the customer's
 //! nodes, which the deletion removes with the node, is used by another
-//! customer or by a host's system log collector; [`data_stores_in_use`]
-//! finds those users.
+//! customer, including through that customer's Clumit Endpoint agents, or by
+//! a host's system log collector; [`data_stores_in_use`] finds those users.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context as _, anyhow};
 use async_graphql::{ErrorExtensions, Result};
@@ -25,6 +25,7 @@ use review_database::{
     AgentKind, CustomerDataDeletionJob, CustomerDataDeletionService, CustomerDataDeletionStatus,
     ExternalServiceKind, Iterable, Node, Store, event::Direction,
 };
+use uuid::Uuid;
 
 use super::{
     customer_access::derive_customer_id_from_hostname, engine_document::EngineDocument,
@@ -56,7 +57,8 @@ pub(crate) fn customer_deletion_in_progress(
         .is_some_and(|job| unfinished(&job)))
 }
 
-fn unfinished(job: &CustomerDataDeletionJob) -> bool {
+/// Returns whether a result of `job` is not `Succeeded`.
+pub(super) fn unfinished(job: &CustomerDataDeletionJob) -> bool {
     job.service_results
         .iter()
         .any(|result| result.status != CustomerDataDeletionStatus::Succeeded)
@@ -218,14 +220,19 @@ impl DataStoresInUse {
 ///   of a detector;
 /// - a training definition of another customer whose `[data_store]` names
 ///   it;
-/// - a system log collector whose `data_store` it is.
+/// - a system log collector whose `data_store` it is;
+/// - another customer, through its endpoints: a Giganto last-received row
+///   names the Data Store's node, matched by
+///   [`data_store_server_name`]`(instance, host)`, for an endpoint whose
+///   endpoint row is that customer's. A row for one of the customer's own
+///   endpoints, or for an endpoint with no endpoint row, names no user.
 ///
 /// A text that does not parse names nothing.
 ///
 /// # Errors
 ///
-/// Returns an error if the nodes, training definitions or system log
-/// collectors cannot be read.
+/// Returns an error if the nodes, training definitions, system log
+/// collectors, Giganto last-received rows or endpoint rows cannot be read.
 pub(crate) fn data_stores_in_use(
     store: &Store,
     customer_id: u32,
@@ -284,6 +291,7 @@ pub(crate) fn data_stores_in_use(
             });
         }
     }
+    add_endpoint_users(store, customer_id, &mut own)?;
 
     let data_stores: Vec<_> = own
         .into_iter()
@@ -358,6 +366,51 @@ fn add_agent_users(own: &mut Users, node: &Node) {
             }
         }
     }
+}
+
+/// Adds each other customer whose endpoints a Giganto last-received row
+/// names on one of the customer's Data Stores as a user of it, with how many
+/// of its endpoints the rows name.
+fn add_endpoint_users(store: &Store, customer_id: u32, own: &mut Users) -> anyhow::Result<()> {
+    let endpoints = store.senta_endpoint_map();
+    // The customer of each endpoint looked up, `None` when it has no row.
+    let mut owners: HashMap<Uuid, Option<u32>> = HashMap::new();
+    let mut users: BTreeMap<(String, u32), BTreeSet<Uuid>> = BTreeMap::new();
+    for row in store.senta_endpoint_giganto_last_received_map().iter() {
+        let row = row.context("reading the Giganto last-received rows")?;
+        let server_name = data_store_server_name(row.key.node.instance, &row.key.node.host);
+        if !own.contains_key(&server_name) {
+            continue;
+        }
+        let endpoint_id = row.key.endpoint_id;
+        let owner = if let Some(owner) = owners.get(&endpoint_id) {
+            *owner
+        } else {
+            let owner = endpoints
+                .get(endpoint_id)
+                .with_context(|| format!("reading endpoint {endpoint_id}"))?
+                .map(|endpoint| endpoint.customer_id);
+            owners.insert(endpoint_id, owner);
+            owner
+        };
+        let Some(owner) = owner.filter(|owner| *owner != customer_id) else {
+            continue;
+        };
+        users
+            .entry((server_name, owner))
+            .or_default()
+            .insert(endpoint_id);
+    }
+    for ((server_name, owner), endpoint_ids) in users {
+        let count = endpoint_ids.len();
+        add_user(own, &server_name, || {
+            format!(
+                "{count} {} of customer {owner}",
+                if count == 1 { "endpoint" } else { "endpoints" }
+            )
+        });
+    }
+    Ok(())
 }
 
 fn agent_kind(kind: AgentKind) -> &'static str {
@@ -633,6 +686,7 @@ mod tests {
             .start(
                 Arc::new(crate::graphql::MockPackageDeployer::default()),
                 Arc::new(MockAgentManager {}),
+                Arc::new(crate::graphql::MockEndpointManager),
                 Arc::new(CustomerDataDeletionTaskManager::default()),
             )
             .await

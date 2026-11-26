@@ -14,6 +14,15 @@
 //! `ENDPOINT_TRUST_UNREADABLE`; `REview`'s own refusal code; and
 //! `ENDPOINT_NOT_SUPPORTED`. Any other failure is an error with no code.
 //!
+//! `registerEndpointCustomer`, and `resolveEndpointEnrollment` approving an
+//! attempt, add no endpoint to a customer that has a data deletion job: they
+//! read the job before the manager is called, and refuse, without calling
+//! it, with the refusal `REview` itself would return:
+//! `CUSTOMER_DELETION_IN_PROGRESS` while a result of the job is not
+//! `Succeeded`, and `CUSTOMER_DATA_ALREADY_DELETED` once every result is. The
+//! read is not one transaction with `REview`'s write; the store's own
+//! transaction refuses a job created in between.
+//!
 //! The read queries are in [`query`].
 
 mod query;
@@ -26,8 +35,8 @@ use tracing::info;
 use uuid::Uuid;
 
 pub(super) use self::query::SentaEndpointQuery;
-use super::customer_deletion_guard::CUSTOMER_DELETION_IN_PROGRESS;
-use super::{Role, RoleGuard};
+use super::customer_deletion_guard::{CUSTOMER_DELETION_IN_PROGRESS, unfinished};
+use super::{Role, RoleGuard, get_store};
 use crate::backend::{
     EndpointDocumentOutcome, EndpointEnrollmentAttemptKey, EndpointEnrollmentResolution,
     EndpointManagerError, EndpointRefusal, SharedEndpointManager,
@@ -103,6 +112,7 @@ impl SentaEndpointMutation {
             ctx,
             "Received a request to register customer {customer_id} for Clumit Endpoint"
         );
+        refuse_customer_with_deletion_job(ctx, customer_id)?;
         manager(ctx)?
             .register_customer(
                 customer_id,
@@ -215,6 +225,10 @@ impl SentaEndpointMutation {
     /// Resolves an enrollment attempt, keyed by the SPKI hash of the
     /// enrolling endpoint (64 lowercase hexadecimal characters) and the
     /// attempt id.
+    ///
+    /// Approving an attempt of a customer with a data deletion job is
+    /// refused, with `CUSTOMER_DELETION_IN_PROGRESS` or
+    /// `CUSTOMER_DATA_ALREADY_DELETED`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn resolve_endpoint_enrollment(
         &self,
@@ -232,6 +246,22 @@ impl SentaEndpointMutation {
             "Received a request to resolve Clumit Endpoint enrollment attempt {}",
             attempt.attempt_id
         );
+        if matches!(resolution, SentaEndpointEnrollmentResolution::Approve(_)) {
+            // An attempt with no row is passed on; `REview` refuses it.
+            let customer_id = get_store(ctx)?
+                .senta_endpoint_enrollment_attempt_map()
+                .get(&attempt.spki_hash, attempt.attempt_id)
+                .map_err(|e| {
+                    async_graphql::Error::new(format!(
+                        "reading enrollment attempt {}: {e:#}",
+                        attempt.attempt_id
+                    ))
+                })?
+                .map(|row| row.customer_id);
+            if let Some(customer_id) = customer_id {
+                refuse_customer_with_deletion_job(ctx, customer_id)?;
+            }
+        }
         manager(ctx)?
             .resolve_enrollment(attempt, resolution.into())
             .await
@@ -252,6 +282,29 @@ impl SentaEndpointMutation {
             .map_err(graphql_error)?;
         Ok(ID(command_id.hyphenated().to_string()))
     }
+}
+
+/// Refuses a write that would add an endpoint to customer `customer_id` if
+/// the customer has a data deletion job, with the refusal `REview` returns
+/// for it.
+fn refuse_customer_with_deletion_job(ctx: &Context<'_>, customer_id: u32) -> Result<()> {
+    let job = get_store(ctx)?
+        .customer_data_deletion_map()
+        .get(customer_id)
+        .map_err(|e| {
+            async_graphql::Error::new(format!(
+                "reading the deletion job of customer {customer_id}: {e:#}"
+            ))
+        })?;
+    let Some(job) = job else {
+        return Ok(());
+    };
+    let refusal = if unfinished(&job) {
+        EndpointRefusal::CustomerDeletionInProgress { customer_id }
+    } else {
+        EndpointRefusal::CustomerDataAlreadyDeleted { customer_id }
+    };
+    Err(graphql_error(EndpointManagerError::Refused(refusal)))
 }
 
 fn manager<'a>(ctx: &Context<'a>) -> Result<&'a SharedEndpointManager> {
@@ -355,7 +408,12 @@ mod tests {
         EndpointEnrollmentResolution, EndpointManager, EndpointManagerError, EndpointRefusal,
         EndpointRefusalCode, SharedEndpointManager,
     };
+    use crate::customer_data_deletion::CUSTOMER_DATA_ALREADY_DELETED;
     use crate::graphql::TestSchema;
+    use crate::graphql::customer_deletion_guard::{
+        CUSTOMER_DELETION_IN_PROGRESS,
+        test_support::{put_completed_job, put_running_job, put_stopped_job},
+    };
     use crate::graphql::logging_test_support::CapturedEvents;
 
     const CUSTOMER_ENDPOINT_ID: &str = "0b5d3c1e-7a4f-4e8b-9c2d-1f3a5b7c9d0e";
@@ -1135,5 +1193,133 @@ mod tests {
         let manager = FakeEndpointManager::default();
         manager.customer_endpoint_data_deleted(7).await.unwrap();
         assert_eq!(manager.calls(), [Call::CustomerEndpointDataDeleted(7)]);
+    }
+
+    /// Stores a pending enrollment attempt of `customer_id` under the key of
+    /// [`attempt`].
+    fn put_attempt(store: &review_database::Store, customer_id: u32) {
+        store
+            .senta_endpoint_enrollment_attempt_map()
+            .insert(&review_database::SentaEndpointEnrollmentAttempt {
+                spki_hash: spki_hash(),
+                attempt_id: Uuid::parse_str(ATTEMPT_ID).unwrap(),
+                customer_id,
+                request: vec![1],
+                source_address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                received_at: 1,
+                result: review_database::SentaEndpointEnrollmentResult::Pending {
+                    reason: "awaiting_approval".to_string(),
+                },
+            })
+            .unwrap();
+    }
+
+    fn resolution_query(resolution: &str) -> String {
+        format!(
+            r#"mutation {{ resolveEndpointEnrollment(spkiHash: "{SPKI_HASH}", attemptId: "{ATTEMPT_ID}", resolution: {{ {resolution}: "tag" }}) }}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn a_customer_with_a_deletion_job_gets_no_new_endpoint() {
+        type PutJob = fn(&review_database::Store, u32, &[&str]);
+        let jobs: [(&str, PutJob, &str, &str); 3] = [
+            (
+                "in progress",
+                put_running_job,
+                CUSTOMER_DELETION_IN_PROGRESS,
+                "the data deletion of customer 7 is unfinished",
+            ),
+            (
+                "failed",
+                put_stopped_job,
+                CUSTOMER_DELETION_IN_PROGRESS,
+                "the data deletion of customer 7 is unfinished",
+            ),
+            (
+                "succeeded",
+                put_completed_job,
+                CUSTOMER_DATA_ALREADY_DELETED,
+                "the data of customer 7 was already deleted",
+            ),
+        ];
+        let writes: Vec<String> = cases()
+            .into_iter()
+            .filter(|case| {
+                ["registerEndpointCustomer", "resolveEndpointEnrollment"].contains(&case.field)
+            })
+            .map(|case| case.query.to_string())
+            .collect();
+        assert_eq!(writes.len(), 2);
+        for (job, put_job, code, message) in jobs {
+            let schema = TestSchema::new().await;
+            put_job(&schema.store(), 7, &["a.example.com"]);
+            put_attempt(&schema.store(), 7);
+            for query in &writes {
+                let manager = Arc::new(FakeEndpointManager::default());
+                let response = execute_as_system_admin(&schema, query, &manager).await;
+                assert_eq!(
+                    codes(&response),
+                    [Some(Value::from(code))],
+                    "{job}: {query}"
+                );
+                assert_eq!(response.errors[0].message, message, "{job}: {query}");
+                assert!(manager.calls().is_empty(), "{job}: {query}");
+            }
+            // Leaving the attempt pending or rejecting it adds no endpoint.
+            for (resolution, expected) in [
+                (
+                    "pending",
+                    EndpointEnrollmentResolution::Pending("tag".to_string()),
+                ),
+                (
+                    "reject",
+                    EndpointEnrollmentResolution::Reject("tag".to_string()),
+                ),
+            ] {
+                let manager = Arc::new(FakeEndpointManager::default());
+                let response =
+                    execute_as_system_admin(&schema, &resolution_query(resolution), &manager).await;
+                assert!(response.errors.is_empty(), "{job}: {response:?}");
+                assert_eq!(
+                    manager.calls(),
+                    [Call::ResolveEnrollment(attempt(), expected)],
+                    "{job}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_customer_with_the_job_is_refused() {
+        let schema = TestSchema::new().await;
+        // Customer 7, of the attempt and of the registration, has no job.
+        put_running_job(&schema.store(), 8, &["a.example.com"]);
+        put_attempt(&schema.store(), 7);
+        for case in cases().into_iter().filter(|case| {
+            ["registerEndpointCustomer", "resolveEndpointEnrollment"].contains(&case.field)
+        }) {
+            let manager = Arc::new(FakeEndpointManager::default());
+            let response = execute_as_system_admin(&schema, case.query, &manager).await;
+            assert!(response.errors.is_empty(), "{}: {response:?}", case.field);
+            assert_eq!(manager.calls(), [case.call], "{}", case.field);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_approval_of_an_attempt_with_no_row_reaches_the_manager() {
+        let schema = TestSchema::new().await;
+        put_running_job(&schema.store(), 7, &["a.example.com"]);
+        let manager = Arc::new(FakeEndpointManager::default());
+        let response =
+            execute_as_system_admin(&schema, &resolution_query("approve"), &manager).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(
+            manager.calls(),
+            [Call::ResolveEnrollment(
+                attempt(),
+                EndpointEnrollmentResolution::Approve("tag".to_string())
+            )]
+        );
     }
 }
