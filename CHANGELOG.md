@@ -4,6 +4,12 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0](https://github.com/aicers/review-web/compare/0.66.0...0.67.0) - 2026-11-26
+
+### Other
+
+- *(deps)* [**breaking**] move review-database to 0.72.0 and refuse backups of earlier builds ([#1314](https://github.com/aicers/review-web/pull/1314))
+
 ## [0.66.0](https://github.com/aicers/review-web/compare/0.65.0...0.66.0) - 2026-11-26
 
 ### Added
