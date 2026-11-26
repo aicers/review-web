@@ -4,6 +4,12 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.0](https://github.com/aicers/review-web/compare/0.64.0...0.65.0) - 2026-11-26
+
+### Added
+
+- [**breaking**] delete a customer's Clumit Endpoint data with its customer data and refuse deletion while its endpoints are active ([#1304](https://github.com/aicers/review-web/pull/1304))
+
 ## [0.64.0](https://github.com/aicers/review-web/compare/0.63.0...0.64.0) - 2026-11-26
 
 ### Added
