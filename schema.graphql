@@ -1531,7 +1531,7 @@ type DetectionModelSubject {
 	kind: DetectionModelSubjectKind!
 	"""
 	Where the subject's threat role comes from; non-null exactly for
-	`HOST` and `NETWORK`.
+	`HOST`, `NETWORK` and `ENDPOINT`.
 	"""
 	roleSource: ThreatRoleSource
 }
@@ -1560,6 +1560,10 @@ enum DetectionModelSubjectKind {
 	A network.
 	"""
 	NETWORK
+	"""
+	An endpoint, a host running Clumit Endpoint.
+	"""
+	ENDPOINT
 }
 
 """
@@ -6309,6 +6313,14 @@ enum RawEventKind {
 	FILE_DELETE_DETECTED
 	NETFLOW_5
 	NETFLOW_9
+	DRIVER_LOAD
+	CREATE_REMOTE_THREAD
+	RAW_ACCESS_READ
+	PROCESS_ACCESS
+	REGISTRY_OBJECT_ADD_DEL
+	WINDOWS_EVENT_LOG
+	JOURNALD
+	AUDITD
 }
 
 type RawEventTarget {

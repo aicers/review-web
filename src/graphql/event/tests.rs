@@ -2996,6 +2996,8 @@ mod detection_event {
             parent_image: String::new(),
             parent_command_line: String::new(),
             parent_user: String::new(),
+            endpoint: None,
+            logon_id_full: None,
         }
     }
 
@@ -3951,6 +3953,112 @@ mod detection_event {
                 }),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_body_or_subject_is_a_field_error() {
+        let schema = TestSchema::new().await;
+        let endpoint_id = uuid::Uuid::from_u128(1);
+        {
+            let store = schema.store();
+            let events = store.events();
+            let driver_load = raw_event::DriverLoad {
+                agent_name: "agent".to_string(),
+                agent_id: "agent-1".to_string(),
+                image_loaded: "C:\\Windows\\driver.sys".to_string(),
+                hashes: Vec::new(),
+                signed: true,
+                signature: String::new(),
+                signature_status: String::new(),
+                endpoint: None,
+            };
+            events
+                .put_event(&raw_event(
+                    at(0),
+                    "sensor1",
+                    RawEventKind::DriverLoad,
+                    RawEventBody::DriverLoad(driver_load),
+                    Detail::TorExitNode,
+                ))
+                .unwrap();
+            events
+                .put_event(&subject_event(
+                    at(1),
+                    Some(&endpoint_id.to_string()),
+                    PrimarySubject::Endpoint {
+                        endpoint_id,
+                        ips: Vec::new(),
+                        default_route_ip: None,
+                        net_state_source: raw_event::NetStateSource::Unknown,
+                        role: ThreatRole::Actor,
+                    },
+                    Vec::new(),
+                    Detail::TorExitNode,
+                ))
+                .unwrap();
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                "{ eventList(filter: {}) { edges { node { rawEventKind } } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "eventList": { "edges": [
+                { "node": { "rawEventKind": "DRIVER_LOAD" } },
+                { "node": { "rawEventKind": "CONN" } },
+            ] } })
+        );
+
+        // Only the failing field is dropped: both edges and the total count
+        // survive, and the one error points at the failing field.
+        for (field, message, path) in [
+            (
+                "... on RawEventTarget { body { __typename } }",
+                "the raw event body of this kind is not supported",
+                json!(["eventList", "edges", 0, "node", "target", "body"]),
+            ),
+            (
+                "... on SubjectTarget { primary { __typename } }",
+                "the endpoint primary subject is not supported",
+                json!(["eventList", "edges", 1, "node", "target", "primary"]),
+            ),
+        ] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventList(filter: {{}}) {{ totalCount edges {{ node {{
+                        rawEventKind target {{ __typename {field} }}
+                    }} }} }} }}"
+                ))
+                .await;
+            let errors: Vec<_> = res
+                .errors
+                .iter()
+                .map(|error| {
+                    (
+                        error.message.as_str(),
+                        serde_json::to_value(&error.path).unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(errors, [(message, path)], "{field}");
+            assert_eq!(
+                res.data.into_json().unwrap(),
+                json!({ "eventList": { "totalCount": "2", "edges": [
+                    { "node": {
+                        "rawEventKind": "DRIVER_LOAD",
+                        "target": { "__typename": "RawEventTarget" },
+                    } },
+                    { "node": {
+                        "rawEventKind": "CONN",
+                        "target": { "__typename": "SubjectTarget" },
+                    } },
+                ] } }),
+                "{field}"
+            );
+        }
     }
 }
 

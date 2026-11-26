@@ -472,6 +472,8 @@ mod tests {
             parent_image: String::new(),
             parent_command_line: String::new(),
             parent_user: String::new(),
+            endpoint: None,
+            logon_id_full: None,
         };
         let events = [42, 43].map(|process_id| {
             raw_event(

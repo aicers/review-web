@@ -2,7 +2,7 @@
 
 use std::net::IpAddr;
 
-use async_graphql::{Enum, ID, Object, SimpleObject, StringNumber, Union};
+use async_graphql::{Enum, ID, Object, Result, SimpleObject, StringNumber, Union};
 use review_database::{self as database, StoredDetectionEvent};
 use review_protocol::types as protocol;
 
@@ -260,8 +260,8 @@ impl<'a> RawEventTarget<'a> {
     }
 
     /// The body of the raw event.
-    async fn body(&self) -> RawEventBody<'a> {
-        self.body.into()
+    async fn body(&self) -> Result<RawEventBody<'a>> {
+        self.body.try_into()
     }
 }
 
@@ -277,8 +277,8 @@ pub(super) struct SubjectTarget<'a> {
 #[Object]
 impl<'a> SubjectTarget<'a> {
     /// The subject the event is primarily about.
-    async fn primary(&self) -> PrimarySubject<'a> {
-        match self.primary {
+    async fn primary(&self) -> Result<PrimarySubject<'a>> {
+        Ok(match self.primary {
             protocol::PrimarySubject::Host { ip, role } => PrimarySubject::Host(HostSubject {
                 ip: *ip,
                 role: (*role).into(),
@@ -302,7 +302,10 @@ impl<'a> SubjectTarget<'a> {
                 name,
                 role: (*role).into(),
             }),
-        }
+            protocol::PrimarySubject::Endpoint { .. } => {
+                return Err("the endpoint primary subject is not supported".into());
+            }
+        })
     }
 
     /// The other addresses involved, each with the side it was observed on.

@@ -1,5 +1,7 @@
 //! The GraphQL types of raw event bodies, one per review-protocol
-//! `RawEventBody` variant, each exposing every field of its body struct.
+//! `RawEventBody` variant, each exposing every field of its body struct
+//! except the endpoint host header `endpoint` and `ProcessCreate`'s
+//! `logon_id_full`.
 //!
 //! An integer type wider than a signed 32-bit integer is a `StringNumber`,
 //! so that every value keeps its full range.
@@ -48,10 +50,13 @@ pub(super) enum RawEventBody<'a> {
     Netflow9(Netflow9Body<'a>),
 }
 
-impl<'a> From<&'a protocol::RawEventBody> for RawEventBody<'a> {
-    fn from(body: &'a protocol::RawEventBody) -> Self {
+impl<'a> TryFrom<&'a protocol::RawEventBody> for RawEventBody<'a> {
+    type Error = async_graphql::Error;
+
+    /// Fails for a body kind this schema has no type for.
+    fn try_from(body: &'a protocol::RawEventBody) -> Result<Self, Self::Error> {
         // No wildcard arm: a body added to review-protocol must be mapped.
-        match body {
+        Ok(match body {
             protocol::RawEventBody::Conn(body) => Self::Conn(ConnBody(body)),
             protocol::RawEventBody::Dns(body) => Self::Dns(DnsBody(body)),
             protocol::RawEventBody::Http(body) => Self::Http(HttpBody(body)),
@@ -108,7 +113,17 @@ impl<'a> From<&'a protocol::RawEventBody> for RawEventBody<'a> {
             }
             protocol::RawEventBody::Netflow5(body) => Self::Netflow5(Netflow5Body(body)),
             protocol::RawEventBody::Netflow9(body) => Self::Netflow9(Netflow9Body(body)),
-        }
+            protocol::RawEventBody::DriverLoad(_)
+            | protocol::RawEventBody::CreateRemoteThread(_)
+            | protocol::RawEventBody::RawAccessRead(_)
+            | protocol::RawEventBody::ProcessAccess(_)
+            | protocol::RawEventBody::RegistryObjectAddDel(_)
+            | protocol::RawEventBody::WindowsEventLog(_)
+            | protocol::RawEventBody::Journald(_)
+            | protocol::RawEventBody::Auditd(_) => {
+                return Err("the raw event body of this kind is not supported".into());
+            }
+        })
     }
 }
 
