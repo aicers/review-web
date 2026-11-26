@@ -396,6 +396,129 @@ async fn refused_rows_store_no_default_site() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // One scenario, request by request.
+async fn rows_refused_for_other_devices_store_no_default_site() {
+    let schema = TestSchema::new().await;
+    // A single-site customer with no stored default site, and devices
+    // imported without fixed IPs, which need no site.
+    sensor(&schema.store(), "a.example.com", CUSTOMER);
+    let m = mac_text;
+    let sites = || format!(r#"{{ daiSites(customerId: "{CUSTOMER}") {{ token isDefault }} }}"#);
+    let value = data(
+        &schema,
+        &import(
+            CUSTOMER,
+            &[
+                row("A", &[&m(0x71)], &[], "", ""),
+                row("B", &[&m(0x72)], &[], "", ""),
+            ],
+        ),
+    )
+    .await;
+    let held = results(&value)[0]["deviceId"].as_str().unwrap().to_string();
+    let other = results(&value)[1]["deviceId"].as_str().unwrap().to_string();
+    assert_eq!(schema.store().dai_sites(CUSTOMER).unwrap(), Vec::new());
+
+    // Rows with a fixed IP without a site that review-database refuses for
+    // the devices their asset id and MACs name, including one named by an
+    // earlier row of the same request.
+    let value = data(
+        &schema,
+        &import(
+            CUSTOMER,
+            &[
+                row("X", &[&m(0x71)], &[(None, "10.0.0.70")], "", ""),
+                row("Y", &[&m(0x71), &m(0x72)], &[(None, "10.0.0.71")], "", ""),
+                row("C", &[&m(0x73)], &[], "", ""),
+                row("Z", &[&m(0x73)], &[(None, "10.0.0.72")], "", ""),
+            ],
+        ),
+    )
+    .await;
+    let earlier = results(&value)[2]["deviceId"].as_str().unwrap().to_string();
+    let mut merge = vec![held.clone(), other.clone()];
+    merge.sort_unstable();
+    let outcomes: Vec<(&Value, &Value, &Value)> = results(&value)
+        .iter()
+        .map(|result| {
+            (
+                &result["outcome"],
+                &result["error"]["reason"],
+                &result["error"]["deviceIds"],
+            )
+        })
+        .collect();
+    let null = Value::Null;
+    assert_eq!(
+        outcomes,
+        [
+            (&json!("ERROR"), &json!("ASSET_ID_MISMATCH"), &json!([held])),
+            (&json!("ERROR"), &json!("MERGE_FIRST"), &json!(merge)),
+            (&json!("CREATED"), &null, &null),
+            (
+                &json!("ERROR"),
+                &json!("ASSET_ID_MISMATCH"),
+                &json!([earlier])
+            ),
+        ]
+    );
+    assert_eq!(schema.store().dai_sites(CUSTOMER).unwrap(), Vec::new());
+    assert_eq!(
+        data(&schema, &sites()).await,
+        json!({ "daiSites": [{ "token": null, "isDefault": true }] })
+    );
+    for asset in ["X", "Y", "Z"] {
+        assert_eq!(device_of_asset(&schema, asset), None, "{asset}");
+    }
+
+    // A row that is written stores the default site, with its values and
+    // its fixed IP at it, and a later row of the request goes there too.
+    let value = data(
+        &schema,
+        &import(
+            CUSTOMER,
+            &[
+                row("A", &[&m(0x71)], &[(None, "10.0.0.73")], "Desk", "note"),
+                row("D", &[], &[(None, "10.0.0.74")], "", ""),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(
+        results(&value)[0],
+        json!({ "outcome": "UPDATED", "deviceId": held, "error": null })
+    );
+    assert_eq!(results(&value)[1]["outcome"], json!("CREATED"));
+    let created = results(&value)[1]["deviceId"].as_str().unwrap().to_string();
+    let site = default_site(&schema.store(), CUSTOMER);
+    assert_eq!(
+        data(&schema, &sites()).await,
+        json!({ "daiSites": [{ "token": site, "isDefault": true }] })
+    );
+    let value = data(&schema, &detail(&held)).await;
+    let device = &value["daiDevice"];
+    assert_eq!(device["memo"], json!("note"));
+    assert_eq!(
+        device["names"],
+        json!([{ "value": "Desk", "source": "OPERATOR" }])
+    );
+    assert_eq!(
+        device["fixedIps"],
+        json!([{ "site": site, "ip": "10.0.0.73" }])
+    );
+    assert!(
+        device["identifiers"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({ "kind": "MAC", "value": m(0x71) }))
+    );
+    assert_eq!(
+        data(&schema, &detail(&created)).await["daiDevice"]["fixedIps"],
+        json!([{ "site": site, "ip": "10.0.0.74" }])
+    );
+}
+
+#[tokio::test]
 async fn more_than_10000_rows_are_refused_whole() {
     let schema = TestSchema::new().await;
     let rows: Vec<String> = (0..=10_000)

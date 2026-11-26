@@ -56,7 +56,7 @@ impl DaiOperatorMutation {
             SiteInUse::None
         };
         let mut rows_at_unstored = Vec::with_capacity(rows.len());
-        let (mut rows, parse_errors): (Vec<DaiImportRow>, Vec<Option<ParsedRowError>>) = rows
+        let (rows, parse_errors): (Vec<DaiImportRow>, Vec<Option<ParsedRowError>>) = rows
             .into_iter()
             .map(|row| match row.parse(&site_in_use) {
                 Ok((row, at_unstored)) => {
@@ -69,12 +69,13 @@ impl DaiOperatorMutation {
                 }
             })
             .unzip();
-        if matches!(site_in_use, SiteInUse::Unstored) {
-            place_at_default_site(&store, customer_id, &mut rows, &rows_at_unstored)?;
-        }
-        let outcomes = store
-            .import_dai_devices(customer_id, &rows)
-            .map_err(dai_refusal)?;
+        let outcomes = if matches!(site_in_use, SiteInUse::Unstored) {
+            import_at_unstored_default(&store, customer_id, rows, rows_at_unstored)?
+        } else {
+            store
+                .import_dai_devices(customer_id, &rows)
+                .map_err(dai_refusal)?
+        };
         if outcomes.len() != parse_errors.len() {
             return Err("review-database answered a different number of rows".into());
         }
@@ -223,14 +224,6 @@ impl DaiOperatorMutation {
     }
 }
 
-/// The token a parsed row carries for the customer's default site while that
-/// site is not stored.
-///
-/// No site has it, as a token is 8 characters of `[a-z0-9]`. It sorts after
-/// every such token, and review-database checks a row's sites in their order,
-/// so a row also naming another unknown token is refused naming that one.
-const UNSTORED_SITE: &str = "\u{10FFFF}";
-
 /// The site a fixed IP without a site token is at.
 enum SiteInUse {
     /// The customer's one site in use.
@@ -270,87 +263,128 @@ fn site_in_use(store: &Store, customer_id: u32, now: i64) -> Result<SiteInUse> {
     }
 }
 
-/// Stores the customer's default site and puts its token in the fixed IPs
-/// `at_unstored` gives for each row, if review-database's checks of one of
-/// those rows reach its fixed IPs' sites; otherwise leaves the rows as they
-/// are, for review-database to refuse.
+/// Imports `rows` for a customer whose default site is not stored, and
+/// returns one outcome per row, in input order.
 ///
-/// A row whose site-less fixed IPs are at the unstored default site needs
-/// that site stored before it can be written, but storing it for a row that
-/// is then refused would write for an error row. So the rows are first
-/// probed in one import that writes nothing: each row with such a fixed IP
-/// as it is, and every other row as its placeholder, so each probed row sees
-/// the asset ids of the rows before it as the import will. review-database
-/// checks a row's asset id and MACs first and its fixed IPs' sites next,
-/// before it writes anything, and no site has the unstored token, so a
-/// probed row it refuses for an unknown site passed every check before the
-/// sites. The row also has to name no other unknown site, which the stored
-/// sites tell, since review-database names only the first. The rest of review-database's checks need the sites stored, so a
-/// row refused by one of them (its MACs and asset id naming other devices,
-/// or a fixed IP held by another device) still leaves the default site
-/// stored.
-fn place_at_default_site(
+/// `at_unstored` gives, for each row, the positions of its fixed IPs at the
+/// unstored default site. Such a row needs the default site stored before
+/// review-database can write it, but storing it for a row that is then
+/// refused would write for an error row, and review-database refuses a row
+/// for an unknown site before it checks the row's asset id and MACs, and
+/// removes no default site. So the rows are imported in order, and the
+/// first row with such a fixed IP that review-database would accept is
+/// written in two steps: first without those fixed IPs, which writes
+/// nothing if the row is refused; then, only once that is written, the
+/// default site is stored and the whole row is imported again, now
+/// updating the device it wrote. Each row of a step sees every earlier row
+/// written. A row before it is refused for whatever review-database finds,
+/// as it would be with the site stored, since no fixed IP can be held at a
+/// site that does not exist. The rows after it go at the stored site.
+///
+/// The row so written gets two versions and two change entries rather
+/// than one, and a concurrent write between the steps (another import
+/// fixing the same IP) can leave its first step written while it is
+/// reported as refused.
+fn import_at_unstored_default(
     store: &Store,
     customer_id: u32,
-    rows: &mut [DaiImportRow],
-    at_unstored: &[Vec<usize>],
-) -> Result<()> {
-    if at_unstored.iter().all(Vec::is_empty) {
-        return Ok(());
-    }
-    let probe: Vec<DaiImportRow> = rows
-        .iter()
-        .zip(at_unstored)
-        .map(|(row, at)| {
-            if at.is_empty() {
-                placeholder(&row.asset_id)
-            } else {
-                row.clone()
-            }
-        })
-        .collect();
-    let outcomes = store
-        .import_dai_devices(customer_id, &probe)
-        .map_err(dai_refusal)?;
-    let stored: Vec<String> = store
-        .dai_sites(customer_id)
-        .map_err(dai_refusal)?
-        .into_iter()
-        .map(|site| site.token)
-        .collect();
-    let reaches_sites = rows
-        .iter()
-        .zip(at_unstored)
-        .zip(&outcomes)
-        .any(|((row, at), outcome)| {
-            !at.is_empty()
-                && matches!(
-                    outcome,
-                    DaiImportOutcome::Error(DaiImportRowError::UnknownSite { .. })
-                )
-                && row
-                    .fixed_ips
-                    .iter()
-                    .all(|(site, _)| site == UNSTORED_SITE || stored.contains(site))
+    rows: Vec<DaiImportRow>,
+    at_unstored: Vec<Vec<usize>>,
+) -> Result<Vec<DaiImportOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    // The placeholders of the rows imported so far, then the rows to import
+    // next, so each row sees the asset ids of the rows before it.
+    let mut request = Vec::with_capacity(rows.len());
+    let mut done = 0;
+    let mut default_site: Option<String> = None;
+    for (mut row, at) in rows.into_iter().zip(at_unstored) {
+        if at.is_empty() {
+            request.push(row);
+            continue;
+        }
+        if let Some(token) = &default_site {
+            put_site(&mut row, &at, token);
+            request.push(row);
+            continue;
+        }
+        outcomes.extend(import_from(store, customer_id, &mut request, done)?);
+        done = request.len();
+        let mut without = row.clone();
+        without.fixed_ips = std::mem::take(&mut without.fixed_ips)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, fixed)| (!at.contains(&index)).then_some(fixed))
+            .collect();
+        request.push(without);
+        let first = last_outcome(import_from(store, customer_id, &mut request, done)?)?;
+        if matches!(first, DaiImportOutcome::Error(_)) {
+            outcomes.push(first);
+            done = request.len();
+            continue;
+        }
+        // The row is written; it is imported again whole, in place of the
+        // placeholder that would refuse it for its own asset id.
+        request.pop();
+        let token = store
+            .ensure_default_site(customer_id)
+            .map_err(dai_refusal)?;
+        put_site(&mut row, &at, &token);
+        default_site = Some(token);
+        request.push(row);
+        let second = last_outcome(import_from(store, customer_id, &mut request, done)?)?;
+        outcomes.push(match second {
+            DaiImportOutcome::Error(_) => second,
+            _ => first,
         });
-    if !reaches_sites {
-        return Ok(());
+        done = request.len();
     }
-    let token = store
-        .ensure_default_site(customer_id)
+    outcomes.extend(import_from(store, customer_id, &mut request, done)?);
+    Ok(outcomes)
+}
+
+/// Imports the rows of `request`, returns the outcomes of those from `done`
+/// on, and puts each of them in its placeholder's place; the rows before
+/// `done` are placeholders already, which write nothing.
+fn import_from(
+    store: &Store,
+    customer_id: u32,
+    request: &mut [DaiImportRow],
+    done: usize,
+) -> Result<Vec<DaiImportOutcome>> {
+    if done >= request.len() {
+        return Ok(Vec::new());
+    }
+    let outcomes = store
+        .import_dai_devices(customer_id, request)
         .map_err(dai_refusal)?;
-    for (row, at) in rows.iter_mut().zip(at_unstored) {
-        for &index in at {
-            if let Some((site, _)) = row.fixed_ips.get_mut(index) {
-                site.clone_from(&token);
-            }
+    if outcomes.len() != request.len() {
+        return Err("review-database answered a different number of rows".into());
+    }
+    for row in request.iter_mut().skip(done) {
+        *row = placeholder(&std::mem::take(&mut row.asset_id));
+    }
+    Ok(outcomes.into_iter().skip(done).collect())
+}
+
+/// Returns the one outcome an import of one row answered.
+fn last_outcome(outcomes: Vec<DaiImportOutcome>) -> Result<DaiImportOutcome> {
+    Ok(outcomes
+        .into_iter()
+        .last()
+        .ok_or("review-database answered no row")?)
+}
+
+/// Puts `token` as the site of the fixed IPs of `row` at the positions `at`.
+fn put_site(row: &mut DaiImportRow, at: &[usize], token: &str) {
+    for &index in at {
+        if let Some((site, _)) = row.fixed_ips.get_mut(index) {
+            token.clone_into(site);
         }
     }
-    Ok(())
 }
 
 /// Returns the row review-database is given in place of a row this layer
-/// refused or does not probe: one it is sure to refuse, for an empty or
+/// refused or one already imported: one it is sure to refuse, for an empty or
 /// repeated asset id or else for its MAC, writing nothing, and that still
 /// takes the row's place in the request, so a later row repeating its asset
 /// id is refused as such.
@@ -380,7 +414,8 @@ struct DaiImportRowInput {
 
 impl DaiImportRowInput {
     /// Returns the row review-database takes, with the positions of its
-    /// fixed IPs at the unstored default site, or the row's parse error.
+    /// fixed IPs at the unstored default site, whose site is left empty
+    /// until that site is stored, or the row's parse error.
     fn parse(self, site_in_use: &SiteInUse) -> Result<(DaiImportRow, Vec<usize>), ParsedRowError> {
         let refuse = |reason, message| ParsedRowError {
             asset_id: self.asset_id.clone(),
@@ -405,7 +440,7 @@ impl DaiImportRowInput {
                 (Some(site), _) | (None, SiteInUse::One(site)) => site.clone(),
                 (None, SiteInUse::Unstored) => {
                     at_unstored.push(fixed_ips.len());
-                    UNSTORED_SITE.to_string()
+                    String::new()
                 }
                 (None, _) => {
                     return Err(refuse(
