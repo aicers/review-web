@@ -143,6 +143,30 @@ async fn corrupted_event_store_returns_field_errors() {
         .await;
     assert_eq!(response.errors.len(), 1);
     assert!(!response.data.into_json().unwrap()["event"].is_null());
+
+    // `detectionEventsByArrival` reads the record of every row it scans,
+    // the damaged one included, even for a customer with no sensors.
+    let mut after = String::new();
+    let error = loop {
+        let response = schema
+            .execute_as_system_admin(&format!(
+                "{{ detectionEventsByArrival(customerId: \"1\"{after}) {{ cursor hasMore }} }}"
+            ))
+            .await;
+        if let Some(error) = response.errors.first() {
+            assert_eq!(response.data.into_json().unwrap(), serde_json::Value::Null);
+            break error.clone();
+        }
+        let data = response.data.into_json().unwrap();
+        let page = &data["detectionEventsByArrival"];
+        assert_eq!(page["hasMore"], serde_json::json!(true), "{data}");
+        after = format!(", after: \"{}\"", page["cursor"].as_str().unwrap());
+    };
+    assert_eq!(error.message, "failed to read events");
+    assert_eq!(
+        serde_json::to_value(&error.path).unwrap(),
+        serde_json::json!(["detectionEventsByArrival"])
+    );
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -4993,5 +5017,588 @@ mod time_series_events {
             .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![2]))
             .await;
         assert_eq!(res.data.to_string(), r"{event: null}");
+    }
+}
+
+/// `detectionEventsByArrival` and `oldestDetectionEventTime`.
+mod arrival {
+    use review_protocol::types::{PrimarySubject, ThreatRole, WindowOutlierDetail};
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::graphql::{
+        event_test_support::subject_event,
+        time_series_generation_test_support::{
+            PolicyShape, insert_generator_node, insert_shaped_policy, sensor_name,
+        },
+    };
+
+    const HOST_A: &str = "a.example.com";
+    const HOST_B: &str = "b.example.com";
+    const CUSTOMER_A: u32 = 1;
+    const CUSTOMER_B: u32 = 2;
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_700_000_000 + second).expect("a test time")
+    }
+
+    /// Returns a test schema with a sensor node of customer 1 and one of
+    /// customer 2.
+    async fn schema() -> TestSchema {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            insert_generator_node(&store, HOST_A, CUSTOMER_A);
+            insert_generator_node(&store, HOST_B, CUSTOMER_B);
+        }
+        schema
+    }
+
+    /// Stores a `DnsCovertChannel` event of `host`'s sensor at `time` and
+    /// returns its key.
+    fn put(schema: &TestSchema, time: Timestamp, host: &str) -> i128 {
+        put_with_category(schema, time, host, Some(EventCategory::CommandAndControl))
+    }
+
+    fn put_with_category(
+        schema: &TestSchema,
+        time: Timestamp,
+        host: &str,
+        category: Option<EventCategory>,
+    ) -> i128 {
+        schema
+            .store()
+            .events()
+            .put_event(&dns_event(
+                time,
+                Ipv4Addr::new(10, 0, 0, 1).into(),
+                Ipv4Addr::new(10, 0, 0, 2).into(),
+                category,
+                &sensor_name(host),
+            ))
+            .unwrap()
+    }
+
+    /// A page read by `detectionEventsByArrival`.
+    #[derive(Debug)]
+    struct Page {
+        ids: Vec<String>,
+        cursor: Option<String>,
+        has_more: bool,
+    }
+
+    fn query(customer: u32, arguments: &str) -> String {
+        format!(
+            "{{ detectionEventsByArrival(customerId: \"{customer}\"{arguments}) {{ \
+                events {{ id time triageScores {{ policyId score }} }} cursor hasMore \
+            }} }}"
+        )
+    }
+
+    fn after(cursor: Option<&str>) -> String {
+        cursor.map_or_else(String::new, |cursor| format!(", after: \"{cursor}\""))
+    }
+
+    fn page_of(res: async_graphql::Response) -> Page {
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let page = &data["detectionEventsByArrival"];
+        Page {
+            ids: page["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["id"].as_str().unwrap().to_string())
+                .collect(),
+            cursor: page["cursor"].as_str().map(ToString::to_string),
+            has_more: page["hasMore"].as_bool().unwrap(),
+        }
+    }
+
+    async fn read(schema: &TestSchema, customer: u32, arguments: &str) -> Page {
+        page_of(
+            schema
+                .execute_as_system_admin(&query(customer, arguments))
+                .await,
+        )
+    }
+
+    fn ids(keys: &[i128]) -> Vec<String> {
+        keys.iter().map(ToString::to_string).collect()
+    }
+
+    fn error_of(res: &async_graphql::Response) -> &str {
+        assert_eq!(res.data, async_graphql::Value::Null, "{:?}", res.data);
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        &res.errors[0].message
+    }
+
+    #[tokio::test]
+    async fn a_late_event_is_read_after_the_events_that_arrived_before_it() {
+        let schema = schema().await;
+        let on_time: Vec<_> = (0..3)
+            .map(|i| put(&schema, at(2 * 86_400 + i), HOST_A))
+            .collect();
+        let first = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(first.ids, ids(&on_time));
+        assert!(!first.has_more);
+        let cursor = first.cursor.expect("rows were scanned");
+        assert_eq!(cursor.len(), 48);
+        assert!(
+            cursor
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
+
+        let late = put(&schema, at(0), HOST_A);
+        let later = put(&schema, at(2 * 86_400 + 3), HOST_A);
+        let next = read(&schema, CUSTOMER_A, &after(Some(&cursor))).await;
+        assert_eq!(next.ids, ids(&[late, later]));
+        assert!(!next.has_more);
+
+        // From the start, the late event comes after the ones stored before
+        // it, although its detection time is two days earlier.
+        let all = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(
+            all.ids,
+            ids(&[on_time[0], on_time[1], on_time[2], late, later])
+        );
+        let res = schema
+            .execute_as_system_admin(&query(CUSTOMER_A, ", first: 4"))
+            .await;
+        let data = res.data.into_json().unwrap();
+        let times: Vec<_> = data["detectionEventsByArrival"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["time"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            times,
+            [
+                at(2 * 86_400).to_string(),
+                at(2 * 86_400 + 1).to_string(),
+                at(2 * 86_400 + 2).to_string(),
+                at(0).to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn polling_until_nothing_is_left_returns_every_event_once() {
+        let schema = schema().await;
+        let mut own = Vec::new();
+        for i in 0..23 {
+            // Detection times out of arrival order, and the other
+            // customer's events between the customer's.
+            let time = at((i * 7) % 11);
+            if i % 3 == 0 {
+                put(&schema, time, HOST_B);
+            } else {
+                own.push(put(&schema, time, HOST_A));
+            }
+        }
+
+        let mut cursor: Option<String> = None;
+        let mut read_ids = Vec::new();
+        for _ in 0..100 {
+            let page = read(
+                &schema,
+                CUSTOMER_A,
+                &format!(", first: 4{}", after(cursor.as_deref())),
+            )
+            .await;
+            assert!(page.ids.len() <= 4);
+            read_ids.extend(page.ids);
+            if let Some(next) = page.cursor {
+                cursor = Some(next);
+            }
+            if !page.has_more {
+                break;
+            }
+        }
+        assert_eq!(read_ids, ids(&own));
+
+        // Nothing is left after the last cursor.
+        let page = read(&schema, CUSTOMER_A, &after(cursor.as_deref())).await;
+        assert_eq!(page.ids, Vec::<String>::new());
+        assert_eq!(page.cursor, None);
+        assert!(!page.has_more);
+    }
+
+    #[tokio::test]
+    async fn only_the_customers_events_are_returned() {
+        let schema = schema().await;
+        let a = put(&schema, at(0), HOST_A);
+        let b = put(&schema, at(1), HOST_B);
+        let stray = schema
+            .store()
+            .events()
+            .put_event(&dns_event(
+                at(2),
+                Ipv4Addr::new(10, 0, 0, 1).into(),
+                Ipv4Addr::new(10, 0, 0, 2).into(),
+                None,
+                "piglet.removed.example.com",
+            ))
+            .unwrap();
+
+        let page = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(page.ids, ids(&[a]));
+        let page = read(&schema, CUSTOMER_B, "").await;
+        assert_eq!(page.ids, ids(&[b]));
+        assert!(!page.ids.contains(&stray.to_string()));
+
+        // A customer with no node selects no event, though the read still
+        // scans, and the cursor follows it.
+        let page = read(&schema, 9, "").await;
+        assert_eq!(page.ids, Vec::<String>::new());
+        assert!(page.cursor.is_some());
+        assert!(!page.has_more);
+
+        // A scoped caller reads only a customer it belongs to.
+        let res = schema
+            .execute_as_scoped_user(
+                &query(CUSTOMER_A, ""),
+                Role::SecurityMonitor,
+                Some(vec![CUSTOMER_A]),
+            )
+            .await;
+        assert_eq!(page_of(res).ids, ids(&[a]));
+        let res = schema
+            .execute_as_scoped_user(
+                &query(CUSTOMER_A, ""),
+                Role::SecurityMonitor,
+                Some(vec![CUSTOMER_B]),
+            )
+            .await;
+        assert_eq!(error_of(&res), "Forbidden");
+        let res = schema
+            .execute_as_scoped_user(&query(CUSTOMER_A, ""), Role::SecurityManager, Some(vec![]))
+            .await;
+        assert_eq!(error_of(&res), "Forbidden");
+
+        // A malformed customer ID is refused.
+        let res = schema
+            .execute_as_system_admin(
+                "{ detectionEventsByArrival(customerId: \"x\") { cursor hasMore } }",
+            )
+            .await;
+        assert_eq!(error_of(&res), "invalid customer ID");
+    }
+
+    #[tokio::test]
+    async fn a_header_less_time_series_event_belongs_to_its_policys_customer() {
+        let schema = schema().await;
+        let event = {
+            let store = schema.store();
+            let policy = insert_shaped_policy(
+                &store,
+                "series",
+                CUSTOMER_A,
+                &[&sensor_name(HOST_A)],
+                PolicyShape::default(),
+            );
+            let mut event = subject_event(
+                at(0),
+                None,
+                PrimarySubject::Host {
+                    ip: "10.0.0.1".parse().unwrap(),
+                    role: ThreatRole::Target,
+                },
+                Vec::new(),
+                Detail::WindowOutlier(WindowOutlierDetail {
+                    time_series_id: format!("{policy}/10.0.0.1"),
+                    window_start: at(0),
+                    nearest_cluster_id: 0,
+                    distance: 1.0,
+                    top_slots: Vec::new(),
+                    truncated: 0,
+                    pcap_truncated: None,
+                }),
+            );
+            event.score = 1.0;
+            store.events().put_event(&event).unwrap()
+        };
+
+        let page = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(page.ids, ids(&[event]));
+        let page = read(&schema, CUSTOMER_B, "").await;
+        assert_eq!(page.ids, Vec::<String>::new());
+
+        // `eventList` decides the same way.
+        for (customer, expected) in [
+            (CUSTOMER_A, json!([{ "id": event.to_string() }])),
+            (CUSTOMER_B, json!([])),
+        ] {
+            let res = schema
+                .execute_as_scoped_user(
+                    "{ eventList(filter: {}) { edges { node { id } } } }",
+                    Role::SecurityMonitor,
+                    Some(vec![customer]),
+                )
+                .await;
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            let nodes: Vec<Value> = data["eventList"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"].clone())
+                .collect();
+            assert_eq!(Value::from(nodes), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_scans_at_most_ten_thousand_rows() {
+        let schema = schema().await;
+        let before = put(&schema, at(0), HOST_A);
+        let start = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(start.ids, ids(&[before]));
+        let start = start.cursor.unwrap();
+
+        {
+            let store = schema.store();
+            let events = store.events();
+            let other = dns_event(
+                at(1),
+                Ipv4Addr::new(10, 0, 0, 1).into(),
+                Ipv4Addr::new(10, 0, 0, 2).into(),
+                None,
+                &sensor_name(HOST_B),
+            );
+            for _ in 0..10_005 {
+                events.put_event(&other).unwrap();
+            }
+        }
+        let behind = [put(&schema, at(2), HOST_A), put(&schema, at(3), HOST_A)];
+
+        let capped = read(&schema, CUSTOMER_A, &after(Some(&start))).await;
+        assert_eq!(capped.ids, Vec::<String>::new());
+        assert!(capped.has_more);
+        let cursor = capped.cursor.unwrap();
+        assert!(cursor > start, "{cursor} <= {start}");
+
+        let next = read(&schema, CUSTOMER_A, &after(Some(&cursor))).await;
+        assert_eq!(next.ids, ids(&behind));
+        assert!(!next.has_more);
+    }
+
+    #[tokio::test]
+    async fn policies_score_events_without_removing_any() {
+        let schema = schema().await;
+        let matched = put(&schema, at(0), HOST_A);
+        let unmatched =
+            put_with_category(&schema, at(1), HOST_A, Some(EventCategory::Reconnaissance));
+        let policy = |id: i64, minimum_score: f64| {
+            format!(
+                "{{ id: {id}, packetAttr: [], \
+                    score: [{{ threatCategory: COMMAND_AND_CONTROL, \
+                        detectionModel: DNS_COVERT_CHANNEL, score: 0.0, weight: 0.5 }}], \
+                    response: [{{ minimumScore: {minimum_score:?}, kind: MANUAL }}] }}"
+            )
+        };
+        let scores = |res: async_graphql::Response| {
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            data["detectionEventsByArrival"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| (event["id"].clone(), event["triageScores"].clone()))
+                .collect::<Vec<_>>()
+        };
+
+        let res = schema
+            .execute_as_system_admin(&query(
+                CUSTOMER_A,
+                &format!(", policies: [{}, {}]", policy(3, 0.5), policy(4, 999.0)),
+            ))
+            .await;
+        assert_eq!(
+            scores(res),
+            [
+                (
+                    json!(matched.to_string()),
+                    json!([{ "policyId": "3", "score": 0.5 }])
+                ),
+                (json!(unmatched.to_string()), Value::Null),
+            ]
+        );
+
+        for arguments in ["", ", policies: []"] {
+            let res = schema
+                .execute_as_system_admin(&query(CUSTOMER_A, arguments))
+                .await;
+            assert_eq!(
+                scores(res),
+                [
+                    (json!(matched.to_string()), Value::Null),
+                    (json!(unmatched.to_string()), Value::Null),
+                ],
+                "{arguments}"
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(&query(
+                CUSTOMER_A,
+                &format!(", policies: [{}]", policy(-1, 0.5)),
+            ))
+            .await;
+        assert_eq!(error_of(&res), "triage policy id must be non-negative");
+    }
+
+    #[tokio::test]
+    async fn arguments_are_checked() {
+        let schema = schema().await;
+        let keys: Vec<_> = (0..105).map(|i| put(&schema, at(i), HOST_A)).collect();
+
+        let page = read(&schema, CUSTOMER_A, "").await;
+        assert_eq!(page.ids, ids(&keys[..100]));
+        assert!(page.has_more);
+        let page = read(&schema, CUSTOMER_A, ", first: 100").await;
+        assert_eq!(page.ids.len(), 100);
+        let page = read(&schema, CUSTOMER_A, ", first: 1").await;
+        assert_eq!(page.ids, ids(&keys[..1]));
+        assert!(page.has_more);
+
+        for first in [0, 101, -1] {
+            let res = schema
+                .execute_as_system_admin(&query(CUSTOMER_A, &format!(", first: {first}")))
+                .await;
+            assert_eq!(
+                error_of(&res),
+                "`first` must be between 1 and 100",
+                "{first}"
+            );
+        }
+
+        let valid = page.cursor.unwrap();
+        for cursor in [
+            "",
+            "abc",
+            &valid[..46],
+            &format!("{valid}00"),
+            &format!("{}zz", &valid[..46]),
+            &keys[0].to_string(),
+        ] {
+            let res = schema
+                .execute_as_system_admin(&query(CUSTOMER_A, &after(Some(cursor))))
+                .await;
+            assert_eq!(
+                error_of(&res),
+                "invalid cursor `after`: expected 48 hex digits",
+                "{cursor}"
+            );
+        }
+
+        // Nothing after the cursor: no event, no cursor, nothing more.
+        let mut cursor = None;
+        loop {
+            let page = read(&schema, CUSTOMER_A, &after(cursor.as_deref())).await;
+            cursor = page.cursor;
+            if !page.has_more {
+                break;
+            }
+        }
+        let page = read(&schema, CUSTOMER_A, &after(cursor.as_deref())).await;
+        assert_eq!(page.ids, Vec::<String>::new());
+        assert_eq!(page.cursor, None);
+        assert!(!page.has_more);
+
+        // An empty store scans nothing.
+        let empty = TestSchema::new().await;
+        let page = read(&empty, CUSTOMER_A, "").await;
+        assert_eq!(page.ids, Vec::<String>::new());
+        assert_eq!(page.cursor, None);
+        assert!(!page.has_more);
+    }
+
+    #[tokio::test]
+    async fn a_caller_without_an_allowed_role_is_refused() {
+        let schema = schema().await;
+        put(&schema, at(0), HOST_A);
+        // Every role a request can carry is one `eventList` allows, so the
+        // only caller it refuses is one without a role.
+        let res = schema
+            .schema
+            .execute(async_graphql::Request::new(query(CUSTOMER_A, "")))
+            .await;
+        assert_eq!(error_of(&res), "Forbidden");
+
+        let res = schema
+            .schema
+            .execute(async_graphql::Request::new("{ oldestDetectionEventTime }"))
+            .await;
+        assert_eq!(error_of(&res), "Forbidden");
+    }
+
+    async fn oldest(schema: &TestSchema) -> Value {
+        let res = schema
+            .execute_as_scoped_user(
+                "{ oldestDetectionEventTime }",
+                Role::SecurityMonitor,
+                Some(vec![CUSTOMER_B]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["oldestDetectionEventTime"].clone()
+    }
+
+    #[tokio::test]
+    async fn the_oldest_detection_time_is_store_wide() {
+        let schema = schema().await;
+        assert_eq!(oldest(&schema).await, Value::Null);
+
+        // After 1970 only, the earliest belonging to the other customer
+        // than the caller's, and stored after a later one.
+        put(&schema, at(5), HOST_B);
+        put(&schema, at(1), HOST_A);
+        put(&schema, at(9), HOST_B);
+        assert_eq!(oldest(&schema).await, json!(at(1).to_string()));
+        let res = schema
+            .execute_as_system_admin("{ oldestDetectionEventTime }")
+            .await;
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "oldestDetectionEventTime": at(1).to_string() })
+        );
+
+        // Before 1970 too: a negative key sorts first, although its bytes
+        // sort after every non-negative key.
+        let before_epoch = Timestamp::from_nanosecond(-1_500_000_000_123).unwrap();
+        let just_before = Timestamp::from_nanosecond(-1).unwrap();
+        put(&schema, just_before, HOST_B);
+        put(&schema, before_epoch, HOST_A);
+        put(&schema, Timestamp::UNIX_EPOCH, HOST_A);
+        assert_eq!(oldest(&schema).await, json!(before_epoch.to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_record_is_not_the_oldest() {
+        const STATES_DIRECTORY: &str = "states.db";
+
+        let db_dir = tempfile::tempdir().unwrap();
+        {
+            // Write an undecodable record, before 1970 so that it comes
+            // first, into the events table, review-database's default column
+            // family. Close the raw database before Store opens it.
+            let mut options = rocksdb::Options::default();
+            options.create_if_missing(true);
+            let db = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+            )
+            .unwrap();
+            db.put((-5_i128 << 64).to_be_bytes(), [0xff]).unwrap();
+        }
+        let schema =
+            TestSchema::new_in(Arc::new(crate::graphql::MockAgentManager {}), db_dir).await;
+        assert_eq!(oldest(&schema).await, Value::Null);
+
+        put(&schema, at(1), HOST_A);
+        assert_eq!(oldest(&schema).await, json!(at(1).to_string()));
     }
 }
