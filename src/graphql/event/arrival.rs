@@ -52,11 +52,11 @@ pub(super) fn load_by_arrival(
     first: Option<i32>,
     policies: Option<&[EventTriagePolicyInput]>,
 ) -> Result<DetectionEventArrivalPage> {
-    check_customer_membership(ctx, customer_id)?;
-    let customer_id = customer_id
+    let id = customer_id
         .as_str()
         .parse::<u32>()
         .map_err(|_| "invalid customer ID")?;
+    check_customer_membership(ctx, customer_id)?;
     let first = page_size(first)?;
     let after = after.map(decode_cursor).transpose()?;
     let policies = policies
@@ -65,13 +65,10 @@ pub(super) fn load_by_arrival(
         .unwrap_or_default();
 
     let store = crate::graphql::get_store(ctx)?;
-    let sensors = customer_sensor_names(&store, customer_id)?
+    let sensors = customer_sensor_names(&store, id)?
         .into_iter()
         .collect::<Vec<_>>();
-    let policy_sensors = store.time_series_policy_sensors().map_err(|e| {
-        error_with_caller!(ctx, "Failed to read time-series policy sensors: {e:#}");
-        async_graphql::Error::new("failed to read time-series policy sensors")
-    })?;
+    let policy_sensors = store.time_series_policy_sensors()?;
     let filter = EventFilter::new(
         None,
         None,
@@ -119,18 +116,19 @@ pub(super) fn oldest_event_time(ctx: &Context<'_>) -> Result<Option<Timestamp>> 
         let Some((key, _)) = readable_event(ctx, item)? else {
             continue;
         };
-        return Ok(Some(key_time(key)?));
+        return Ok(Some(key_time(key)));
     }
     Ok(None)
 }
 
 /// Returns the detection time a record key starts with: its upper 64 bits as
 /// epoch nanoseconds.
-fn key_time(key: i128) -> Result<Timestamp> {
-    let nanos = key >> 64;
-    let time = jiff::Timestamp::from_nanosecond(nanos)
-        .map_err(|_| "event timestamp is outside the supported range")?;
-    Ok(time.into())
+fn key_time(key: i128) -> Timestamp {
+    jiff::Timestamp::from_nanosecond(key >> 64)
+        .expect(
+            "the upper 64 bits of an `i128` fit in `i64`, and jiff spans every `i64` nanosecond",
+        )
+        .into()
 }
 
 /// Returns `first`, or the default page size when it is absent, refusing a
@@ -235,12 +233,18 @@ mod tests {
     #[test]
     fn key_times_cross_the_unix_epoch() {
         assert_eq!(
-            jiff::Timestamp::from(key_time(-1_i128 << 64).unwrap()),
+            jiff::Timestamp::from(key_time(-1_i128 << 64)),
             jiff::Timestamp::from_nanosecond(-1).unwrap()
         );
         assert_eq!(
-            jiff::Timestamp::from(key_time((5_i128 << 64) | 7).unwrap()),
+            jiff::Timestamp::from(key_time((5_i128 << 64) | 7)),
             jiff::Timestamp::from_nanosecond(5).unwrap()
         );
+        for nanos in [i64::MIN, i64::MAX] {
+            assert_eq!(
+                jiff::Timestamp::from(key_time(i128::from(nanos) << 64)).as_nanosecond(),
+                i128::from(nanos)
+            );
+        }
     }
 }

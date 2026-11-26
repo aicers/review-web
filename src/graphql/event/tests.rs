@@ -143,6 +143,30 @@ async fn corrupted_event_store_returns_field_errors() {
         .await;
     assert_eq!(response.errors.len(), 1);
     assert!(!response.data.into_json().unwrap()["event"].is_null());
+
+    // `detectionEventsByArrival` reads the record of every row it scans,
+    // the damaged one included, even for a customer with no sensors.
+    let mut after = String::new();
+    let error = loop {
+        let response = schema
+            .execute_as_system_admin(&format!(
+                "{{ detectionEventsByArrival(customerId: \"1\"{after}) {{ cursor hasMore }} }}"
+            ))
+            .await;
+        if let Some(error) = response.errors.first() {
+            assert_eq!(response.data.into_json().unwrap(), serde_json::Value::Null);
+            break error.clone();
+        }
+        let data = response.data.into_json().unwrap();
+        let page = &data["detectionEventsByArrival"];
+        assert_eq!(page["hasMore"], serde_json::json!(true), "{data}");
+        after = format!(", after: \"{}\"", page["cursor"].as_str().unwrap());
+    };
+    assert_eq!(error.message, "failed to read events");
+    assert_eq!(
+        serde_json::to_value(&error.path).unwrap(),
+        serde_json::json!(["detectionEventsByArrival"])
+    );
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -5442,5 +5466,31 @@ mod arrival {
         put(&schema, before_epoch, HOST_A);
         put(&schema, Timestamp::UNIX_EPOCH, HOST_A);
         assert_eq!(oldest(&schema).await, json!(before_epoch.to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_record_is_not_the_oldest() {
+        const STATES_DIRECTORY: &str = "states.db";
+
+        let db_dir = tempfile::tempdir().unwrap();
+        {
+            // Write an undecodable record, before 1970 so that it comes
+            // first, into the events table, review-database's default column
+            // family. Close the raw database before Store opens it.
+            let mut options = rocksdb::Options::default();
+            options.create_if_missing(true);
+            let db = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+            )
+            .unwrap();
+            db.put((-5_i128 << 64).to_be_bytes(), [0xff]).unwrap();
+        }
+        let schema =
+            TestSchema::new_in(Arc::new(crate::graphql::MockAgentManager {}), db_dir).await;
+        assert_eq!(oldest(&schema).await, Value::Null);
+
+        put(&schema, at(1), HOST_A);
+        assert_eq!(oldest(&schema).await, json!(at(1).to_string()));
     }
 }
