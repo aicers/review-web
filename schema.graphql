@@ -1374,6 +1374,28 @@ type DetectionEvent {
 	triageScores: [TriageScore!]
 }
 
+"""
+A page of detection events in the order they arrived.
+"""
+type DetectionEventArrivalPage {
+	"""
+	The customer's events among the scanned index rows, in arrival order.
+	"""
+	events: [DetectionEvent!]!
+	"""
+	The position of the last index row scanned, to pass as `after` to read
+	on. It moves forward even when no scanned row held an event of the
+	customer. It is null only when nothing was scanned; the caller then
+	keeps its previous cursor.
+	"""
+	cursor: String
+	"""
+	Whether any index row exists after `cursor`, or after `after` when
+	`cursor` is null.
+	"""
+	hasMore: Boolean!
+}
+
 type DetectionEventConnection {
 	"""
 	Information to aid in pagination.
@@ -1969,7 +1991,8 @@ input EventTriageInput {
 }
 
 """
-Inline triage policy input for `eventListWithTriage`.
+Inline triage policy input for `eventListWithTriage` and
+`detectionEventsByArrival`.
 
 `id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
 back unchanged as `TriageScore.policyId`.
@@ -5613,6 +5636,44 @@ type Query {
 	pagination contract matches `eventList`.
 	"""
 	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
+	"""
+	Reads the detection events of the sensors of `customerId`, in the
+	order they arrived, from after the cursor `after`.
+	
+	An event belongs to the customer as it does for `eventList`: through
+	its sensor, or, for a time-series event without a sensor, through the
+	sensors of its policy. No other condition applies; `policies` only
+	scores the events and never removes one.
+	
+	One call scans at most 10,000 arrival index rows and returns at most
+	`first` events (1 to 100, 100 when absent). `cursor` is the last row
+	scanned, not the last event returned, so it moves forward across rows
+	of other customers too; pass it as `after` to read on. A late event,
+	stored after events with later detection times, is read after them.
+	"""
+	detectionEventsByArrival(
+		"""
+		The customer whose events to read.
+		"""
+		customerId: ID!,
+		"""
+		The `cursor` of a previous page, or absent to read from the start.
+		"""
+		after: String,
+		"""
+		The most events to return, from 1 to 100. Absent means 100.
+		"""
+		first: Int,
+		"""
+		Triage policies to score each returned event against, as in `eventListWithTriage`.
+		"""
+		policies: [EventTriagePolicyInput!]
+	): DetectionEventArrivalPage!
+	"""
+	The detection time of the earliest stored detection event, of any
+	customer, or null when none is stored.
+	"""
+	oldestDetectionEventTime: DateTime
 	"""
 	Returns, for each raw event key and at its position, every detection
 	event, of any detection model, whose target is the raw event of that

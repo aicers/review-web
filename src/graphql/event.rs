@@ -1,3 +1,4 @@
+mod arrival;
 mod body;
 mod detail;
 mod detection;
@@ -29,6 +30,7 @@ use review_protocol::types as protocol;
 use tokio::time;
 use tracing::{error, warn};
 
+use self::arrival::DetectionEventArrivalPage;
 use self::detection::DetectionEvent;
 pub(super) use self::detection::{EndpointRole, ThreatRole};
 pub(super) use self::group::EventGroupQuery;
@@ -292,6 +294,55 @@ impl EventQuery {
         .await
     }
 
+    /// Reads the detection events of the sensors of `customerId`, in the
+    /// order they arrived, from after the cursor `after`.
+    ///
+    /// An event belongs to the customer as it does for `eventList`: through
+    /// its sensor, or, for a time-series event without a sensor, through the
+    /// sensors of its policy. No other condition applies; `policies` only
+    /// scores the events and never removes one.
+    ///
+    /// One call scans at most 10,000 arrival index rows and returns at most
+    /// `first` events (1 to 100, 100 when absent). `cursor` is the last row
+    /// scanned, not the last event returned, so it moves forward across rows
+    /// of other customers too; pass it as `after` to read on. A late event,
+    /// stored after events with later detection times, is read after them.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn detection_events_by_arrival(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "The customer whose events to read.")] customer_id: ID,
+        #[graphql(desc = "The `cursor` of a previous page, or absent to read from the start.")]
+        after: Option<String>,
+        #[graphql(desc = "The most events to return, from 1 to 100. Absent means 100.")]
+        first: Option<i32>,
+        #[graphql(
+            desc = "Triage policies to score each returned event against, as in `eventListWithTriage`."
+        )]
+        policies: Option<Vec<EventTriagePolicyInput>>,
+    ) -> Result<DetectionEventArrivalPage> {
+        arrival::load_by_arrival(
+            ctx,
+            &customer_id,
+            after.as_deref(),
+            first,
+            policies.as_deref(),
+        )
+    }
+
+    /// The detection time of the earliest stored detection event, of any
+    /// customer, or null when none is stored.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn oldest_detection_event_time(&self, ctx: &Context<'_>) -> Result<Option<Timestamp>> {
+        arrival::oldest_event_time(ctx)
+    }
+
     /// Returns, for each raw event key and at its position, every detection
     /// event, of any detection model, whose target is the raw event of that
     /// kind, sensor and time.
@@ -490,7 +541,8 @@ struct EventTriageInput {
     policies: Option<Vec<EventTriagePolicyInput>>,
 }
 
-/// Inline triage policy input for `eventListWithTriage`.
+/// Inline triage policy input for `eventListWithTriage` and
+/// `detectionEventsByArrival`.
 ///
 /// `id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
 /// back unchanged as `TriageScore.policyId`.
