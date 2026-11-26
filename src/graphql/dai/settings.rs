@@ -69,7 +69,7 @@ impl DaiSettingsMutation {
         revision: StringNumber<u64>,
         input: DaiCustomerSettingsInput,
     ) -> Result<DaiCustomerSettings> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let update = DaiSettingsUpdate {
             device_account_identification: input.device_account_identification,
             inactivity_multiplier: input.inactivity_multiplier,

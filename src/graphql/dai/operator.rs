@@ -45,7 +45,7 @@ impl DaiOperatorMutation {
         customer_id: ID,
         rows: Vec<DaiImportRowInput>,
     ) -> Result<Vec<DaiImportResult>> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let site_in_use = if rows.len() <= review_database::DAI_IMPORT_MAX_ROWS
             && rows
                 .iter()
@@ -69,8 +69,14 @@ impl DaiOperatorMutation {
                 }
             })
             .unzip();
+        let between_steps = || {
+            #[cfg(test)]
+            if let Some(BetweenImportSteps(hook)) = ctx.data_opt::<BetweenImportSteps>() {
+                hook();
+            }
+        };
         let outcomes = if matches!(site_in_use, SiteInUse::Unstored) {
-            import_at_unstored_default(&store, customer_id, rows, rows_at_unstored)?
+            import_at_unstored_default(&store, customer_id, rows, rows_at_unstored, &between_steps)?
         } else {
             store
                 .import_dai_devices(customer_id, &rows)
@@ -106,7 +112,7 @@ impl DaiOperatorMutation {
         survivor: ID,
         others: Vec<ID>,
     ) -> Result<ID> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let survivor = parse_device_id(&survivor)?;
         let others = others
             .iter()
@@ -137,7 +143,7 @@ impl DaiOperatorMutation {
         device_id: ID,
         identifiers: Vec<DaiIdentifierInput>,
     ) -> Result<ID> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let device = parse_device_id(&device_id)?;
         let identifiers: Vec<DaiIdentifier> = identifiers
             .into_iter()
@@ -173,7 +179,7 @@ impl DaiOperatorMutation {
         verdict: Option<DaiVerdict>,
         activity: Option<DaiActivity>,
     ) -> Result<bool> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         if verdict.is_none() && activity.is_none() {
             return Err("give at least one of verdict and activity".into());
         }
@@ -215,7 +221,7 @@ impl DaiOperatorMutation {
         port: u16,
         protocol: u8,
     ) -> Result<bool> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let device = parse_device_id(&device_id)?;
         store
             .remove_dai_service(customer_id, device, port, protocol)
@@ -223,6 +229,12 @@ impl DaiOperatorMutation {
         Ok(true)
     }
 }
+
+/// A test's hook that an import at the unstored default site runs between
+/// its steps, once the default site is stored.
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct BetweenImportSteps(pub(super) std::sync::Arc<dyn Fn() + Send + Sync>);
 
 /// The site a fixed IP without a site token is at.
 enum SiteInUse {
@@ -281,15 +293,23 @@ fn site_in_use(store: &Store, customer_id: u32, now: i64) -> Result<SiteInUse> {
 /// as it would be with the site stored, since no fixed IP can be held at a
 /// site that does not exist. The rows after it go at the stored site.
 ///
-/// The row so written gets two versions and two change entries rather
-/// than one, and a concurrent write between the steps (another import
-/// fixing the same IP) can leave its first step written while it is
-/// reported as refused.
+/// The caller holds the [`DaiWritesLock`](super::DaiWritesLock) across all
+/// the steps, so no other DAI write through this API, such as another
+/// import fixing the same IP, lands between them, and the second step
+/// refuses the row for nothing the first did not: the default site is stored
+/// and the row's device holds its asset id and MACs. The observations
+/// applied meanwhile neither fix an IP nor take a MAC from the device that
+/// holds it. The row so written gets two versions and two change entries
+/// rather than one.
+///
+/// `between_steps` runs once the default site is stored, before the row is
+/// imported again.
 fn import_at_unstored_default(
     store: &Store,
     customer_id: u32,
     rows: Vec<DaiImportRow>,
     at_unstored: Vec<Vec<usize>>,
+    between_steps: &dyn Fn(),
 ) -> Result<Vec<DaiImportOutcome>> {
     let mut outcomes = Vec::with_capacity(rows.len());
     // The placeholders of the rows imported so far, then the rows to import
@@ -330,6 +350,7 @@ fn import_at_unstored_default(
             .map_err(dai_refusal)?;
         put_site(&mut row, &at, &token);
         default_site = Some(token);
+        between_steps();
         request.push(row);
         let second = last_outcome(import_from(store, customer_id, &mut request, done)?)?;
         outcomes.push(match second {

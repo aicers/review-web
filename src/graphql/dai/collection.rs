@@ -113,7 +113,7 @@ impl DaiCollectionMutation {
         range: String,
         account: String,
     ) -> Result<String> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let range = parse_range(&range)?;
         let account = account.trim();
         if account.is_empty() {
@@ -139,7 +139,7 @@ impl DaiCollectionMutation {
         customer_id: ID,
         range: String,
     ) -> Result<bool> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let range = parse_range(&range)?;
         store
             .unignore_dai_range(customer_id, range)

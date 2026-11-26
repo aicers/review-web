@@ -115,7 +115,7 @@ impl DaiSiteMutation {
         name: String,
         sensors: Vec<String>,
     ) -> Result<DaiSite> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let token = store
             .create_dai_site(customer_id, &name, &sensors)
             .map_err(dai_refusal)?;
@@ -141,7 +141,7 @@ impl DaiSiteMutation {
         name: String,
         sensors: Vec<String>,
     ) -> Result<DaiSite> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         store
             .update_dai_site(customer_id, &token, &name, &sensors)
             .map_err(dai_refusal)?;
@@ -164,7 +164,7 @@ impl DaiSiteMutation {
         customer_id: ID,
         token: String,
     ) -> Result<String> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         store
             .remove_dai_site(customer_id, &token)
             .map_err(dai_refusal)?;
@@ -192,7 +192,7 @@ impl DaiSiteMutation {
         revision: StringNumber<u64>,
         entries: Vec<DaiRelaySiteInput>,
     ) -> Result<StringNumber<u64>> {
-        let (customer_id, store) = writable_customer(ctx, &customer_id)?;
+        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
         let entries = entries
             .into_iter()
             .map(|entry| {

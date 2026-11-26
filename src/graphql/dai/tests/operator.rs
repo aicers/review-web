@@ -1,5 +1,7 @@
 //! The operator device operations.
 
+use std::sync::{Arc, Mutex};
+
 use review_protocol::types::DaiObservationKind as Kind;
 use serde_json::{Value, json};
 
@@ -9,6 +11,7 @@ use super::{
     rfc3339, sensor, service,
 };
 use crate::graphql::TestSchema;
+use crate::graphql::dai::operator::BetweenImportSteps;
 
 fn import(customer: u32, rows: &[String]) -> String {
     format!(
@@ -392,6 +395,87 @@ async fn refused_rows_store_no_default_site() {
     assert_eq!(
         data(&schema, &detail(&device)).await["daiDevice"]["fixedIps"],
         json!([{ "site": site, "ip": "10.0.0.65" }])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_dai_write_lands_between_the_steps_of_an_import_at_the_unstored_default_site() {
+    let schema = TestSchema::new().await;
+    // A single-site customer with no stored default site.
+    sensor(&schema.store(), "a.example.com", CUSTOMER);
+
+    // Between the steps of the import of `A`, once the default site is
+    // stored, the import still holds the DAI writes lock, and another import
+    // fixes the same IP, now at that site, to `B`. The hook starts it on
+    // another thread and returns once it waits for the lock.
+    let competitor = schema.request_with_context(
+        import(CUSTOMER, &[row("B", &[], &[(None, "10.0.0.80")], "", "")])
+            .as_str()
+            .into(),
+        crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+        None,
+    );
+    let competitor = Arc::new(Mutex::new(Some(competitor)));
+    let thread = Arc::new(Mutex::new(None));
+    let hook = {
+        let graphql = schema.schema.clone();
+        let lock = Arc::clone(&schema.dai_writes_lock);
+        let thread = Arc::clone(&thread);
+        move || {
+            assert!(
+                lock.is_held(),
+                "the import holds the lock between its steps"
+            );
+            let request = competitor.lock().unwrap().take().unwrap();
+            let graphql = graphql.clone();
+            let handle = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(graphql.execute(request))
+            });
+            while lock.users() < 2 {
+                std::thread::yield_now();
+            }
+            *thread.lock().unwrap() = Some(handle);
+        }
+    };
+    let res = schema
+        .execute_as_system_admin_with_data(
+            &import(CUSTOMER, &[row("A", &[], &[(None, "10.0.0.80")], "", "")]),
+            BetweenImportSteps(Arc::new(hook)),
+        )
+        .await;
+    assert!(res.errors.is_empty(), "{:?}", res.errors);
+    let value = res.data.into_json().unwrap();
+    let competitor = thread
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the import ran its steps")
+        .join()
+        .unwrap();
+    assert!(competitor.errors.is_empty(), "{:?}", competitor.errors);
+    let competitor = competitor.data.into_json().unwrap();
+
+    // The import of `A` was written whole, and the other import came after
+    // it and was refused for the IP `A` holds, writing nothing.
+    let held = results(&value)[0]["deviceId"].as_str().unwrap().to_string();
+    assert_eq!(
+        results(&value)[0],
+        json!({ "outcome": "CREATED", "deviceId": held, "error": null })
+    );
+    assert_eq!(results(&competitor)[0]["outcome"], json!("ERROR"));
+    assert_eq!(
+        results(&competitor)[0]["error"]["reason"],
+        json!("FIXED_IP_HELD")
+    );
+    assert_eq!(results(&competitor)[0]["error"]["deviceIds"], json!([held]));
+    assert_eq!(device_of_asset(&schema, "B"), None);
+    let site = default_site(&schema.store(), CUSTOMER);
+    assert_eq!(
+        data(&schema, &detail(&held)).await["daiDevice"]["fixedIps"],
+        json!([{ "site": site, "ip": "10.0.0.80" }])
     );
 }
 

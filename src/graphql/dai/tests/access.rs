@@ -193,3 +193,31 @@ async fn every_mutation_is_refused_while_the_customer_is_being_deleted() {
         assert_not_locked(&res);
     }
 }
+
+#[tokio::test]
+async fn every_mutation_waits_for_the_dai_writes_lock() {
+    let schema = TestSchema::new().await;
+    for mutation in mutations(CUSTOMER) {
+        let before = schema.store().dai_settings(CUSTOMER).unwrap().revision;
+        let guard = schema.hold_dai_writes_lock().await;
+        let schema = &schema;
+        let mutation = mutation.as_str();
+        let (_res, ()) = tokio::join!(schema.execute_as_system_admin(mutation), async move {
+            // Waits until the write waits for the lock the test holds.
+            while schema.dai_writes_lock_users() < 2 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(
+                schema.store().dai_settings(CUSTOMER).unwrap().revision,
+                before,
+                "{mutation}"
+            );
+            drop(guard);
+        });
+        assert_eq!(schema.dai_writes_lock_users(), 0, "{mutation}");
+    }
+    // The writes ran once the lock was free.
+    let store = schema.store();
+    assert_eq!(store.dai_settings(CUSTOMER).unwrap().revision, 1);
+    assert_eq!(store.dai_relay_sites(CUSTOMER).unwrap().revision, 1);
+}

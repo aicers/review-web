@@ -24,7 +24,12 @@ mod site;
 #[cfg(test)]
 mod tests;
 
-use std::{fmt::Display, net::IpAddr, str::FromStr, sync::RwLockReadGuard};
+use std::{
+    fmt::Display,
+    net::IpAddr,
+    str::FromStr,
+    sync::{Arc, RwLockReadGuard},
+};
 
 use async_graphql::{
     Context, Enum, ErrorExtensions, MergedObject, Name, Result, Value, indexmap::IndexMap,
@@ -113,25 +118,112 @@ fn accessible_customer(ctx: &Context<'_>, customer_id: &ID) -> Result<u32> {
     parse_customer_id(customer_id)
 }
 
-/// Returns the customer id `customer_id` names and the store, after checking
-/// that the caller may access the customer and that its data deletion is not
-/// unfinished, for a write.
+/// The lock that orders every device identification write, one per schema.
 ///
-/// The membership is checked before the store is read.
+/// Every DAI mutation holds it from before it reads the store until its last
+/// store write returns, so no DAI write through this API lands between the
+/// store calls of another. An import that fixes an IP at the default site of
+/// a customer that has none stored writes in steps (see
+/// `import_at_unstored_default`): without the lock, a write between them,
+/// such as another import fixing the same IP, could refuse the row after its
+/// first step was written. One lock for all customers keeps it simple; DAI
+/// writes are operator actions, not a hot path.
+///
+/// Take it after the membership check and before
+/// [`get_store`](super::get_store): the store guard is a
+/// `std::sync::RwLockReadGuard`, which cannot be held across the lock's
+/// `.await`.
+#[derive(Default)]
+pub(crate) struct DaiWritesLock {
+    mutex: tokio::sync::Mutex<()>,
+    /// How many operations hold or wait for the lock.
+    #[cfg(test)]
+    users: std::sync::atomic::AtomicUsize,
+}
+
+impl DaiWritesLock {
+    /// Returns how many operations hold or wait for the lock.
+    #[cfg(test)]
+    pub(super) fn users(&self) -> usize {
+        self.users.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Returns whether an operation holds the lock.
+    #[cfg(test)]
+    pub(super) fn is_held(&self) -> bool {
+        self.mutex.try_lock().is_err()
+    }
+
+    /// Takes the lock outside a request, as a test holding it off a resolver
+    /// does.
+    #[cfg(test)]
+    pub(super) async fn hold(&self) -> DaiWritesGuard<'_> {
+        let user = LockUser::new(&self.users);
+        let guard = self.mutex.lock().await;
+        DaiWritesGuard {
+            _guard: guard,
+            _user: user,
+        }
+    }
+}
+
+/// The guard of a held [`DaiWritesLock`].
+pub(crate) struct DaiWritesGuard<'a> {
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+    #[cfg(test)]
+    _user: LockUser<'a>,
+}
+
+/// Counts an operation among the users of a [`DaiWritesLock`] from before it
+/// waits for the lock until it releases it or stops waiting.
+#[cfg(test)]
+struct LockUser<'a>(&'a std::sync::atomic::AtomicUsize);
+
+#[cfg(test)]
+impl<'a> LockUser<'a> {
+    fn new(users: &'a std::sync::atomic::AtomicUsize) -> Self {
+        users.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(users)
+    }
+}
+
+#[cfg(test)]
+impl Drop for LockUser<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Returns the customer id `customer_id` names, the held
+/// [`DaiWritesLock`] and the store, after checking that the caller may
+/// access the customer and that its data deletion is not unfinished, for a
+/// write.
+///
+/// The membership is checked before the lock is taken and the store is read.
+/// Hold the guard until the last store write returns.
 ///
 /// # Errors
 ///
 /// Returns `Forbidden` for a caller scoped to other customers,
 /// `CUSTOMER_DELETION_IN_PROGRESS` while the customer's data deletion is
-/// unfinished, and an error for an id that is not a customer id.
-fn writable_customer<'a>(
+/// unfinished, an error for an id that is not a customer id, and an error if
+/// the schema holds no [`DaiWritesLock`].
+async fn writable_customer<'a>(
     ctx: &'a Context<'a>,
     customer_id: &ID,
-) -> Result<(u32, RwLockReadGuard<'a, Store>)> {
+) -> Result<(u32, DaiWritesGuard<'a>, RwLockReadGuard<'a, Store>)> {
     let customer_id = accessible_customer(ctx, customer_id)?;
+    let lock = ctx.data::<Arc<DaiWritesLock>>()?;
+    #[cfg(test)]
+    let user = LockUser::new(&lock.users);
+    let guard = DaiWritesGuard {
+        _guard: lock.mutex.lock().await,
+        #[cfg(test)]
+        _user: user,
+    };
     let store = crate::graphql::get_store(ctx)?;
     customer_deletion_guard::check_customers(&store, [customer_id])?;
-    Ok((customer_id, store))
+    Ok((customer_id, guard, store))
 }
 
 /// The time of the request a test sets, in nanoseconds since the UNIX

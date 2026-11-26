@@ -183,6 +183,7 @@ where
     .data(customer_data_deletion_manager)
     .data(Arc::new(network_list::NetworkListsLock::default()))
     .data(Arc::new(engine_config::EngineConfigLock::default()))
+    .data(Arc::new(dai::DaiWritesLock::default()))
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
 
@@ -1603,6 +1604,7 @@ struct TestSchema {
     next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
     network_lists_lock: Arc<network_list::NetworkListsLock>,
     engine_config_lock: Arc<engine_config::EngineConfigLock>,
+    dai_writes_lock: Arc<dai::DaiWritesLock>,
     time_series_generation_policies_lock:
         Arc<time_series_generation::TimeSeriesGenerationPoliciesLock>,
 }
@@ -1728,6 +1730,7 @@ impl TestSchema {
         let store = Arc::new(RwLock::new(store));
         let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
         let engine_config_lock = Arc::new(engine_config::EngineConfigLock::default());
+        let dai_writes_lock = Arc::new(dai::DaiWritesLock::default());
         let customer_data_deletion_manager = Arc::new(CustomerDataDeletionTaskManager::default());
         let time_series_generation_policies_lock =
             Arc::clone(customer_data_deletion_manager.time_series_generation_policies_lock());
@@ -1743,6 +1746,7 @@ impl TestSchema {
         .data(store.clone())
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
+        .data(dai_writes_lock.clone())
         .data(time_series_generation_policies_lock.clone())
         .data(customer_data_deletion_manager)
         .data(node::ManagerNodeHostname(manager_node_hostname))
@@ -1760,6 +1764,7 @@ impl TestSchema {
             next_customer_id: AtomicU32::new(0),
             network_lists_lock,
             engine_config_lock,
+            dai_writes_lock,
             time_series_generation_policies_lock,
         }
     }
@@ -1784,6 +1789,18 @@ impl TestSchema {
     /// lock.
     fn engine_config_lock_users(&self) -> usize {
         self.engine_config_lock.users()
+    }
+
+    /// Takes the device identification writes lock, as a DAI write holding it
+    /// would.
+    async fn hold_dai_writes_lock(&self) -> dai::DaiWritesGuard<'_> {
+        self.dai_writes_lock.hold().await
+    }
+
+    /// Returns how many operations hold or wait for the device identification
+    /// writes lock.
+    fn dai_writes_lock_users(&self) -> usize {
+        self.dai_writes_lock.users()
     }
 
     /// Takes the time series generation policies lock, as a removal or update
