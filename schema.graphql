@@ -7239,6 +7239,59 @@ type Query {
 	"""
 	eventFrequencySeries(filter: EventListFilterInput!, slotSize: Int!): [Int!]!
 	"""
+	Lists the enrollment attempts in key order, by SPKI hash and then
+	attempt id, optionally only those in `state` or of `customerId`.
+	"""
+	endpointEnrollmentAttempts(state: SentaEndpointEnrollmentState, customerId: ID): [SentaEndpointEnrollmentAttempt!]!
+	"""
+	Lists the enrolled endpoints in endpoint id order, optionally only
+	those of `customerId`, with the standing `standing` (an exact match of
+	the stored text), or whose connection state is `connected`.
+	"""
+	endpoints(customerId: ID, standing: String, connected: Boolean, after: String, before: String, first: Int, last: Int): SentaEndpointConnection!
+	"""
+	Returns `REview`'s active list and how far it has reached each Giganto
+	node.
+	"""
+	endpointActiveListStatus: SentaEndpointActiveListStatus!
+	"""
+	Lists the last document results of `endpointId` in key order, by
+	document type and then target.
+	"""
+	endpointDocumentResults(endpointId: ID!): [SentaEndpointReportedDocumentResult!]!
+	"""
+	Lists the commands of `endpointId` in sequence order.
+	"""
+	endpointCommands(endpointId: ID!): [SentaEndpointCommand!]!
+	"""
+	Lists the `DuplicateKey` events and the Giganto loss records of
+	`endpointId`, optionally only the events at or after `since` and the
+	loss records received at or after it.
+	"""
+	endpointEvents(endpointId: ID!, since: DateTime): SentaEndpointEvents!
+	"""
+	Lists the endpoint entry of every Giganto node, in node order.
+	"""
+	endpointTelemetryEntries: [SentaEndpointTelemetryEntry!]!
+	"""
+	Counts, for each customer in scope registered for Clumit Endpoint, how
+	many of its endpoints have adopted the trust root `fingerprint` (64
+	lowercase hexadecimal characters), in customer id order.
+	
+	An endpoint has adopted the root when its last status report names an
+	address document slot whose roots, among the endpoint's own
+	customer's, include the fingerprint. An endpoint without a status
+	report or a slot counts only in `total`.
+	"""
+	endpointTrustRootAdoption(fingerprint: String!): [SentaEndpointTrustRootAdoption!]!
+	"""
+	Lists the unenroll requests in endpoint id order.
+	
+	A request of an endpoint without an endpoint row has no customer and
+	is listed only for an unscoped caller.
+	"""
+	endpointUnenrollRequests: [SentaEndpointUnenrollRequest!]!
+	"""
 	The networks the customer owns, or null if none were stored for it.
 	"""
 	customerNetworks(customerId: ID!): OwnedNetworkSet
@@ -8310,6 +8363,206 @@ type SensorSubject {
 }
 
 """
+An enrolled endpoint.
+"""
+type SentaEndpoint {
+	"""
+	The endpoint id.
+	"""
+	endpointId: ID!
+	"""
+	The customer the endpoint belongs to.
+	"""
+	customerId: ID!
+	"""
+	The customer endpoint id of the endpoint's customer.
+	"""
+	customerEndpointId: ID!
+	"""
+	The SHA-256 hash of the endpoint's subject public key info, as 64
+	lowercase hexadecimal characters.
+	"""
+	spkiHash: String!
+	"""
+	The standing of the endpoint, as `REview` stored it.
+	"""
+	standing: String!
+	"""
+	The host name the endpoint reported.
+	"""
+	hostName: String!
+	"""
+	The operating system the endpoint reported.
+	"""
+	os: String!
+	"""
+	The `senta` version the endpoint reported.
+	"""
+	sentaVersion: String!
+	"""
+	The bundle the endpoint reported.
+	"""
+	bundle: String!
+	"""
+	When the endpoint was enrolled.
+	"""
+	enrolledAt: DateTime!
+	"""
+	When the endpoint last connected.
+	"""
+	lastConnectedAt: DateTime!
+	"""
+	Whether the endpoint is connected now.
+	"""
+	connected: Boolean!
+	"""
+	The last status report of the endpoint; `null` if there is none.
+	"""
+	statusReport: SentaEndpointStatusReport
+	"""
+	When each Giganto node last received data from the endpoint, in
+	node order.
+	"""
+	lastReceived: [SentaEndpointLastReceived!]!
+}
+
+"""
+An entry of the active list.
+"""
+type SentaEndpointActiveListEntry {
+	"""
+	The endpoint the entry names.
+	"""
+	endpointId: ID!
+	"""
+	The SHA-256 hash of the endpoint's subject public key info, as 64
+	lowercase hexadecimal characters.
+	"""
+	spkiHash: String!
+	"""
+	The customer endpoint id of the endpoint's customer.
+	"""
+	customerEndpointId: ID!
+	"""
+	The state of the entry, as `REview` stored it.
+	"""
+	state: String!
+}
+
+"""
+The active list `REview` applied, and how far it has reached the Giganto
+nodes.
+"""
+type SentaEndpointActiveListStatus {
+	"""
+	The version of `REview`'s active list; `null` when no list is stored.
+	"""
+	version: StringNumber
+	"""
+	The entries of `REview`'s active list, in the order they are stored;
+	empty when no list is stored.
+	"""
+	entries: [SentaEndpointActiveListEntry!]!
+	"""
+	The state of each Giganto node's endpoint entry, in node order.
+	"""
+	nodes: [SentaEndpointNodeActiveListStatus!]!
+	"""
+	The version `REview` and every Giganto node have applied: the minimum
+	of the nodes' applied versions and `REview`'s version, or `REview`'s
+	version when there is no node. `null` when no list is stored or any
+	node has applied none.
+	"""
+	appliedEverywhere: StringNumber
+}
+
+"""
+The slot of an address document: its recovery epoch and version.
+"""
+type SentaEndpointAddressDocumentSlot {
+	"""
+	The recovery epoch of the document.
+	"""
+	epoch: StringNumber!
+	"""
+	The version of the document.
+	"""
+	version: StringNumber!
+}
+
+"""
+A command for an endpoint.
+"""
+type SentaEndpointCommand {
+	"""
+	The command id.
+	"""
+	commandId: ID!
+	"""
+	The sequence number of the command.
+	"""
+	sequence: StringNumber!
+	"""
+	The command JWS.
+	"""
+	command: String!
+	"""
+	When the command expires.
+	"""
+	expiresAt: DateTime!
+	"""
+	The state of the command.
+	"""
+	state: SentaEndpointCommandState!
+	"""
+	The result the endpoint returned, as standard padded base64; `null`
+	if there is none.
+	"""
+	result: String
+}
+
+"""
+The state of a command sent to an endpoint.
+"""
+enum SentaEndpointCommandState {
+	"""
+	The command waits to be sent.
+	"""
+	PENDING
+	"""
+	The command was sent.
+	"""
+	SENT
+	"""
+	The endpoint returned the command's result.
+	"""
+	RESULT
+	"""
+	The command expired.
+	"""
+	EXPIRED
+}
+
+type SentaEndpointConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SentaEndpointEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [SentaEndpoint!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
 The outcome of one document of `putEndpointDocuments`.
 """
 type SentaEndpointDocumentResult {
@@ -8325,6 +8578,100 @@ type SentaEndpointDocumentResult {
 	The code of the refusal; `null` when the document was accepted.
 	"""
 	reason: String
+}
+
+"""
+A `DuplicateKey` event of an endpoint.
+"""
+type SentaEndpointDuplicateKeyEvent {
+	"""
+	When the event happened.
+	"""
+	at: DateTime!
+	"""
+	The Giganto node the event was fetched from; `null` when `REview`
+	observed it itself.
+	"""
+	node: SentaEndpointNode
+	"""
+	The sequence number of the event at its source.
+	"""
+	sequence: StringNumber!
+	"""
+	The SHA-256 hash of the subject public key info the event names, as
+	64 lowercase hexadecimal characters.
+	"""
+	spkiHash: String!
+	"""
+	The addresses the key was seen at.
+	"""
+	addresses: [String!]!
+	"""
+	How many times the key was replaced.
+	"""
+	replacementCount: StringNumber!
+	"""
+	When `REview` fetched the event from the node; `null` when `REview`
+	observed it itself.
+	"""
+	fetchedAt: DateTime
+}
+
+"""
+An edge in a connection.
+"""
+type SentaEndpointEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: SentaEndpoint!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+An enrollment attempt of an endpoint.
+"""
+type SentaEndpointEnrollmentAttempt {
+	"""
+	The SHA-256 hash of the endpoint's subject public key info, as 64
+	lowercase hexadecimal characters.
+	"""
+	spkiHash: String!
+	"""
+	The attempt id.
+	"""
+	attemptId: ID!
+	"""
+	The customer `REview` resolved for the attempt.
+	"""
+	customerId: ID!
+	"""
+	The enrollment request, as standard padded base64.
+	"""
+	request: String!
+	"""
+	The address the request came from.
+	"""
+	sourceAddress: String!
+	"""
+	When the request was received.
+	"""
+	receivedAt: DateTime!
+	"""
+	The state of the attempt.
+	"""
+	state: SentaEndpointEnrollmentState!
+	"""
+	The reason of a pending or denied attempt; `null` when approved.
+	"""
+	reason: String
+	"""
+	The enrollment-result JWS of an approved attempt; `null` otherwise.
+	"""
+	enrollmentResult: String
 }
 
 """
@@ -8346,6 +8693,240 @@ input SentaEndpointEnrollmentResolution @oneOf {
 	`bad_token`.
 	"""
 	reject: String
+}
+
+"""
+The state of an enrollment attempt.
+"""
+enum SentaEndpointEnrollmentState {
+	"""
+	The attempt waits for a decision.
+	"""
+	PENDING
+	"""
+	The attempt was approved.
+	"""
+	APPROVED
+	"""
+	The attempt was denied.
+	"""
+	DENIED
+}
+
+"""
+The `DuplicateKey` events and the Giganto loss records of an endpoint.
+"""
+type SentaEndpointEvents {
+	"""
+	The `DuplicateKey` events, in key order: by time, then source, then
+	sequence.
+	"""
+	duplicateKeys: [SentaEndpointDuplicateKeyEvent!]!
+	"""
+	The loss records, in key order: by time received, then node, stream
+	and range.
+	"""
+	losses: [SentaEndpointGigantoLoss!]!
+}
+
+"""
+A loss record a Giganto node reported for an endpoint.
+"""
+type SentaEndpointGigantoLoss {
+	"""
+	When the node received the loss record.
+	"""
+	receivedAt: DateTime!
+	"""
+	The node.
+	"""
+	node: SentaEndpointNode!
+	"""
+	The stream the loss is in.
+	"""
+	streamId: ID!
+	"""
+	The first sequence number of the lost range.
+	"""
+	rangeFrom: StringNumber!
+	"""
+	The last sequence number of the lost range.
+	"""
+	rangeTo: StringNumber!
+	"""
+	The reason code of the loss, as `REview` stored it.
+	"""
+	reason: String!
+	"""
+	The detail of the reason, as `REview` stored it.
+	"""
+	detail: String!
+	"""
+	When `REview` fetched the record from the node.
+	"""
+	fetchedAt: DateTime!
+}
+
+"""
+When a Giganto node last received data from an endpoint.
+"""
+type SentaEndpointLastReceived {
+	"""
+	The node.
+	"""
+	node: SentaEndpointNode!
+	"""
+	When the node last received data from the endpoint.
+	"""
+	lastReceivedAt: DateTime!
+	"""
+	When `REview` fetched this time from the node.
+	"""
+	fetchedAt: DateTime!
+}
+
+"""
+A Giganto node, identified as its service row identifies it.
+"""
+type SentaEndpointNode {
+	"""
+	The host name of the node.
+	"""
+	hostname: String!
+	"""
+	The instance number of Giganto on the host.
+	"""
+	instance: StringNumber!
+}
+
+"""
+How far the active list has reached one Giganto node.
+"""
+type SentaEndpointNodeActiveListStatus {
+	"""
+	The node.
+	"""
+	node: SentaEndpointNode!
+	"""
+	The version of the active list the node applied; `null` if it has
+	applied none.
+	"""
+	appliedVersion: StringNumber
+	"""
+	When `REview` last confirmed the node's entry; `null` if it never
+	did.
+	"""
+	lastConfirmedAt: DateTime
+	"""
+	Whether the node's applied version is absent or differs from
+	`REview`'s version; `false` when no list is stored.
+	"""
+	lagging: Boolean!
+}
+
+"""
+The last result an endpoint reported for a document.
+"""
+type SentaEndpointReportedDocumentResult {
+	"""
+	The type of the document; empty for a reply that names no document.
+	"""
+	typ: String!
+	"""
+	The target of the document; empty for a reply that names no document.
+	"""
+	target: String!
+	"""
+	The version of the document; `null` if the reply gave none.
+	"""
+	version: StringNumber
+	"""
+	The result, as `REview` stored it.
+	"""
+	result: String!
+	"""
+	When the result was reported.
+	"""
+	at: DateTime!
+}
+
+"""
+The last status report of an endpoint.
+"""
+type SentaEndpointStatusReport {
+	"""
+	The report, as `REview` stored it.
+	"""
+	report: String!
+	"""
+	When the report was received.
+	"""
+	receivedAt: DateTime!
+	"""
+	The slot of the address document the endpoint reported; `null` if it
+	reported none.
+	"""
+	addressDocumentSlot: SentaEndpointAddressDocumentSlot
+}
+
+"""
+The endpoint entry of a Giganto node.
+"""
+type SentaEndpointTelemetryEntry {
+	"""
+	The node.
+	"""
+	node: SentaEndpointNode!
+	"""
+	The id of the node's endpoint entry.
+	"""
+	entryId: ID!
+	"""
+	The server name of the entry.
+	"""
+	serverName: String!
+	"""
+	The host of the entry.
+	"""
+	host: String!
+}
+
+"""
+How many of a customer's endpoints have adopted a trust root.
+"""
+type SentaEndpointTrustRootAdoption {
+	"""
+	The customer.
+	"""
+	customerId: ID!
+	"""
+	The number of the customer's endpoints whose last status report names
+	an address document of the customer that lists the root.
+	"""
+	adopted: StringNumber!
+	"""
+	The number of the customer's endpoints.
+	"""
+	total: StringNumber!
+}
+
+"""
+An unenroll request of an endpoint.
+"""
+type SentaEndpointUnenrollRequest {
+	"""
+	The endpoint that asked to be unenrolled.
+	"""
+	endpointId: ID!
+	"""
+	The customer of the endpoint; `null` if the endpoint has no endpoint
+	row.
+	"""
+	customerId: ID
+	"""
+	When the request was received.
+	"""
+	receivedAt: DateTime!
 }
 
 enum SkipReason {
