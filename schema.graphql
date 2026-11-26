@@ -3440,6 +3440,43 @@ type Mutation {
 	"""
 	stopEngineInstance(nodeId: ID!, agentKey: String!): Boolean!
 	"""
+	Registers a customer for Clumit Endpoint with its trust anchor: the
+	customer endpoint id, the customer key name, the install the customer
+	belongs to and the first keyset JWS.
+	"""
+	registerEndpointCustomer(customerId: ID!, customerEndpointId: ID!, keyName: String!, installId: String!, keyset: String!): Boolean!
+	"""
+	Registers a Clumit Endpoint install with its first recovery public key,
+	a JWK as JSON text, and that key's version.
+	"""
+	registerEndpointInstall(installId: String!, recoveryKey: String!, version: StringNumber!): Boolean!
+	"""
+	Applies an active list update and returns the version applied.
+	
+	`update` is the CBOR bytes of senta-protocol's `ListUpdate::encode` as
+	standard padded base64; a full list and a diff are told apart inside
+	it.
+	"""
+	setEndpointActiveList(update: String!): StringNumber!
+	"""
+	Puts signed documents, and returns one result per document in input
+	order.
+	
+	A refused document fails neither the call nor another document; its
+	`reason` is the code of its refusal.
+	"""
+	putEndpointDocuments(documents: [String!]!): [SentaEndpointDocumentResult!]!
+	"""
+	Resolves an enrollment attempt, keyed by the SPKI hash of the
+	enrolling endpoint (64 lowercase hexadecimal characters) and the
+	attempt id.
+	"""
+	resolveEndpointEnrollment(spkiHash: String!, attemptId: ID!, resolution: SentaEndpointEnrollmentResolution!): Boolean!
+	"""
+	Submits a signed command and returns its command id.
+	"""
+	submitEndpointCommand(command: String!): ID!
+	"""
 	Replaces the networks the customer owns with `networks`, returning the
 	stored revision.
 	
@@ -6554,6 +6591,45 @@ type SensorSubject {
 	sensor: String
 }
 
+"""
+The outcome of one document of `putEndpointDocuments`.
+"""
+type SentaEndpointDocumentResult {
+	"""
+	The document's position in the input, from 0.
+	"""
+	index: Int!
+	"""
+	Whether the document was accepted.
+	"""
+	accepted: Boolean!
+	"""
+	The code of the refusal; `null` when the document was accepted.
+	"""
+	reason: String
+}
+
+"""
+How an enrollment attempt is resolved: exactly one of `approve`, `pending`
+and `reject`.
+"""
+input SentaEndpointEnrollmentResolution @oneOf {
+	"""
+	Approves the attempt with the enrollment-result JWS.
+	"""
+	approve: String
+	"""
+	Leaves the attempt pending, with a reason tag such as
+	`awaiting_approval` or `license_pending`.
+	"""
+	pending: String
+	"""
+	Rejects the attempt, with a reason tag such as `denied` or
+	`bad_token`.
+	"""
+	reject: String
+}
+
 enum SkipReason {
 	"""
 	The entry's stored configuration is `None`: `Agent.config`, or for a Giganto service
@@ -8183,6 +8259,10 @@ enum WindowSize {
 Directs the executor to include this field or fragment only when the `if` argument is true.
 """
 directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Indicates that an Input Object is a OneOf Input Object (and thus requires exactly one of its field be provided)
+"""
+directive @oneOf on INPUT_OBJECT
 """
 Directs the executor to skip this field or fragment when the `if` argument is true.
 """

@@ -18,10 +18,11 @@ use ipnet::IpNet;
 // module and neither `Lifecycle` is brought into scope.
 use review_database::{
     BuildSelector, CustomerDataDeletionStatus, ListenerBinding, ListenerTransport, ModelInstance,
-    PortOwner, RunId,
+    PortOwner, RunId, SentaEndpointDeletionState, SentaEndpointError,
 };
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
+use uuid::Uuid;
 
 use crate::customer_data_deletion::{
     CustomerDataDeletionTarget, DataStoreDeletionTarget, DataStoreRequestAnswer,
@@ -1845,6 +1846,313 @@ pub trait HostOnboarder: Send + Sync {
         build: &BuildId,
     ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error>;
 }
+
+/// Why `REview` refused an active list update.
+///
+/// Each reason crosses GraphQL as the `extensions.code` its
+/// [`code`](Self::code) names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum ActiveListRefusalReason {
+    /// The update is a diff whose base version is not `REview`'s current one.
+    VersionMismatch,
+    /// The update's version is not greater than `REview`'s current one.
+    VersionNotAdvanced,
+    /// An entry of the update carries a reason `REview` does not know.
+    UnknownReason,
+    /// The update names one endpoint more than once.
+    RepeatedEndpoint,
+    /// Two endpoints of the update carry one SPKI hash.
+    DuplicateSpki,
+    /// A refusal reason `REview` does not recognise.
+    Unknown,
+}
+
+impl ActiveListRefusalReason {
+    /// Returns the upper snake case code of the reason.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::VersionMismatch => "VERSION_MISMATCH",
+            Self::VersionNotAdvanced => "VERSION_NOT_ADVANCED",
+            Self::UnknownReason => "UNKNOWN_REASON",
+            Self::RepeatedEndpoint => "REPEATED_ENDPOINT",
+            Self::DuplicateSpki => "DUPLICATE_SPKI",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+impl fmt::Display for ActiveListRefusalReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// A refusal code `REview` gives in its own words, such as a document result
+/// name (`EPOCH_MISMATCH`, `BAD_SIGNATURE`, `UNKNOWN_KID`).
+///
+/// It is upper snake case by construction — ASCII capital letters and digits
+/// in words joined by single underscores, starting with a letter — because it
+/// crosses GraphQL as an `extensions.code` and as a document's `reason`
+/// unchanged.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct EndpointRefusalCode(String);
+
+impl EndpointRefusalCode {
+    /// Creates a refusal code from its upper snake case text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `code` is not upper snake case.
+    pub fn new(code: impl Into<String>) -> Result<Self, InvalidEndpointRefusalCode> {
+        let code = code.into();
+        let starts_with_letter = code.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+        let words_are_valid = code.split('_').all(|word| {
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        });
+        if starts_with_letter && words_are_valid {
+            Ok(Self(code))
+        } else {
+            Err(InvalidEndpointRefusalCode(code))
+        }
+    }
+
+    /// Returns the code's text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for EndpointRefusalCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The text given to [`EndpointRefusalCode::new`] that is not upper snake
+/// case.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{0:?} is not an upper snake case refusal code")]
+pub struct InvalidEndpointRefusalCode(pub String);
+
+/// A refusal of an [`EndpointManager`] call that is not about the active
+/// list.
+///
+/// It is both what refuses a whole call, inside
+/// [`EndpointManagerError::Refused`], and what refuses one document of
+/// [`EndpointManager::put_documents`], inside
+/// [`EndpointDocumentOutcome::Refused`].
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum EndpointRefusal {
+    /// The customer has a data deletion job with a result that is not
+    /// `Succeeded`.
+    #[error("the data deletion of customer {customer_id} is unfinished")]
+    CustomerDeletionInProgress {
+        /// The customer the refused request is of.
+        customer_id: u32,
+    },
+    /// The customer has a data deletion job whose every result is
+    /// `Succeeded`.
+    #[error("the data of customer {customer_id} was already deleted")]
+    CustomerDataAlreadyDeleted {
+        /// The customer the refused request is of.
+        customer_id: u32,
+    },
+    /// The customer's endpoint trust state cannot be read.
+    #[error("the endpoint trust state of customer {customer_id} cannot be read")]
+    TrustUnreadable {
+        /// The customer whose trust state cannot be read.
+        customer_id: u32,
+    },
+    /// `REview` refused the request with a code of its own.
+    #[error("refused by REview: {0}")]
+    Code(EndpointRefusalCode),
+}
+
+/// Why an [`EndpointManager`] call failed.
+#[derive(Debug, thiserror::Error)]
+pub enum EndpointManagerError {
+    /// `REview` refused the active list update.
+    #[error("the active list update was refused: {reason}")]
+    ActiveListRefused {
+        /// Why it was refused.
+        reason: ActiveListRefusalReason,
+        /// `REview`'s current active list version; none when it has none.
+        current_version: Option<u64>,
+    },
+    /// The call was refused for a reason that is not about the active list.
+    #[error(transparent)]
+    Refused(#[from] EndpointRefusal),
+    /// This `REview` does not support Clumit Endpoint.
+    #[error("this REview does not support Clumit Endpoint")]
+    NotSupported,
+    /// Any other failure, rendered as an ordinary GraphQL error with its
+    /// message.
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<SentaEndpointError> for EndpointManagerError {
+    /// Converts a refusal for a customer with a data deletion job into the
+    /// deletion refusal its state names, and every other error into
+    /// [`Other`](Self::Other).
+    fn from(error: SentaEndpointError) -> Self {
+        match error {
+            SentaEndpointError::CustomerDeletion { customer_id, state } => match state {
+                SentaEndpointDeletionState::InProgress => {
+                    EndpointRefusal::CustomerDeletionInProgress { customer_id }.into()
+                }
+                SentaEndpointDeletionState::AlreadyDeleted => {
+                    EndpointRefusal::CustomerDataAlreadyDeleted { customer_id }.into()
+                }
+            },
+            // A later review-database release may add variants; none of them
+            // is a refusal this crate renders with a code of its own.
+            other => Self::Other(anyhow::Error::new(other)),
+        }
+    }
+}
+
+/// What became of one document of [`EndpointManager::put_documents`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EndpointDocumentOutcome {
+    /// The document was accepted.
+    Accepted,
+    /// The document was refused.
+    Refused(EndpointRefusal),
+}
+
+/// The key of a Clumit Endpoint enrollment attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct EndpointEnrollmentAttemptKey {
+    /// The SHA-256 hash of the enrolling endpoint's SPKI.
+    pub spki_hash: [u8; 32],
+    /// The attempt's id.
+    pub attempt_id: Uuid,
+}
+
+/// How a Clumit Endpoint enrollment attempt is resolved.
+///
+/// The JWS and the reason tags are passed through unparsed: `REview` verifies
+/// the JWS, and a reason tag is one of senta-protocol's snake case tags
+/// (`awaiting_approval`, `license_pending`, `denied`, `bad_token`, …), which
+/// this crate does not check.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EndpointEnrollmentResolution {
+    /// Approves the attempt with the enrollment-result JWS.
+    Approve(String),
+    /// Leaves the attempt pending, with the reason tag.
+    Pending(String),
+    /// Rejects the attempt, with the reason tag.
+    Reject(String),
+}
+
+/// Changes `REview`'s Clumit Endpoint (`senta`) state.
+///
+/// `REview` verifies every document, key and list update with senta-protocol;
+/// this crate does not depend on it and passes them through as text or
+/// bytes.
+#[async_trait]
+pub trait EndpointManager: Send + Sync {
+    /// Registers a customer for Clumit Endpoint with its trust anchor: the
+    /// customer endpoint id, the customer key name, the install the customer
+    /// belongs to and the first keyset JWS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `REview` refuses the registration, does not support
+    /// Clumit Endpoint, or fails to register it.
+    async fn register_customer(
+        &self,
+        customer_id: u32,
+        customer_endpoint_id: Uuid,
+        key_name: &str,
+        install_id: &str,
+        keyset: &str,
+    ) -> Result<(), EndpointManagerError>;
+
+    /// Registers an install with its first recovery public key, a JWK as JSON
+    /// text, and that key's version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `REview` refuses the registration, does not support
+    /// Clumit Endpoint, or fails to register it.
+    async fn register_install(
+        &self,
+        install_id: &str,
+        recovery_key: &str,
+        version: u64,
+    ) -> Result<(), EndpointManagerError>;
+
+    /// Applies an active list update, the CBOR bytes of senta-protocol's
+    /// `ListUpdate::encode`, and returns the version `REview` applied.
+    ///
+    /// A full list and a diff are told apart inside the update.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointManagerError::ActiveListRefused`] if `REview` refuses
+    /// the update, or another error if it does not support Clumit Endpoint or
+    /// fails to apply it.
+    async fn set_active_list(&self, update: Vec<u8>) -> Result<u64, EndpointManagerError>;
+
+    /// Puts signed documents, and returns one outcome per document, in the
+    /// order of `documents`.
+    ///
+    /// A refused document refuses neither the call nor another document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error of the whole call only if `REview` does not support
+    /// Clumit Endpoint or fails internally; a refusal of one document is its
+    /// outcome, not an error.
+    async fn put_documents(
+        &self,
+        documents: Vec<String>,
+    ) -> Result<Vec<EndpointDocumentOutcome>, EndpointManagerError>;
+
+    /// Resolves an enrollment attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `REview` refuses the resolution, does not support
+    /// Clumit Endpoint, or fails to record it.
+    async fn resolve_enrollment(
+        &self,
+        attempt: EndpointEnrollmentAttemptKey,
+        resolution: EndpointEnrollmentResolution,
+    ) -> Result<(), EndpointManagerError>;
+
+    /// Submits a signed command and returns its command id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `REview` refuses the command, does not support
+    /// Clumit Endpoint, or fails to record it.
+    async fn submit_command(&self, command: &str) -> Result<Uuid, EndpointManagerError>;
+
+    /// Drops `REview`'s in-memory Clumit Endpoint state of a customer.
+    ///
+    /// The customer data deletion supervisor calls it after its last stage
+    /// removed the customer's endpoint rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `REview` does not support Clumit Endpoint or fails
+    /// to drop the state.
+    async fn customer_endpoint_data_deleted(
+        &self,
+        customer_id: u32,
+    ) -> Result<(), EndpointManagerError>;
+}
+
+/// An endpoint manager that can be shared by the schema and background tasks.
+pub type SharedEndpointManager = Arc<dyn EndpointManager>;
 
 #[cfg(test)]
 mod tests {

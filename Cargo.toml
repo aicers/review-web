@@ -46,6 +46,7 @@ tokio-rustls = "0.26"
 toml = "1"
 tower = "0.5"
 tracing = "0.1"
+uuid = "1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "2.0.0" }
 x509-parser = "0.18"
 

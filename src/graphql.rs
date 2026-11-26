@@ -51,6 +51,7 @@ mod refusal;
 mod rfc3339;
 #[cfg(test)]
 mod run_test_support;
+mod senta_endpoint;
 mod slicing;
 mod statistics;
 mod status;
@@ -123,7 +124,7 @@ pub(crate) use self::time_series_generation::TimeSeriesGenerationPoliciesLock;
 pub use self::time_series_generation::{
     SlotSize, TimeSeriesGenerationPolicy, WindowSize, time_series_generation_policies_for_generator,
 };
-use crate::backend::{AgentManager, CertManager, HostOnboarder};
+use crate::backend::{AgentManager, CertManager, HostOnboarder, SharedEndpointManager};
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
@@ -153,6 +154,7 @@ pub(super) fn schema<B, O>(
     host_onboarder: O,
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
+    endpoint_manager: SharedEndpointManager,
     manager_node_hostname: Option<String>,
     tls_reload_handle: Arc<Notify>,
     maintenance_gate: MaintenanceGate,
@@ -174,6 +176,7 @@ where
     .data(package_deployer)
     .data(host_onboarder)
     .data(cert_manager)
+    .data(endpoint_manager)
     .data(node::ManagerNodeHostname(manager_node_hostname))
     .data(tls_reload_handle)
     .data(Arc::clone(
@@ -267,6 +270,7 @@ struct SubMutationOneA(
     customer_data_deletion::CustomerDataDeletionMutation,
     db_management::DbManagementMutation,
     engine_instance::EngineInstanceMutation,
+    senta_endpoint::SentaEndpointMutation,
 );
 
 #[derive(MergedObject, Default)]
@@ -1557,6 +1561,71 @@ impl PackageDeployer for MockPackageDeployer {
     }
 }
 
+/// An endpoint manager of a `REview` without Clumit Endpoint support.
+#[cfg(test)]
+struct MockEndpointManager;
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl crate::backend::EndpointManager for MockEndpointManager {
+    async fn register_customer(
+        &self,
+        _customer_id: u32,
+        _customer_endpoint_id: uuid::Uuid,
+        _key_name: &str,
+        _install_id: &str,
+        _keyset: &str,
+    ) -> Result<(), crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn register_install(
+        &self,
+        _install_id: &str,
+        _recovery_key: &str,
+        _version: u64,
+    ) -> Result<(), crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn set_active_list(
+        &self,
+        _update: Vec<u8>,
+    ) -> Result<u64, crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn put_documents(
+        &self,
+        _documents: Vec<String>,
+    ) -> Result<Vec<crate::backend::EndpointDocumentOutcome>, crate::backend::EndpointManagerError>
+    {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn resolve_enrollment(
+        &self,
+        _attempt: crate::backend::EndpointEnrollmentAttemptKey,
+        _resolution: crate::backend::EndpointEnrollmentResolution,
+    ) -> Result<(), crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn submit_command(
+        &self,
+        _command: &str,
+    ) -> Result<uuid::Uuid, crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+
+    async fn customer_endpoint_data_deleted(
+        &self,
+        _customer_id: u32,
+    ) -> Result<(), crate::backend::EndpointManagerError> {
+        Err(crate::backend::EndpointManagerError::NotSupported)
+    }
+}
+
 #[cfg(test)]
 struct MockHostOnboarder {}
 
@@ -1732,6 +1801,7 @@ impl TestSchema {
         .data(agent_manager)
         .data(package_deployer)
         .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
+        .data(Arc::new(MockEndpointManager) as SharedEndpointManager)
         .data(store.clone())
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
