@@ -94,7 +94,7 @@ impl AgentManager for Recorder {
         Ok(vec![])
     }
 
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
@@ -107,7 +107,7 @@ impl AgentManager for Recorder {
         Ok(vec![])
     }
 
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {

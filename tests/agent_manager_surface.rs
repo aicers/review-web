@@ -1,4 +1,4 @@
-//! Exercises the allowlist and blocklist payloads of `AgentManager` from
+//! Exercises the exclusion list and watchlist payloads of `AgentManager` from
 //! outside the crate.
 //!
 //! The embedding application is the real implementer: it reads each list's
@@ -20,7 +20,7 @@ use review_web::{
     customer_data_deletion::CustomerDataDeletionTarget,
     graphql::{
         NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
-        get_allow_networks, get_block_networks,
+        get_exclusion_list, get_watchlist,
     },
 };
 
@@ -34,11 +34,11 @@ const HOG: &str = "hog";
 type Received = (Vec<String>, Vec<(u64, String, HostNetworkGroup)>);
 
 /// An implementer living outside the crate, as the embedding application
-/// does, that reads every allowlist and blocklist payload it receives.
+/// does, that reads every exclusion list and watchlist payload it receives.
 #[derive(Default)]
 struct OutsideAgentManager {
-    allow: Mutex<Vec<Received>>,
-    block: Mutex<Vec<Received>>,
+    exclusion_list: Mutex<Vec<Received>>,
+    watchlist: Mutex<Vec<Received>>,
 }
 
 /// Reads each payload field by field, as an implementer converting the items
@@ -80,22 +80,22 @@ impl AgentManager for OutsideAgentManager {
         anyhow::bail!("not expected to be called")
     }
 
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.allow
+        self.exclusion_list
             .lock()
             .expect("no test thread panics while holding the lock")
             .extend(read(items));
         Ok(sent_to(items))
     }
 
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.block
+        self.watchlist
             .lock()
             .expect("no test thread panics while holding the lock")
             .extend(read(items));
@@ -161,14 +161,14 @@ async fn an_outside_agent_manager_reads_the_items_and_targets_of_both_lists() {
     let backup_dir = tempfile::tempdir().unwrap();
     let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
     // Not sorted by ID or name, so the order read back is the stored one.
-    let allowlist = vec![
+    let exclusion_list = vec![
         entry(WIDE_ID, "partner", group(&["198.51.100.1"], &[])),
         entry(2, "office", group(&[], &["10.0.0.0/8"])),
     ];
-    let blocklist = vec![entry(u64::MAX, "scanner", group(&["192.0.2.1"], &[]))];
+    let watchlist = vec![entry(u64::MAX, "scanner", group(&["192.0.2.1"], &[]))];
     store
         .network_lists_map()
-        .replace(CUSTOMER_ID, 1, allowlist, blocklist)
+        .replace(CUSTOMER_ID, 1, exclusion_list, watchlist)
         .unwrap();
 
     let agent_lookup_keys = vec![
@@ -179,10 +179,10 @@ async fn an_outside_agent_manager_reads_the_items_and_targets_of_both_lists() {
     let pair = |items| {
         NetworkListItemsTargetAgentLookupKeysPair::new(items, agent_lookup_keys.clone(), HOG)
     };
-    let allow = pair(get_allow_networks(&store, CUSTOMER_ID).unwrap());
-    let block = pair(get_block_networks(&store, CUSTOMER_ID).unwrap());
+    let exclusion_list = pair(get_exclusion_list(&store, CUSTOMER_ID).unwrap());
+    let watchlist = pair(get_watchlist(&store, CUSTOMER_ID).unwrap());
     // A customer with no stored lists is sent empty ones.
-    let empty = pair(get_allow_networks(&store, CUSTOMER_ID + 1).unwrap());
+    let empty = pair(get_exclusion_list(&store, CUSTOMER_ID + 1).unwrap());
 
     let manager = OutsideAgentManager::default();
     let agent_manager: &dyn AgentManager = &manager;
@@ -192,21 +192,21 @@ async fn an_outside_agent_manager_reads_the_items_and_targets_of_both_lists() {
     ];
     assert_eq!(
         agent_manager
-            .send_agent_specific_allow_networks(&[allow, empty])
+            .send_agent_specific_exclusion_list(&[exclusion_list, empty])
             .await
             .unwrap(),
         [hogs.clone(), hogs.clone()].concat()
     );
     assert_eq!(
         agent_manager
-            .send_agent_specific_block_networks(&[block])
+            .send_agent_specific_watchlist(&[watchlist])
             .await
             .unwrap(),
         hogs
     );
 
     assert_eq!(
-        *manager.allow.lock().unwrap(),
+        *manager.exclusion_list.lock().unwrap(),
         vec![
             (
                 hogs.clone(),
@@ -223,7 +223,7 @@ async fn an_outside_agent_manager_reads_the_items_and_targets_of_both_lists() {
         ]
     );
     assert_eq!(
-        *manager.block.lock().unwrap(),
+        *manager.watchlist.lock().unwrap(),
         vec![(
             hogs,
             vec![(u64::MAX, "scanner".to_string(), group(&["192.0.2.1"], &[]))],

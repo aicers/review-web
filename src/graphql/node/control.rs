@@ -21,10 +21,10 @@ use crate::graphql::{
     SharedPackageDeployer,
     customer::{
         NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
-        send_agent_specific_allow_networks, send_agent_specific_block_networks,
-        send_agent_specific_customer_networks,
+        send_agent_specific_customer_networks, send_agent_specific_exclusion_list,
+        send_agent_specific_watchlist,
     },
-    customer_deletion_guard, get_allow_networks, get_block_networks, get_customer_networks,
+    customer_deletion_guard, get_customer_networks, get_exclusion_list, get_watchlist,
     network_list::lock_network_lists,
     node::input::NodeInput,
 };
@@ -1137,10 +1137,10 @@ async fn send_customer_change(
         error_with_caller!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
 
-    // hog pulls its allowlist and blocklist only when it connects, so a node
-    // that changes customers is sent the new customer's lists, even empty ones.
-    // They are read and sent under the network lists lock, so that they reach
-    // the node after any push read before this move was stored, whichever
+    // hog pulls its exclusion list and watchlist only when it connects, so a
+    // node that changes customers is sent the new customer's lists, even empty
+    // ones. They are read and sent under the network lists lock, so that they
+    // reach the node after any push read before this move was stored, whichever
     // customer it was read for, and in order with the new customer's replaces.
     let _lock = lock_network_lists(ctx).await?;
     let lists = {
@@ -1164,25 +1164,25 @@ async fn send_customer_change(
                 )
             };
             Some((
-                pair(get_allow_networks(&store, customer_id)?),
-                pair(get_block_networks(&store, customer_id)?),
+                pair(get_exclusion_list(&store, customer_id)?),
+                pair(get_watchlist(&store, customer_id)?),
             ))
         } else {
             None
         }
     };
-    let Some((allow_list, block_list)) = lists else {
+    let Some((exclusion_list, watchlist)) = lists else {
         info_with_caller!(
             ctx,
-            "Node {node_id} no longer belongs to customer {customer_id}; its allowlist and blocklist are left to the later change"
+            "Node {node_id} no longer belongs to customer {customer_id}; its exclusion list and watchlist are left to the later change"
         );
         return Ok(());
     };
-    if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
-        error_with_caller!(ctx, "Failed to broadcast allowlist: {e:?}");
+    if let Err(e) = send_agent_specific_exclusion_list(ctx, &[exclusion_list]).await {
+        error_with_caller!(ctx, "Failed to broadcast exclusion list: {e:?}");
     }
-    if let Err(e) = send_agent_specific_block_networks(ctx, &[block_list]).await {
-        error_with_caller!(ctx, "Failed to broadcast blocklist: {e:?}");
+    if let Err(e) = send_agent_specific_watchlist(ctx, &[watchlist]).await {
+        error_with_caller!(ctx, "Failed to broadcast watchlist: {e:?}");
     }
 
     Ok(())
@@ -3342,14 +3342,14 @@ mod tests {
             Ok(vec![test_agent_lookup_key("semi-supervised", "hostA")])
         }
 
-        async fn send_agent_specific_allow_networks(
+        async fn send_agent_specific_exclusion_list(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
 
-        async fn send_agent_specific_block_networks(
+        async fn send_agent_specific_watchlist(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
@@ -3440,18 +3440,18 @@ mod tests {
             anyhow::bail!("Failed to broadcast internal networks")
         }
 
-        async fn send_agent_specific_allow_networks(
+        async fn send_agent_specific_exclusion_list(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("Failed to broadcast allow networks")
+            anyhow::bail!("Failed to broadcast exclusion list")
         }
 
-        async fn send_agent_specific_block_networks(
+        async fn send_agent_specific_watchlist(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("Failed to broadcast block networks")
+            anyhow::bail!("Failed to broadcast watchlist")
         }
 
         async fn online_apps_by_host_id(
@@ -4364,9 +4364,9 @@ mod tests {
         let (agent_manager, pushes) = PushRecordingAgentManager::boxed();
         let schema = TestSchema::new_with_params(agent_manager, None).await;
 
-        // Customer 1 has internal networks, an allowlist and a blocklist;
+        // Customer 1 has internal networks, an exclusion list and a watchlist;
         // customer 2 has none.
-        let allowlist = vec![
+        let exclusion_list = vec![
             review_database::NetworkListEntry {
                 id: (1 << 53) + 1,
                 name: "partner".to_string(),
@@ -4378,7 +4378,7 @@ mod tests {
                 group: group(&[], &["10.0.0.0/8"], &[]),
             },
         ];
-        let blocklist = vec![review_database::NetworkListEntry {
+        let watchlist = vec![review_database::NetworkListEntry {
             id: 1,
             name: "scanner".to_string(),
             group: group(&["192.0.2.1"], &[], &[]),
@@ -4386,7 +4386,7 @@ mod tests {
         schema
             .store()
             .network_lists_map()
-            .replace(1, 1, allowlist.clone(), blocklist.clone())
+            .replace(1, 1, exclusion_list.clone(), watchlist.clone())
             .unwrap();
         schema
             .store()
@@ -4423,7 +4423,7 @@ mod tests {
 
         // Seed nodes whose profile (customer 0) differs from their profile_draft (customers 1
         // and 2) so that applyNodeDraft promotes a customer_id change and broadcasts the new
-        // customer's networks, allowlist and blocklist.
+        // customer's networks, exclusion list and watchlist.
         for (name, hostname, customer_id) in [("node-a", "host-a", 1), ("node-b", "host-b", 2)] {
             let node = review_database::Node {
                 id: u32::MAX,
@@ -4527,17 +4527,18 @@ mod tests {
                 vec![(host_b.clone(), review_database::HostNetworkGroup::default())],
             ]
         );
-        // The allowlist and blocklist are their stored items, in stored order.
+        // The exclusion list and watchlist are their stored items, in stored
+        // order.
         assert_eq!(
-            pushes.allow(),
+            pushes.exclusion_list(),
             vec![
-                vec![(host_a.clone(), allowlist)],
+                vec![(host_a.clone(), exclusion_list)],
                 vec![(host_b.clone(), Vec::new())],
             ]
         );
         assert_eq!(
-            pushes.block(),
-            vec![vec![(host_a, blocklist)], vec![(host_b, Vec::new())]]
+            pushes.watchlist(),
+            vec![vec![(host_a, watchlist)], vec![(host_b, Vec::new())]]
         );
     }
 
@@ -4546,18 +4547,18 @@ mod tests {
     async fn customer_change_waits_for_lists_pushed_as_the_previous_customer() {
         const PREVIOUS: u32 = 4343;
         const NEXT: u32 = 4344;
-        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let (schema, pushes, pause) = paused_schema(PushKind::ExclusionList).await;
         let entry = |name: &str, group| review_database::NetworkListEntry {
             id: 1,
             name: name.to_string(),
             group,
         };
-        let next_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
-        let next_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
+        let next_exclusion_list = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let next_watchlist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
         schema
             .store()
             .network_lists_map()
-            .replace(NEXT, 1, next_allowlist.clone(), next_blocklist.clone())
+            .replace(NEXT, 1, next_exclusion_list.clone(), next_watchlist.clone())
             .unwrap();
         let profile = |customer_id| review_database::NodeProfile {
             customer_id,
@@ -4582,8 +4583,8 @@ mod tests {
 
         let replace = format!(
             r#"mutation {{ replaceNetworkLists(customerId: "{PREVIOUS}", revision: "1",
-                allowlist: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
-                blocklist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+                exclusionList: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                watchlist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
         );
         let apply = format!(
             r#"mutation {{
@@ -4607,13 +4608,13 @@ mod tests {
             }}"#
         );
         let target = vec!["001.hog.host-a".to_string()];
-        let previous_allowlist = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
-        let previous_blocklist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
+        let previous_exclusion_list = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
+        let previous_watchlist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
         let apply_done = AtomicBool::new(false);
 
         let (replace_res, apply_res, ()) = tokio::join!(
             // Captures the node as the previous customer's and pauses in its
-            // allowlist push.
+            // exclusion list push.
             schema.execute_as_system_admin(&replace),
             async {
                 // Moves the node once the replace is paused.
@@ -4629,10 +4630,10 @@ mod tests {
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(
-                    pushes.allow(),
-                    vec![vec![(target.clone(), previous_allowlist.clone())]]
+                    pushes.exclusion_list(),
+                    vec![vec![(target.clone(), previous_exclusion_list.clone())]]
                 );
-                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+                assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -4653,17 +4654,17 @@ mod tests {
         );
         // The node ends with the new customer's lists.
         assert_eq!(
-            pushes.allow(),
+            pushes.exclusion_list(),
             vec![
-                vec![(target.clone(), previous_allowlist)],
-                vec![(target.clone(), next_allowlist)],
+                vec![(target.clone(), previous_exclusion_list)],
+                vec![(target.clone(), next_exclusion_list)],
             ]
         );
         assert_eq!(
-            pushes.block(),
+            pushes.watchlist(),
             vec![
-                vec![(target.clone(), previous_blocklist)],
-                vec![(target, next_blocklist)],
+                vec![(target.clone(), previous_watchlist)],
+                vec![(target, next_watchlist)],
             ]
         );
         assert_eq!(schema.network_lists_lock_users(), 0);
@@ -4681,18 +4682,18 @@ mod tests {
             name: name.to_string(),
             group,
         };
-        let second_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
-        let second_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
-        let third_allowlist = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
-        let third_blocklist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
-        for (customer_id, allowlist, blocklist) in [
-            (SECOND, &second_allowlist, &second_blocklist),
-            (THIRD, &third_allowlist, &third_blocklist),
+        let second_exclusion_list = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let second_watchlist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
+        let third_exclusion_list = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
+        let third_watchlist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
+        for (customer_id, exclusion_list, watchlist) in [
+            (SECOND, &second_exclusion_list, &second_watchlist),
+            (THIRD, &third_exclusion_list, &third_watchlist),
         ] {
             schema
                 .store()
                 .network_lists_map()
-                .replace(customer_id, 1, allowlist.clone(), blocklist.clone())
+                .replace(customer_id, 1, exclusion_list.clone(), watchlist.clone())
                 .unwrap();
         }
         let profile = |customer_id| review_database::NodeProfile {
@@ -4775,12 +4776,12 @@ mod tests {
                 let res = schema.execute_as_system_admin(&apply(SECOND, THIRD)).await;
                 assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
                 assert_eq!(
-                    pushes.allow(),
-                    vec![vec![(target.clone(), third_allowlist.clone())]]
+                    pushes.exclusion_list(),
+                    vec![vec![(target.clone(), third_exclusion_list.clone())]]
                 );
                 assert_eq!(
-                    pushes.block(),
-                    vec![vec![(target.clone(), third_blocklist.clone())]]
+                    pushes.watchlist(),
+                    vec![vec![(target.clone(), third_watchlist.clone())]]
                 );
                 pause.release.notify_one();
             },
@@ -4795,10 +4796,10 @@ mod tests {
         // customer's.
         assert_eq!(pushes.internal().len(), 2);
         assert_eq!(
-            pushes.allow(),
-            vec![vec![(target.clone(), third_allowlist)]]
+            pushes.exclusion_list(),
+            vec![vec![(target.clone(), third_exclusion_list)]]
         );
-        assert_eq!(pushes.block(), vec![vec![(target, third_blocklist)]]);
+        assert_eq!(pushes.watchlist(), vec![vec![(target, third_watchlist)]]);
         let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
         assert_eq!(stored.profile.map(|p| p.customer_id), Some(THIRD));
         assert_eq!(schema.network_lists_lock_users(), 0);
@@ -4810,24 +4811,24 @@ mod tests {
         const FIRST: u32 = 4348;
         const SECOND: u32 = 4349;
         const THIRD: u32 = 4350;
-        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let (schema, pushes, pause) = paused_schema(PushKind::ExclusionList).await;
         let entry = |name: &str, group| review_database::NetworkListEntry {
             id: 1,
             name: name.to_string(),
             group,
         };
-        let second_allowlist = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
-        let second_blocklist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
-        let third_allowlist = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
-        let third_blocklist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
-        for (customer_id, allowlist, blocklist) in [
-            (SECOND, &second_allowlist, &second_blocklist),
-            (THIRD, &third_allowlist, &third_blocklist),
+        let second_exclusion_list = vec![entry("partner", group(&["198.51.100.1"], &[], &[]))];
+        let second_watchlist = vec![entry("botnet", group(&[], &["172.16.0.0/12"], &[]))];
+        let third_exclusion_list = vec![entry("partner", group(&["203.0.113.7"], &[], &[]))];
+        let third_watchlist = vec![entry("botnet", group(&[], &["192.168.0.0/16"], &[]))];
+        for (customer_id, exclusion_list, watchlist) in [
+            (SECOND, &second_exclusion_list, &second_watchlist),
+            (THIRD, &third_exclusion_list, &third_watchlist),
         ] {
             schema
                 .store()
                 .network_lists_map()
-                .replace(customer_id, 1, allowlist.clone(), blocklist.clone())
+                .replace(customer_id, 1, exclusion_list.clone(), watchlist.clone())
                 .unwrap();
         }
         let profile = |customer_id| review_database::NodeProfile {
@@ -4853,8 +4854,8 @@ mod tests {
 
         let replace_first = format!(
             r#"mutation {{ replaceNetworkLists(customerId: "{FIRST}", revision: "1",
-                allowlist: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
-                blocklist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+                exclusionList: [{{ id: "1", name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                watchlist: [{{ id: "1", name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
         );
         let agents = r#"agents: [{
             key: "001.hog",
@@ -4901,15 +4902,15 @@ mod tests {
             }}"#
         );
         let target = vec!["001.hog.host-a".to_string()];
-        let first_allowlist = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
-        let first_blocklist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
+        let first_exclusion_list = vec![entry("office", group(&[], &["10.0.0.0/8"], &[]))];
+        let first_watchlist = vec![entry("scanner", group(&["192.0.2.1"], &[], &[]))];
         let to_second = apply(FIRST, SECOND);
         let to_third = apply(SECOND, THIRD);
         let moves_done = AtomicUsize::new(0);
 
         let (replace_res, (second_res, third_res), ()) = tokio::join!(
             // Captures the node as the first customer's and pauses in its
-            // allowlist push.
+            // exclusion list push.
             schema.execute_as_system_admin(&replace_first),
             async {
                 pause.entered.notified().await;
@@ -4944,10 +4945,10 @@ mod tests {
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(
-                    pushes.allow(),
-                    vec![vec![(target.clone(), first_allowlist.clone())]]
+                    pushes.exclusion_list(),
+                    vec![vec![(target.clone(), first_exclusion_list.clone())]]
                 );
-                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+                assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -4958,17 +4959,17 @@ mod tests {
         // The first customer's lists arrive before the third customer's, and
         // the superseded move to the second customer sends none.
         assert_eq!(
-            pushes.allow(),
+            pushes.exclusion_list(),
             vec![
-                vec![(target.clone(), first_allowlist)],
-                vec![(target.clone(), third_allowlist)],
+                vec![(target.clone(), first_exclusion_list)],
+                vec![(target.clone(), third_exclusion_list)],
             ]
         );
         assert_eq!(
-            pushes.block(),
+            pushes.watchlist(),
             vec![
-                vec![(target.clone(), first_blocklist)],
-                vec![(target, third_blocklist)],
+                vec![(target.clone(), first_watchlist)],
+                vec![(target, third_watchlist)],
             ]
         );
         let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
@@ -5745,14 +5746,14 @@ mod tests {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn send_agent_specific_allow_networks(
+        async fn send_agent_specific_exclusion_list(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn send_agent_specific_block_networks(
+        async fn send_agent_specific_watchlist(
             &self,
             _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {

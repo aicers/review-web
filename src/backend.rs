@@ -104,26 +104,26 @@ pub trait AgentManager: Send + Sync {
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
-    /// Sends each pair's allowlist items, in their stored order, to the agents
-    /// of its target lookup keys, and returns the lookup keys of the agents
-    /// that received them.
+    /// Sends each pair's exclusion list items, in their stored order, to the
+    /// agents of its target lookup keys, and returns the lookup keys of the
+    /// agents that received them.
     ///
     /// # Errors
     ///
     /// Returns an error if the items could not be sent.
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
-    /// Sends each pair's blocklist items, in their stored order, to the agents
+    /// Sends each pair's watchlist items, in their stored order, to the agents
     /// of its target lookup keys, and returns the lookup keys of the agents
     /// that received them.
     ///
     /// # Errors
     ///
     /// Returns an error if the items could not be sent.
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;

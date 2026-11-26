@@ -196,8 +196,8 @@ mod tests {
         unreachable {
             fn request_customer_data_deletion(&self, _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget]) -> ();
             fn send_agent_specific_internal_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
-            fn send_agent_specific_allow_networks(&self, _networks: &[NetworkListItemsTargetAgentLookupKeysPair]) -> Vec<String>;
-            fn send_agent_specific_block_networks(&self, _networks: &[NetworkListItemsTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_exclusion_list(&self, _networks: &[NetworkListItemsTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_watchlist(&self, _networks: &[NetworkListItemsTargetAgentLookupKeysPair]) -> Vec<String>;
             fn online_apps_by_host_id(&self) -> HashMap<String, Vec<(String, String)>>;
             fn capabilities(&self, _hostname: &str) -> BTreeSet<String>;
             fn get_resource_usage(&self, _hostname: &str) -> review_protocol::types::ResourceUsage;
