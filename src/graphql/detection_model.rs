@@ -675,6 +675,21 @@ mod tests {
                 DetectionModelSubjectKind::Network,
                 Some(time_series_type),
             ),
+            (
+                Kind::Endpoint(Source::Fixed(protocol::ThreatRole::Target)),
+                DetectionModelSubjectKind::Endpoint,
+                Some(fixed(ThreatRole::Target)),
+            ),
+            (
+                Kind::Endpoint(Source::PerEvent),
+                DetectionModelSubjectKind::Endpoint,
+                Some(per_event),
+            ),
+            (
+                Kind::Endpoint(Source::TimeSeriesType),
+                DetectionModelSubjectKind::Endpoint,
+                Some(time_series_type),
+            ),
         ];
         for (subject, kind, role_source) in cases {
             assert_eq!(

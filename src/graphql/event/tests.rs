@@ -2792,7 +2792,8 @@ mod detection_event {
                 "ClusterSubject",
                 "HostSubject",
                 "NetworkSubject",
-                "SensorSubject"
+                "SensorSubject",
+                "SentaEndpointSubject",
             ]
         );
 
@@ -2835,6 +2836,14 @@ mod detection_event {
             "FileDeleteDetected",
             "Netflow5",
             "Netflow9",
+            "DriverLoad",
+            "CreateRemoteThread",
+            "RawAccessRead",
+            "ProcessAccess",
+            "RegistryObjectAddDel",
+            "WindowsEventLog",
+            "Journald",
+            "Auditd",
         ]
         .iter()
         .map(|kind| format!("{kind}Body"))
@@ -3691,6 +3700,7 @@ mod detection_event {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn every_raw_event_body_is_returned_as_its_own_member() {
         // Each entry is a raw event kind, its GraphQL enum value, the union
         // member of its body, and a zero body of that kind.
@@ -3742,7 +3752,42 @@ mod detection_event {
             (FileDeleteDetected, "FILE_DELETE_DETECTED"),
             (Netflow5, "NETFLOW_5"),
             (Netflow9, "NETFLOW_9"),
+            (DriverLoad, "DRIVER_LOAD"),
+            (CreateRemoteThread, "CREATE_REMOTE_THREAD"),
+            (RawAccessRead, "RAW_ACCESS_READ"),
+            (ProcessAccess, "PROCESS_ACCESS"),
+            (RegistryObjectAddDel, "REGISTRY_OBJECT_ADD_DEL"),
         ];
+        // A log body's host header is required, and a UUID does not decode
+        // from zero bytes.
+        let mut bodies = bodies;
+        bodies.extend([
+            (
+                RawEventKind::WindowsEventLog,
+                "WINDOWS_EVENT_LOG",
+                "WindowsEventLogBody",
+                RawEventBody::WindowsEventLog(windows_event_log(header(1, 1))),
+            ),
+            (
+                RawEventKind::Journald,
+                "JOURNALD",
+                "JournaldBody",
+                RawEventBody::Journald(raw_event::Journald {
+                    fields: None,
+                    endpoint: header(1, 1),
+                }),
+            ),
+            (
+                RawEventKind::Auditd,
+                "AUDITD",
+                "AuditdBody",
+                RawEventBody::Auditd(raw_event::Auditd {
+                    serial: None,
+                    records: None,
+                    endpoint: header(1, 1),
+                }),
+            ),
+        ]);
         let schema = TestSchema::new().await;
         let expected: Vec<Value> = {
             let store = schema.store();
@@ -3766,7 +3811,7 @@ mod detection_event {
                 })
                 .collect()
         };
-        assert_eq!(expected.len(), 36);
+        assert_eq!(expected.len(), 44);
 
         // The union has one member per raw event kind, and each body is
         // returned as the member of its own kind.
@@ -3792,6 +3837,74 @@ mod detection_event {
                 json!({ "origAddr": "0.0.0.0", "respAddr": "0.0.0.0", "method": "", "statusCode": 0 }),
                 json!({ "sourceIp": "0.0.0.0", "destinationIp": "0.0.0.0" }),
                 json!({ "origAddr": "0.0.0.0", "respAddr": "0.0.0.0" }),
+            ]
+        );
+
+        // Every Sysmon body has a nullable host header, null in a zero body,
+        // and every log body a non-null one.
+        let sysmon = [
+            "ProcessCreate",
+            "FileCreateTime",
+            "NetworkConnect",
+            "ProcessTerminate",
+            "ImageLoad",
+            "FileCreate",
+            "RegistryValueSet",
+            "RegistryKeyRename",
+            "FileCreateStreamHash",
+            "PipeEvent",
+            "DnsQuery",
+            "FileDelete",
+            "ProcessTamper",
+            "FileDeleteDetected",
+            "DriverLoad",
+            "CreateRemoteThread",
+            "RawAccessRead",
+            "ProcessAccess",
+            "RegistryObjectAddDel",
+        ];
+        let logs = ["WindowsEventLog", "Journald", "Auditd"];
+        let fragments: String = sysmon
+            .iter()
+            .map(|kind| format!("... on {kind}Body {{ endpoint {{ endpointId }} }}\n"))
+            .chain(logs.iter().map(|kind| {
+                format!("... on {kind}Body {{ logEndpoint: endpoint {{ endpointId }} }}\n")
+            }))
+            .collect();
+        let headers: Vec<Value> = nodes(
+            &schema,
+            &format!("target {{ ... on RawEventTarget {{ body {{ __typename {fragments} }} }} }}"),
+        )
+        .await
+        .into_iter()
+        .map(|mut node| node["target"]["body"].take())
+        .filter(|body| body.as_object().is_some_and(|body| body.len() > 1))
+        .collect();
+        let expected: Vec<Value> = sysmon
+            .iter()
+            .map(|kind| json!({ "__typename": format!("{kind}Body"), "endpoint": null }))
+            .chain(logs.iter().map(|kind| {
+                json!({
+                    "__typename": format!("{kind}Body"),
+                    "logEndpoint": { "endpointId": "00000000-0000-0000-0000-000000000001" },
+                })
+            }))
+            .collect();
+        assert_eq!(headers, expected);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ __type(name: "ProcessCreateBody") { fields { name type { kind name } } } }"#,
+            )
+            .await;
+        let data = res.data.into_json().unwrap();
+        let fields = data["__type"]["fields"].as_array().unwrap();
+        // The two added fields come last, both nullable.
+        assert_eq!(
+            fields[fields.len() - 2..],
+            [
+                json!({ "name": "endpoint", "type": { "kind": "OBJECT", "name": "SentaEndpointHeader" } }),
+                json!({ "name": "logonIdFull", "type": { "kind": "SCALAR", "name": "StringNumber" } }),
             ]
         );
     }
@@ -3979,110 +4092,710 @@ mod detection_event {
         );
     }
 
+    /// The fields of a `SentaEndpointHeader`, every one of them.
+    const HEADER_FIELDS: &str = "endpointId stream seq eventTime collectedAt
+        clockOffset { offsetMs uncertaintyMs measuredAt }
+        hostname ips defaultRouteIp netStateSource osFamily osVersion collectionMode
+        processKey schema";
+
+    /// Returns a host header of the endpoint `endpoint`, in one of four
+    /// shapes that together cover every enum value and every `None`.
+    fn header(endpoint: u128, shape: u8) -> raw_event::EndpointHeader {
+        let mut header = raw_event::EndpointHeader {
+            endpoint_id: uuid::Uuid::from_u128(endpoint),
+            stream: uuid::Uuid::from_u128(0xfedc_ba98_7654_3210_fedc_ba98_7654_3210),
+            seq: u64::MAX,
+            event_time: 1_700_000_000_000_000_001,
+            collected_at: -1_700_000_000_000_000_002,
+            clock_offset: Some(raw_event::ClockOffset {
+                offset_ms: -1_500,
+                uncertainty_ms: u32::MAX,
+                measured_at: i64::MAX,
+            }),
+            hostname: "pc-1".to_string(),
+            ips: vec![addr("192.0.2.5"), addr("2001:db8::5")],
+            default_route_ip: Some(addr("192.0.2.1")),
+            net_state_source: raw_event::NetStateSource::Observed,
+            os_family: raw_event::OsFamily::Windows,
+            os_version: "10.0.19045".to_string(),
+            collection_mode: raw_event::CollectionMode::Extended,
+            process_key: Some(vec![0x00, 0xab, 0xff]),
+            schema: u16::MAX,
+        };
+        match shape {
+            0 => {}
+            1 => {
+                header.clock_offset = None;
+                header.ips = Vec::new();
+                header.default_route_ip = None;
+                header.net_state_source = raw_event::NetStateSource::Inferred;
+                header.os_family = raw_event::OsFamily::Linux;
+                header.collection_mode = raw_event::CollectionMode::Essential;
+                header.process_key = None;
+                header.schema = 0;
+            }
+            2 => {
+                header.net_state_source = raw_event::NetStateSource::Unknown;
+                header.os_family = raw_event::OsFamily::Macos;
+                header.collection_mode = raw_event::CollectionMode::Other("minimal".to_string());
+                // No bytes are an empty string.
+                header.process_key = Some(Vec::new());
+            }
+            _ => {
+                header.net_state_source = raw_event::NetStateSource::Other("netlink".to_string());
+                header.os_family = raw_event::OsFamily::Other("freebsd".to_string());
+                header.process_key = None;
+            }
+        }
+        header
+    }
+
+    /// The GraphQL value of [`header`]`(endpoint, shape)`.
+    fn header_json(endpoint: &str, shape: u8) -> Value {
+        let mut value = json!({
+            "endpointId": endpoint,
+            "stream": "fedcba98-7654-3210-fedc-ba9876543210",
+            "seq": u64::MAX.to_string(),
+            "eventTime": "1700000000000000001",
+            "collectedAt": "-1700000000000000002",
+            "clockOffset": {
+                "offsetMs": "-1500",
+                "uncertaintyMs": u32::MAX.to_string(),
+                "measuredAt": i64::MAX.to_string(),
+            },
+            "hostname": "pc-1",
+            "ips": ["192.0.2.5", "2001:db8::5"],
+            "defaultRouteIp": "192.0.2.1",
+            "netStateSource": "observed",
+            "osFamily": "windows",
+            "osVersion": "10.0.19045",
+            "collectionMode": "extended",
+            "processKey": "00abff",
+            "schema": u16::MAX,
+        });
+        match shape {
+            0 => {}
+            1 => {
+                value["clockOffset"] = Value::Null;
+                value["ips"] = json!([]);
+                value["defaultRouteIp"] = Value::Null;
+                value["netStateSource"] = json!("inferred");
+                value["osFamily"] = json!("linux");
+                value["collectionMode"] = json!("essential");
+                value["processKey"] = Value::Null;
+                value["schema"] = json!(0);
+            }
+            2 => {
+                value["netStateSource"] = json!("unknown");
+                value["osFamily"] = json!("macos");
+                value["collectionMode"] = json!("minimal");
+                value["processKey"] = json!("");
+            }
+            _ => {
+                value["netStateSource"] = json!("netlink");
+                value["osFamily"] = json!("freebsd");
+                value["processKey"] = Value::Null;
+            }
+        }
+        value
+    }
+
+    fn log_field(name: &str, value: raw_event::LogValue) -> raw_event::LogField {
+        raw_event::LogField {
+            name: name.to_string(),
+            value,
+        }
+    }
+
+    fn text(value: &str) -> raw_event::LogValue {
+        raw_event::LogValue::Text(value.to_string())
+    }
+
+    fn windows_event_log(endpoint: raw_event::EndpointHeader) -> raw_event::WindowsEventLog {
+        raw_event::WindowsEventLog {
+            channel: None,
+            provider: None,
+            event_id: None,
+            version: None,
+            level: None,
+            task: None,
+            opcode: None,
+            keywords: None,
+            record_id: None,
+            computer: None,
+            user_sid: None,
+            event_data: None,
+            user_data_xml: None,
+            endpoint,
+        }
+    }
+
+    /// The eight raw event bodies added for Clumit Endpoint, with a full and
+    /// a sparse body of each log kind.
+    #[allow(clippy::too_many_lines)]
+    fn endpoint_bodies(endpoint: u128) -> Vec<(RawEventKind, RawEventBody)> {
+        let mut full_log = windows_event_log(header(endpoint, 3));
+        full_log.channel = Some("Security".to_string());
+        full_log.provider = Some("Microsoft-Windows-Security-Auditing".to_string());
+        full_log.event_id = Some(u16::MAX);
+        full_log.version = Some(2);
+        full_log.level = Some(u8::MAX);
+        full_log.task = Some(12_544);
+        full_log.opcode = Some(0);
+        full_log.keywords = Some(u64::MAX);
+        full_log.record_id = Some((1 << 53) + 1);
+        full_log.computer = Some("pc-1".to_string());
+        full_log.user_sid = Some("S-1-5-18".to_string());
+        full_log.event_data = Some(vec![
+            raw_event::EventData {
+                name: Some("TargetUserName".to_string()),
+                value: "user".to_string(),
+            },
+            raw_event::EventData {
+                name: None,
+                value: "unnamed".to_string(),
+            },
+        ]);
+        full_log.user_data_xml = Some("<UserData/>".to_string());
+        vec![
+            (
+                RawEventKind::DriverLoad,
+                RawEventBody::DriverLoad(raw_event::DriverLoad {
+                    agent_name: "sysmon".to_string(),
+                    agent_id: "agent-1".to_string(),
+                    image_loaded: "C:\\Windows\\driver.sys".to_string(),
+                    hashes: vec!["SHA256=00".to_string()],
+                    signed: true,
+                    signature: "Microsoft Windows".to_string(),
+                    signature_status: "Valid".to_string(),
+                    endpoint: Some(header(endpoint, 0)),
+                }),
+            ),
+            (
+                RawEventKind::CreateRemoteThread,
+                RawEventBody::CreateRemoteThread(raw_event::CreateRemoteThread {
+                    agent_name: "sysmon".to_string(),
+                    agent_id: "agent-1".to_string(),
+                    source_process_guid: "{source}".to_string(),
+                    source_process_id: u32::MAX,
+                    source_image: "a.exe".to_string(),
+                    target_process_guid: "{target}".to_string(),
+                    target_process_id: 7,
+                    target_image: "b.exe".to_string(),
+                    new_thread_id: 8,
+                    start_address: "0x7ff0".to_string(),
+                    start_module: "kernel32.dll".to_string(),
+                    start_function: "LoadLibraryW".to_string(),
+                    source_user: "alice".to_string(),
+                    target_user: "bob".to_string(),
+                    endpoint: None,
+                }),
+            ),
+            (
+                RawEventKind::RawAccessRead,
+                RawEventBody::RawAccessRead(raw_event::RawAccessRead {
+                    agent_name: "sysmon".to_string(),
+                    agent_id: "agent-1".to_string(),
+                    process_guid: "{guid}".to_string(),
+                    process_id: 9,
+                    image: "dd.exe".to_string(),
+                    device: "\\Device\\HarddiskVolume1".to_string(),
+                    user: "alice".to_string(),
+                    endpoint: Some(header(endpoint, 1)),
+                }),
+            ),
+            (
+                RawEventKind::ProcessAccess,
+                RawEventBody::ProcessAccess(raw_event::ProcessAccess {
+                    agent_name: "sysmon".to_string(),
+                    agent_id: "agent-1".to_string(),
+                    source_process_guid: "{source}".to_string(),
+                    source_process_id: 10,
+                    source_thread_id: u32::MAX,
+                    source_image: "a.exe".to_string(),
+                    target_process_guid: "{target}".to_string(),
+                    target_process_id: 11,
+                    target_image: "lsass.exe".to_string(),
+                    granted_access: u64::MAX,
+                    call_trace: "ntdll.dll+1".to_string(),
+                    source_user: "alice".to_string(),
+                    target_user: "SYSTEM".to_string(),
+                    endpoint: None,
+                }),
+            ),
+            (
+                RawEventKind::RegistryObjectAddDel,
+                RawEventBody::RegistryObjectAddDel(raw_event::RegistryObjectAddDel {
+                    agent_name: "sysmon".to_string(),
+                    agent_id: "agent-1".to_string(),
+                    event_type: "CreateKey".to_string(),
+                    process_guid: "{guid}".to_string(),
+                    process_id: 12,
+                    image: "reg.exe".to_string(),
+                    target_object: "HKLM\\Software\\Test".to_string(),
+                    user: "alice".to_string(),
+                    endpoint: Some(header(endpoint, 2)),
+                }),
+            ),
+            (
+                RawEventKind::WindowsEventLog,
+                RawEventBody::WindowsEventLog(full_log),
+            ),
+            (
+                RawEventKind::WindowsEventLog,
+                RawEventBody::WindowsEventLog(windows_event_log(header(endpoint, 1))),
+            ),
+            (
+                RawEventKind::Journald,
+                RawEventBody::Journald(raw_event::Journald {
+                    fields: Some(vec![
+                        log_field("MESSAGE", text("started")),
+                        log_field(
+                            "_CMDLINE",
+                            raw_event::LogValue::Bytes(vec![0x61, 0x00, 0xff]),
+                        ),
+                        log_field("EMPTY", raw_event::LogValue::Bytes(Vec::new())),
+                    ]),
+                    endpoint: header(endpoint, 0),
+                }),
+            ),
+            (
+                RawEventKind::Journald,
+                RawEventBody::Journald(raw_event::Journald {
+                    fields: None,
+                    endpoint: header(endpoint, 2),
+                }),
+            ),
+            (
+                RawEventKind::Auditd,
+                RawEventBody::Auditd(raw_event::Auditd {
+                    serial: Some(u64::MAX),
+                    records: Some(vec![
+                        raw_event::AuditRecord {
+                            record_type: "EXECVE".to_string(),
+                            fields: vec![
+                                log_field("argc", text("2")),
+                                log_field("a1", raw_event::LogValue::Bytes(vec![0x0f, 0xa0])),
+                            ],
+                        },
+                        raw_event::AuditRecord {
+                            record_type: "EOE".to_string(),
+                            fields: Vec::new(),
+                        },
+                    ]),
+                    endpoint: header(endpoint, 1),
+                }),
+            ),
+            (
+                RawEventKind::Auditd,
+                RawEventBody::Auditd(raw_event::Auditd {
+                    serial: None,
+                    records: None,
+                    endpoint: header(endpoint, 3),
+                }),
+            ),
+        ]
+    }
+
     #[tokio::test]
-    async fn an_unsupported_body_or_subject_is_a_field_error() {
+    #[allow(clippy::too_many_lines)]
+    async fn endpoint_bodies_are_returned_exactly() {
+        const ENDPOINT: u128 = 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef;
+        const ENDPOINT_ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
+
         let schema = TestSchema::new().await;
-        let endpoint_id = uuid::Uuid::from_u128(1);
         {
             let store = schema.store();
             let events = store.events();
-            let driver_load = raw_event::DriverLoad {
-                agent_name: "agent".to_string(),
-                agent_id: "agent-1".to_string(),
-                image_loaded: "C:\\Windows\\driver.sys".to_string(),
-                hashes: Vec::new(),
-                signed: true,
-                signature: String::new(),
-                signature_status: String::new(),
-                endpoint: None,
-            };
-            events
-                .put_event(&raw_event(
-                    at(0),
-                    "sensor1",
-                    RawEventKind::DriverLoad,
-                    RawEventBody::DriverLoad(driver_load),
-                    Detail::TorExitNode,
-                ))
-                .unwrap();
-            events
-                .put_event(&subject_event(
-                    at(1),
-                    Some(&endpoint_id.to_string()),
-                    PrimarySubject::Endpoint {
-                        endpoint_id,
-                        ips: Vec::new(),
-                        default_route_ip: None,
-                        net_state_source: raw_event::NetStateSource::Unknown,
-                        role: ThreatRole::Actor,
-                    },
-                    Vec::new(),
-                    Detail::TorExitNode,
-                ))
-                .unwrap();
+            for (second, (kind, body)) in endpoint_bodies(ENDPOINT).into_iter().enumerate() {
+                events
+                    .put_event(&raw_event(
+                        at(i64::try_from(second).unwrap()),
+                        ENDPOINT_ID,
+                        kind,
+                        body,
+                        Detail::TorExitNode,
+                    ))
+                    .unwrap();
+            }
         }
 
-        let res = schema
-            .execute_as_system_admin(
-                "{ eventList(filter: {}) { edges { node { rawEventKind } } } }",
-            )
-            .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
-        assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({ "eventList": { "edges": [
-                { "node": { "rawEventKind": "DRIVER_LOAD" } },
-                { "node": { "rawEventKind": "CONN" } },
-            ] } })
+        // The log bodies' non-null `endpoint` is aliased, so that it does not
+        // overlap the nullable `endpoint` of the Sysmon bodies.
+        let fields = format!(
+            "rawEventKind target {{ ... on RawEventTarget {{ body {{
+                __typename
+                ... on DriverLoadBody {{
+                    agentName agentId imageLoaded hashes signed signature signatureStatus
+                    endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on CreateRemoteThreadBody {{
+                    agentName agentId sourceProcessGuid sourceProcessId sourceImage
+                    targetProcessGuid targetProcessId targetImage newThreadId startAddress
+                    startModule startFunction sourceUser targetUser
+                    endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on RawAccessReadBody {{
+                    agentName agentId processGuid processId image device user
+                    endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on ProcessAccessBody {{
+                    agentName agentId sourceProcessGuid sourceProcessId sourceThreadId
+                    sourceImage targetProcessGuid targetProcessId targetImage grantedAccess
+                    callTrace sourceUser targetUser
+                    endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on RegistryObjectAddDelBody {{
+                    agentName agentId eventType processGuid processId image targetObject user
+                    endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on WindowsEventLogBody {{
+                    channel provider eventId version level task opcode keywords recordId
+                    computer userSid eventData {{ name value }} userDataXml
+                    logEndpoint: endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on JournaldBody {{
+                    fields {{ name value valueIsBytes }}
+                    logEndpoint: endpoint {{ {HEADER_FIELDS} }}
+                }}
+                ... on AuditdBody {{
+                    serial records {{ recordType fields {{ name value valueIsBytes }} }}
+                    logEndpoint: endpoint {{ {HEADER_FIELDS} }}
+                }}
+            }} }} }}"
         );
+        let bodies: Vec<Value> = nodes(&schema, &fields)
+            .await
+            .into_iter()
+            .map(|mut node| {
+                let mut body = node["target"]["body"].take();
+                body["rawEventKind"] = node["rawEventKind"].take();
+                body
+            })
+            .collect();
+        let header = |shape| header_json(ENDPOINT_ID, shape);
+        assert_eq!(
+            bodies,
+            [
+                json!({
+                    "rawEventKind": "DRIVER_LOAD",
+                    "__typename": "DriverLoadBody",
+                    "agentName": "sysmon",
+                    "agentId": "agent-1",
+                    "imageLoaded": "C:\\Windows\\driver.sys",
+                    "hashes": ["SHA256=00"],
+                    "signed": true,
+                    "signature": "Microsoft Windows",
+                    "signatureStatus": "Valid",
+                    "endpoint": header(0),
+                }),
+                json!({
+                    "rawEventKind": "CREATE_REMOTE_THREAD",
+                    "__typename": "CreateRemoteThreadBody",
+                    "agentName": "sysmon",
+                    "agentId": "agent-1",
+                    "sourceProcessGuid": "{source}",
+                    "sourceProcessId": u32::MAX.to_string(),
+                    "sourceImage": "a.exe",
+                    "targetProcessGuid": "{target}",
+                    "targetProcessId": "7",
+                    "targetImage": "b.exe",
+                    "newThreadId": "8",
+                    "startAddress": "0x7ff0",
+                    "startModule": "kernel32.dll",
+                    "startFunction": "LoadLibraryW",
+                    "sourceUser": "alice",
+                    "targetUser": "bob",
+                    "endpoint": null,
+                }),
+                json!({
+                    "rawEventKind": "RAW_ACCESS_READ",
+                    "__typename": "RawAccessReadBody",
+                    "agentName": "sysmon",
+                    "agentId": "agent-1",
+                    "processGuid": "{guid}",
+                    "processId": "9",
+                    "image": "dd.exe",
+                    "device": "\\Device\\HarddiskVolume1",
+                    "user": "alice",
+                    "endpoint": header(1),
+                }),
+                json!({
+                    "rawEventKind": "PROCESS_ACCESS",
+                    "__typename": "ProcessAccessBody",
+                    "agentName": "sysmon",
+                    "agentId": "agent-1",
+                    "sourceProcessGuid": "{source}",
+                    "sourceProcessId": "10",
+                    "sourceThreadId": u32::MAX.to_string(),
+                    "sourceImage": "a.exe",
+                    "targetProcessGuid": "{target}",
+                    "targetProcessId": "11",
+                    "targetImage": "lsass.exe",
+                    "grantedAccess": u64::MAX.to_string(),
+                    "callTrace": "ntdll.dll+1",
+                    "sourceUser": "alice",
+                    "targetUser": "SYSTEM",
+                    "endpoint": null,
+                }),
+                json!({
+                    "rawEventKind": "REGISTRY_OBJECT_ADD_DEL",
+                    "__typename": "RegistryObjectAddDelBody",
+                    "agentName": "sysmon",
+                    "agentId": "agent-1",
+                    "eventType": "CreateKey",
+                    "processGuid": "{guid}",
+                    "processId": "12",
+                    "image": "reg.exe",
+                    "targetObject": "HKLM\\Software\\Test",
+                    "user": "alice",
+                    "endpoint": header(2),
+                }),
+                json!({
+                    "rawEventKind": "WINDOWS_EVENT_LOG",
+                    "__typename": "WindowsEventLogBody",
+                    "channel": "Security",
+                    "provider": "Microsoft-Windows-Security-Auditing",
+                    "eventId": u16::MAX,
+                    "version": 2,
+                    "level": u8::MAX,
+                    "task": 12_544,
+                    "opcode": 0,
+                    "keywords": u64::MAX.to_string(),
+                    "recordId": "9007199254740993",
+                    "computer": "pc-1",
+                    "userSid": "S-1-5-18",
+                    "eventData": [
+                        { "name": "TargetUserName", "value": "user" },
+                        { "name": null, "value": "unnamed" },
+                    ],
+                    "userDataXml": "<UserData/>",
+                    "logEndpoint": header(3),
+                }),
+                json!({
+                    "rawEventKind": "WINDOWS_EVENT_LOG",
+                    "__typename": "WindowsEventLogBody",
+                    "channel": null,
+                    "provider": null,
+                    "eventId": null,
+                    "version": null,
+                    "level": null,
+                    "task": null,
+                    "opcode": null,
+                    "keywords": null,
+                    "recordId": null,
+                    "computer": null,
+                    "userSid": null,
+                    "eventData": null,
+                    "userDataXml": null,
+                    "logEndpoint": header(1),
+                }),
+                json!({
+                    "rawEventKind": "JOURNALD",
+                    "__typename": "JournaldBody",
+                    "fields": [
+                        { "name": "MESSAGE", "value": "started", "valueIsBytes": false },
+                        { "name": "_CMDLINE", "value": "6100ff", "valueIsBytes": true },
+                        { "name": "EMPTY", "value": "", "valueIsBytes": true },
+                    ],
+                    "logEndpoint": header(0),
+                }),
+                json!({
+                    "rawEventKind": "JOURNALD",
+                    "__typename": "JournaldBody",
+                    "fields": null,
+                    "logEndpoint": header(2),
+                }),
+                json!({
+                    "rawEventKind": "AUDITD",
+                    "__typename": "AuditdBody",
+                    "serial": u64::MAX.to_string(),
+                    "records": [
+                        {
+                            "recordType": "EXECVE",
+                            "fields": [
+                                { "name": "argc", "value": "2", "valueIsBytes": false },
+                                { "name": "a1", "value": "0fa0", "valueIsBytes": true },
+                            ],
+                        },
+                        { "recordType": "EOE", "fields": [] },
+                    ],
+                    "logEndpoint": header(1),
+                }),
+                json!({
+                    "rawEventKind": "AUDITD",
+                    "__typename": "AuditdBody",
+                    "serial": null,
+                    "records": null,
+                    "logEndpoint": header(3),
+                }),
+            ]
+        );
+    }
 
-        // Only the failing field is dropped: both edges and the total count
-        // survive, and the one error points at the failing field.
-        for (field, message, path) in [
-            (
-                "... on RawEventTarget { body { __typename } }",
-                "the raw event body of this kind is not supported",
-                json!(["eventList", "edges", 0, "node", "target", "body"]),
-            ),
-            (
-                "... on SubjectTarget { primary { __typename } }",
-                "the endpoint primary subject is not supported",
-                json!(["eventList", "edges", 1, "node", "target", "primary"]),
-            ),
-        ] {
-            let res = schema
-                .execute_as_system_admin(&format!(
-                    "{{ eventList(filter: {{}}) {{ totalCount edges {{ node {{
-                        rawEventKind target {{ __typename {field} }}
-                    }} }} }} }}"
-                ))
-                .await;
-            let errors: Vec<_> = res
-                .errors
-                .iter()
-                .map(|error| {
-                    (
-                        error.message.as_str(),
-                        serde_json::to_value(&error.path).unwrap(),
-                    )
-                })
-                .collect();
-            assert_eq!(errors, [(message, path)], "{field}");
-            assert_eq!(
-                res.data.into_json().unwrap(),
-                json!({ "eventList": { "totalCount": "2", "edges": [
-                    { "node": {
-                        "rawEventKind": "DRIVER_LOAD",
-                        "target": { "__typename": "RawEventTarget" },
-                    } },
-                    { "node": {
-                        "rawEventKind": "CONN",
-                        "target": { "__typename": "SubjectTarget" },
-                    } },
-                ] } }),
-                "{field}"
-            );
+    #[tokio::test]
+    async fn sysmon_bodies_carry_their_endpoint_header_and_full_logon_id() {
+        const ENDPOINT_ID: &str = "00000000-0000-0000-0000-00000000000a";
+
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let events = store.events();
+            let mut with_header = process_create_body();
+            with_header.endpoint = Some(header(0xa, 0));
+            with_header.logon_id = u32::MAX;
+            with_header.logon_id_full = Some(u64::MAX);
+            let mut file_delete: raw_event::FileDeleteDetected = zero_body();
+            file_delete.endpoint = Some(header(0xa, 1));
+            for (second, (kind, body)) in [
+                (
+                    RawEventKind::ProcessCreate,
+                    RawEventBody::ProcessCreate(with_header),
+                ),
+                // Neither a header nor a full logon id.
+                (
+                    RawEventKind::ProcessCreate,
+                    RawEventBody::ProcessCreate(process_create_body()),
+                ),
+                (
+                    RawEventKind::FileDeleteDetected,
+                    RawEventBody::FileDeleteDetected(file_delete),
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                events
+                    .put_event(&raw_event(
+                        at(i64::try_from(second).unwrap()),
+                        ENDPOINT_ID,
+                        kind,
+                        body,
+                        Detail::TorExitNode,
+                    ))
+                    .unwrap();
+            }
         }
+
+        let fields = format!(
+            "target {{ ... on RawEventTarget {{ body {{
+                ... on ProcessCreateBody {{ logonId logonIdFull endpoint {{ {HEADER_FIELDS} }} }}
+                ... on FileDeleteDetectedBody {{ endpoint {{ {HEADER_FIELDS} }} }}
+            }} }} }}"
+        );
+        let bodies: Vec<Value> = nodes(&schema, &fields)
+            .await
+            .into_iter()
+            .map(|mut node| node["target"]["body"].take())
+            .collect();
+        assert_eq!(
+            bodies,
+            [
+                json!({
+                    "logonId": u32::MAX.to_string(),
+                    "logonIdFull": u64::MAX.to_string(),
+                    "endpoint": header_json(ENDPOINT_ID, 0),
+                }),
+                json!({ "logonId": "0", "logonIdFull": null, "endpoint": null }),
+                json!({ "endpoint": header_json(ENDPOINT_ID, 1) }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_subject_is_returned() {
+        let schema = TestSchema::new().await;
+        let sources = [
+            raw_event::NetStateSource::Observed,
+            raw_event::NetStateSource::Inferred,
+            raw_event::NetStateSource::Unknown,
+            raw_event::NetStateSource::Other("netlink".to_string()),
+        ];
+        {
+            let store = schema.store();
+            let events = store.events();
+            for (second, net_state_source) in sources.into_iter().enumerate() {
+                let endpoint_id =
+                    uuid::Uuid::from_u128(0xabcd_0000 + u128::try_from(second).unwrap());
+                let (ips, default_route_ip, role) = if second == 0 {
+                    (
+                        vec![addr("192.0.2.5"), addr("2001:db8::5")],
+                        Some(addr("192.0.2.1")),
+                        ThreatRole::Actor,
+                    )
+                } else {
+                    (Vec::new(), None, ThreatRole::Target)
+                };
+                events
+                    .put_event(&subject_event(
+                        at(i64::try_from(second).unwrap()),
+                        Some(&endpoint_id.to_string()),
+                        PrimarySubject::Endpoint {
+                            endpoint_id,
+                            ips,
+                            default_route_ip,
+                            net_state_source,
+                            role,
+                        },
+                        vec![related("198.51.100.1", EndpointRole::Destination)],
+                        Detail::TorExitNode,
+                    ))
+                    .unwrap();
+            }
+        }
+
+        let fields = "sensor target { ... on SubjectTarget {
+            primary {
+                __typename
+                ... on SentaEndpointSubject { endpointId ips defaultRouteIp netStateSource role }
+            }
+        } }";
+        let subject = |id: &str, ips: Value, route: Value, source: &str, role: &str| {
+            json!({
+                "sensor": id,
+                "target": { "primary": {
+                    "__typename": "SentaEndpointSubject",
+                    "endpointId": id,
+                    "ips": ips,
+                    "defaultRouteIp": route,
+                    "netStateSource": source,
+                    "role": role,
+                } },
+            })
+        };
+        assert_eq!(
+            nodes(&schema, fields).await,
+            [
+                subject(
+                    "00000000-0000-0000-0000-0000abcd0000",
+                    json!(["192.0.2.5", "2001:db8::5"]),
+                    json!("192.0.2.1"),
+                    "observed",
+                    "ACTOR",
+                ),
+                subject(
+                    "00000000-0000-0000-0000-0000abcd0001",
+                    json!([]),
+                    Value::Null,
+                    "inferred",
+                    "TARGET",
+                ),
+                subject(
+                    "00000000-0000-0000-0000-0000abcd0002",
+                    json!([]),
+                    Value::Null,
+                    "unknown",
+                    "TARGET",
+                ),
+                subject(
+                    "00000000-0000-0000-0000-0000abcd0003",
+                    json!([]),
+                    Value::Null,
+                    "netlink",
+                    "TARGET",
+                ),
+            ]
+        );
     }
 }
 
@@ -5600,5 +6313,583 @@ mod arrival {
 
         put(&schema, at(1), HOST_A);
         assert_eq!(oldest(&schema).await, json!(at(1).to_string()));
+    }
+}
+
+/// The customer scope of detection events about Clumit Endpoint endpoints,
+/// whose sensor is the endpoint id and whose customer is that of the
+/// endpoint's row.
+mod endpoint_customer_scope {
+    use std::collections::BTreeSet;
+
+    use review_database::{
+        Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
+        OwnedNetwork, SentaEndpoint, SentaEndpointCustomer, SentaEndpointEnrollmentAttempt,
+        SentaEndpointEnrollmentResult, SentaEndpointKeysetDocument, SentaEndpointKeysetVersion,
+        Store, event::NetworkType,
+    };
+    use review_protocol::types::{
+        EndpointRole, PrimarySubject, RawEventBody, RawEventKind, ThreatRole, raw_event,
+    };
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::graphql::event_test_support::{raw_event, related, subject_event};
+
+    const CUSTOMER_A: u32 = 1;
+    const CUSTOMER_B: u32 = 2;
+    const SENSOR_A: &str = "piglet.a.example.com";
+    const SENSOR_B: &str = "piglet.b.example.com";
+    /// The sensor of a second node of customer A.
+    const SENSOR_A2: &str = "piglet.a2.example.com";
+    /// The endpoint of customer A.
+    const ENDPOINT_A: &str = "00000000-0000-0000-0000-0000000000a1";
+    /// The endpoint of customer B.
+    const ENDPOINT_B: &str = "00000000-0000-0000-0000-0000000000b1";
+    const INSTALL_ID: &str = "install-1";
+    /// An endpoint id with no endpoint row and no node.
+    const UNKNOWN_ENDPOINT: &str = "00000000-0000-0000-0000-0000000000ff";
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_700_000_000 + second).expect("a test time")
+    }
+
+    fn uuid(text: &str) -> Uuid {
+        text.parse().expect("a test endpoint id")
+    }
+
+    /// Inserts a node of `customer_id` named `name`, with a configured sensor
+    /// agent on `hostname`, and returns its id.
+    fn insert_node(store: &Store, customer_id: u32, name: &str, hostname: &str) -> u32 {
+        let node = Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(NodeProfile {
+                customer_id,
+                description: String::new(),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![Agent {
+                node_id: u32::MAX,
+                key: "001.piglet".to_string(),
+                kind: AgentKind::Sensor,
+                status: AgentStatus::Enabled,
+                config: Some(String::new().try_into().expect("empty TOML is valid")),
+                draft: None,
+                installed_version: None,
+                installed_commit: None,
+                lifecycle: Lifecycle::NotInstalled,
+                bound_addrs: vec![],
+                instance: None,
+                run_as_root: false,
+                run_as_root_draft: None,
+                privilege_profile: None,
+            }],
+            external_services: vec![],
+            creation_time: jiff::Timestamp::now(),
+        };
+        store.node_map().put(&node).expect("insert node")
+    }
+
+    /// Registers `customer_id` for Clumit Endpoint, and the install it
+    /// belongs to unless it is registered, and enrolls `endpoint` for it.
+    fn enroll(store: &Store, customer_id: u32, endpoint: &str) {
+        let installs = store.senta_endpoint_install_map();
+        if installs.get(INSTALL_ID).unwrap().is_none() {
+            installs.register(INSTALL_ID, "{\"k\":1}", 1).unwrap();
+        }
+        let customer_endpoint_id = Uuid::from_u128(0x1000 + u128::from(customer_id));
+        store
+            .register_senta_endpoint_customer(
+                &SentaEndpointCustomer {
+                    customer_id,
+                    trust_state: vec![1],
+                    customer_endpoint_id,
+                    customer_key_name: format!("key-{customer_id}"),
+                    install_id: INSTALL_ID.to_string(),
+                    last_keyset: SentaEndpointKeysetVersion::default(),
+                    recovery_key_version: 1,
+                },
+                &SentaEndpointKeysetDocument {
+                    customer_id,
+                    recovery_epoch: 0,
+                    keyset_version: 0,
+                    signing_kid: "kid".to_string(),
+                    jws: "k.e.y".to_string(),
+                },
+            )
+            .unwrap();
+        let endpoint_id = uuid(endpoint);
+        let spki_hash = [endpoint_id.as_bytes()[15]; 32];
+        let attempt_id = Uuid::from_u128(!endpoint_id.as_u128());
+        store
+            .senta_endpoint_enrollment_attempt_map()
+            .insert(&SentaEndpointEnrollmentAttempt {
+                spki_hash,
+                attempt_id,
+                customer_id,
+                request: vec![1],
+                source_address: "192.0.2.1".parse().unwrap(),
+                received_at: 1,
+                result: SentaEndpointEnrollmentResult::Pending {
+                    reason: "awaiting_approval".to_string(),
+                },
+            })
+            .unwrap();
+        store
+            .approve_senta_endpoint_enrollment(
+                &spki_hash,
+                attempt_id,
+                "e.r.j",
+                &SentaEndpoint {
+                    endpoint_id,
+                    customer_id,
+                    customer_endpoint_id,
+                    spki_hash,
+                    standing: "active".to_string(),
+                    host_name: "pc.example".to_string(),
+                    os: "windows".to_string(),
+                    senta_version: "1.0.0".to_string(),
+                    bundle: "default".to_string(),
+                    enrolled_at: 1,
+                    last_connected_at: 1,
+                    connected: true,
+                },
+            )
+            .unwrap();
+    }
+
+    /// Returns a `DriverLoad` detection event of the endpoint `endpoint` at
+    /// `time`, its sensor the endpoint id.
+    fn driver_load_event(time: Timestamp, endpoint: &str) -> DetectionEvent {
+        raw_event(
+            time,
+            endpoint,
+            RawEventKind::DriverLoad,
+            RawEventBody::DriverLoad(raw_event::DriverLoad {
+                agent_name: "sysmon".to_string(),
+                agent_id: "agent-1".to_string(),
+                image_loaded: "C:\\Windows\\driver.sys".to_string(),
+                hashes: Vec::new(),
+                signed: true,
+                signature: String::new(),
+                signature_status: String::new(),
+                endpoint: None,
+            }),
+            Detail::TorExitNode,
+        )
+    }
+
+    /// The events [`seed`] stores, as their sensor, raw event kind and
+    /// second, in key order.
+    const EVENTS: [(&str, &str, i64); 6] = [
+        (SENSOR_A, "DNS", 0),
+        (SENSOR_B, "DNS", 1),
+        (SENSOR_A2, "DNS", 2),
+        (ENDPOINT_A, "DRIVER_LOAD", 3),
+        (ENDPOINT_B, "DRIVER_LOAD", 4),
+        (UNKNOWN_ENDPOINT, "DRIVER_LOAD", 5),
+    ];
+
+    struct Fixture {
+        /// The node of customer A whose sensor is [`SENSOR_A`].
+        node_a: u32,
+        /// The key of each of [`EVENTS`].
+        keys: Vec<i128>,
+    }
+
+    /// Seeds customer A with two sensor nodes and an endpoint, customer B with
+    /// a sensor node and an endpoint, and one event of each of [`EVENTS`].
+    fn seed(schema: &TestSchema) -> Fixture {
+        let store = schema.store();
+        let node_a = insert_node(&store, CUSTOMER_A, "a", "a.example.com");
+        insert_node(&store, CUSTOMER_B, "b", "b.example.com");
+        insert_node(&store, CUSTOMER_A, "a2", "a2.example.com");
+        enroll(&store, CUSTOMER_A, ENDPOINT_A);
+        enroll(&store, CUSTOMER_B, ENDPOINT_B);
+        let events = store.events();
+        let keys = EVENTS
+            .iter()
+            .map(|&(sensor, kind, second)| {
+                let event = if kind == "DNS" {
+                    dns_event(
+                        at(second),
+                        "10.0.0.1".parse().unwrap(),
+                        "10.0.0.2".parse().unwrap(),
+                        None,
+                        sensor,
+                    )
+                } else {
+                    driver_load_event(at(second), sensor)
+                };
+                events.put_event(&event).unwrap()
+            })
+            .collect();
+        Fixture { node_a, keys }
+    }
+
+    /// A caller: scoped to the listed customers, or unscoped.
+    #[derive(Clone, Copy, Debug)]
+    enum Caller {
+        Scoped(&'static [u32]),
+        Unscoped,
+    }
+
+    async fn run(schema: &TestSchema, caller: Caller, query: &str) -> Value {
+        let res = match caller {
+            Caller::Scoped(customers) => {
+                schema
+                    .execute_as_scoped_user(query, Role::SecurityMonitor, Some(customers.to_vec()))
+                    .await
+            }
+            Caller::Unscoped => schema.execute_as_system_admin(query).await,
+        };
+        assert!(
+            res.errors.is_empty(),
+            "{caller:?} {query}: {:?}",
+            res.errors
+        );
+        res.data.into_json().unwrap()
+    }
+
+    fn edge_sensors(connection: &Value) -> BTreeSet<String> {
+        connection["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn total(counts: &Value) -> u64 {
+        counts["counts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|count| match count {
+                Value::String(count) => count.parse::<u64>().unwrap(),
+                count => count.as_u64().unwrap(),
+            })
+            .sum()
+    }
+
+    /// Returns the sensors of the events `caller` sees through each of
+    /// `event(id)`, `eventList`, `eventListWithTriage` and
+    /// `detectionEventsByRawEventKeys`, and the number of events
+    /// `eventCountsByDetectionModel` counts.
+    async fn visible(
+        schema: &TestSchema,
+        fixture: &Fixture,
+        caller: Caller,
+    ) -> [(BTreeSet<String>, u64); 4] {
+        let mut by_id = BTreeSet::new();
+        for (&(sensor, _, _), key) in EVENTS.iter().zip(&fixture.keys) {
+            let data = run(
+                schema,
+                caller,
+                &format!(r#"{{ event(id: "{key}") {{ sensor }} }}"#),
+            )
+            .await;
+            if !data["event"].is_null() {
+                assert_eq!(data["event"]["sensor"], sensor);
+                by_id.insert(sensor.to_string());
+            }
+        }
+
+        let data = run(
+            schema,
+            caller,
+            "{ eventList(filter: {}) { edges { node { sensor } } }
+               eventListWithTriage(filter: {}) { edges { node { sensor } } }
+               eventCountsByDetectionModel(filter: {}, first: 10) { counts } }",
+        )
+        .await;
+        let count = total(&data["eventCountsByDetectionModel"]);
+        let list = edge_sensors(&data["eventList"]);
+        let with_triage = edge_sensors(&data["eventListWithTriage"]);
+
+        let keys: Vec<String> = EVENTS
+            .iter()
+            .map(|(sensor, kind, second)| {
+                format!(
+                    r#"{{ rawEventKind: {kind}, sensor: "{sensor}", time: "{}" }}"#,
+                    at(*second)
+                )
+            })
+            .collect();
+        let data = run(
+            schema,
+            caller,
+            &format!(
+                "{{ detectionEventsByRawEventKeys(keys: [{}]) {{ sensor }} }}",
+                keys.join(", ")
+            ),
+        )
+        .await;
+        let by_keys: BTreeSet<String> = data["detectionEventsByRawEventKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|events| events.as_array().unwrap())
+            .map(|event| event["sensor"].as_str().unwrap().to_string())
+            .collect();
+
+        [
+            (by_id, count),
+            (list, count),
+            (with_triage, count),
+            (by_keys, count),
+        ]
+    }
+
+    fn set(sensors: &[&str]) -> BTreeSet<String> {
+        sensors.iter().map(ToString::to_string).collect()
+    }
+
+    #[tokio::test]
+    async fn each_caller_sees_the_endpoint_events_of_its_own_customers() {
+        let schema = TestSchema::new().await;
+        let fixture = seed(&schema);
+
+        let of_a = set(&[SENSOR_A, SENSOR_A2, ENDPOINT_A]);
+        let of_b = set(&[SENSOR_B, ENDPOINT_B]);
+        let of_both = set(&[SENSOR_A, SENSOR_B, SENSOR_A2, ENDPOINT_A, ENDPOINT_B]);
+        let every = set(&[
+            SENSOR_A,
+            SENSOR_B,
+            SENSOR_A2,
+            ENDPOINT_A,
+            ENDPOINT_B,
+            UNKNOWN_ENDPOINT,
+        ]);
+        for (caller, expected) in [
+            (Caller::Scoped(&[CUSTOMER_A]), of_a),
+            (Caller::Scoped(&[CUSTOMER_B]), of_b),
+            (Caller::Scoped(&[CUSTOMER_A, CUSTOMER_B]), of_both),
+            (Caller::Scoped(&[]), BTreeSet::new()),
+            (Caller::Unscoped, every),
+        ] {
+            let count = u64::try_from(expected.len()).unwrap();
+            for (read, seen) in visible(&schema, &fixture, caller)
+                .await
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(seen, (expected.clone(), count), "{caller:?}, read {read}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn arrival_reads_the_events_of_the_customers_endpoints() {
+        let schema = TestSchema::new().await;
+        let fixture = seed(&schema);
+        let arrival = |customer: u32| {
+            format!(
+                r#"{{ detectionEventsByArrival(customerId: "{customer}") {{ events {{ id sensor }} }} }}"#
+            )
+        };
+        let ids = |indices: &[usize]| -> Vec<Value> {
+            indices
+                .iter()
+                .map(|&index| {
+                    json!({ "id": fixture.keys[index].to_string(), "sensor": EVENTS[index].0 })
+                })
+                .collect()
+        };
+
+        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_A])] {
+            let data = run(&schema, caller, &arrival(CUSTOMER_A)).await;
+            assert_eq!(
+                data["detectionEventsByArrival"]["events"],
+                json!(ids(&[0, 2, 3])),
+                "{caller:?}"
+            );
+        }
+        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_B])] {
+            let data = run(&schema, caller, &arrival(CUSTOMER_B)).await;
+            assert_eq!(
+                data["detectionEventsByArrival"]["events"],
+                json!(ids(&[1, 4])),
+                "{caller:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn customer_sensors_and_node_sensor_filters_hold_no_endpoint() {
+        let schema = TestSchema::new().await;
+        let fixture = seed(&schema);
+
+        let data = run(
+            &schema,
+            Caller::Unscoped,
+            "{ customerSensorList(first: 10) {
+                totalCount edges { node { customerId hostFqdn eventSensorNames } }
+            } }",
+        )
+        .await;
+        let mut rows: Vec<Value> = data["customerSensorList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"].clone())
+            .collect();
+        rows.sort_unstable_by_key(|row| row["hostFqdn"].as_str().unwrap().to_string());
+        // One row per node, none per endpoint.
+        assert_eq!(data["customerSensorList"]["totalCount"], "3");
+        assert_eq!(
+            rows,
+            [
+                json!({ "customerId": CUSTOMER_A, "hostFqdn": "a.example.com", "eventSensorNames": [SENSOR_A] }),
+                json!({ "customerId": CUSTOMER_A, "hostFqdn": "a2.example.com", "eventSensorNames": [SENSOR_A2] }),
+                json!({ "customerId": CUSTOMER_B, "hostFqdn": "b.example.com", "eventSensorNames": [SENSOR_B] }),
+            ]
+        );
+
+        // A node id selects that node's sensor only, never an endpoint.
+        let data = run(
+            &schema,
+            Caller::Scoped(&[CUSTOMER_A]),
+            &format!(
+                r#"{{ eventList(filter: {{ sensors: ["{}"] }}) {{ edges {{ node {{ sensor }} }} }} }}"#,
+                fixture.node_a
+            ),
+        )
+        .await;
+        assert_eq!(edge_sensors(&data["eventList"]), set(&[SENSOR_A]));
+        // An endpoint id is not a node id.
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ eventList(filter: {{ sensors: ["{ENDPOINT_A}"] }}) {{ totalCount }} }}"#
+            ))
+            .await;
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        assert!(
+            res.errors[0].message.contains("invalid ID"),
+            "{:?}",
+            res.errors
+        );
+    }
+
+    fn owned(network_type: NetworkType, cidr: &str) -> OwnedNetwork {
+        OwnedNetwork {
+            name: cidr.to_string(),
+            network_type,
+            group: HostNetworkGroup::new(vec![], vec![cidr.parse().unwrap()], vec![]),
+        }
+    }
+
+    /// Returns a detection event about the endpoint `endpoint`, with no
+    /// address of its own, a source-side address `src` and a
+    /// destination-side address `dst`.
+    fn endpoint_event(second: i64, endpoint: &str, src: &str, dst: &str) -> DetectionEvent {
+        subject_event(
+            at(second),
+            Some(endpoint),
+            PrimarySubject::Endpoint {
+                endpoint_id: uuid(endpoint),
+                ips: Vec::new(),
+                default_route_ip: None,
+                net_state_source: raw_event::NetStateSource::Unknown,
+                role: ThreatRole::Actor,
+            },
+            vec![
+                related(src, EndpointRole::Source),
+                related(dst, EndpointRole::Destination),
+            ],
+            Detail::TorExitNode,
+        )
+    }
+
+    #[tokio::test]
+    async fn directions_use_the_internal_networks_of_the_endpoints_customer() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            insert_node(&store, CUSTOMER_A, "a", "a.example.com");
+            enroll(&store, CUSTOMER_A, ENDPOINT_A);
+            enroll(&store, CUSTOMER_B, ENDPOINT_B);
+            let table = store.customer_networks_map();
+            table
+                .replace(
+                    CUSTOMER_A,
+                    0,
+                    vec![owned(NetworkType::Intranet, "10.0.0.0/8")],
+                )
+                .unwrap();
+            table
+                .replace(
+                    CUSTOMER_B,
+                    0,
+                    vec![owned(NetworkType::Intranet, "172.16.0.0/12")],
+                )
+                .unwrap();
+            let events = store.events();
+            for event in [
+                // Outbound and inbound for customer A.
+                endpoint_event(0, ENDPOINT_A, "10.1.1.1", "8.8.8.8"),
+                endpoint_event(1, ENDPOINT_A, "8.8.8.8", "10.1.1.2"),
+                // A node-sensor event of customer A, outbound.
+                dns_event(
+                    at(2),
+                    "10.1.1.3".parse().unwrap(),
+                    "8.8.8.8".parse().unwrap(),
+                    None,
+                    SENSOR_A,
+                ),
+                // Neither side is internal to customer B.
+                endpoint_event(3, ENDPOINT_B, "10.1.1.1", "8.8.8.8"),
+                // No endpoint row and no node.
+                endpoint_event(4, UNKNOWN_ENDPOINT, "10.1.1.1", "8.8.8.8"),
+            ] {
+                events.put_event(&event).unwrap();
+            }
+        }
+
+        for (directions, expected) in [
+            ("OUTBOUND", vec![(ENDPOINT_A, 0), (SENSOR_A, 2)]),
+            ("INBOUND", vec![(ENDPOINT_A, 1)]),
+            ("INTERNAL", Vec::new()),
+            (
+                "OUTBOUND, INBOUND, INTERNAL",
+                vec![(ENDPOINT_A, 0), (ENDPOINT_A, 1), (SENSOR_A, 2)],
+            ),
+        ] {
+            let data = run(
+                &schema,
+                Caller::Unscoped,
+                &format!(
+                    "{{ eventList(filter: {{ directions: [{directions}] }}) {{
+                        edges {{ node {{ sensor time }} }}
+                    }}
+                    eventCountsByDetectionModel(filter: {{ directions: [{directions}] }}, first: 10) {{
+                        counts
+                    }} }}"
+                ),
+            )
+            .await;
+            let selected: Vec<Value> = data["eventList"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"].clone())
+                .collect();
+            let expected_nodes: Vec<Value> = expected
+                .iter()
+                .map(
+                    |(sensor, second)| json!({ "sensor": sensor, "time": at(*second).to_string() }),
+                )
+                .collect();
+            assert_eq!(selected, expected_nodes, "{directions}");
+            assert_eq!(
+                total(&data["eventCountsByDetectionModel"]),
+                u64::try_from(expected.len()).unwrap(),
+                "{directions}"
+            );
+        }
     }
 }

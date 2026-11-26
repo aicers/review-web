@@ -39,11 +39,11 @@ const MAX_EVENT_ID_NUM: u32 = 100;
 /// `log_kind` names.
 const PREFIX_RAW_EVENT_KIND: &str = "log";
 
-/// The names giganto-client 0.28.0's `RawEventKind::from_str` maps to a kind
+/// The names giganto-client 0.31.0's `RawEventKind::from_str` maps to a kind
 /// other than `Log`, aliases included (`giganto-client` `src/lib.rs`,
 /// `RawEventKind`). A `prefix` definition reads a log kind, which is any other
 /// non-empty name.
-const NAMED_EVENT_KINDS: [&str; 44] = [
+const NAMED_EVENT_KINDS: [&str; 52] = [
     "conn",
     "dns",
     "http",
@@ -88,6 +88,14 @@ const NAMED_EVENT_KINDS: [&str; 44] = [
     "file_delete_detected",
     "netflow5",
     "netflow9",
+    "driver_load",
+    "create_remote_thread",
+    "raw_access_read",
+    "process_access",
+    "registry_object_add_del",
+    "endpoint_windows_event_log",
+    "endpoint_journald",
+    "endpoint_auditd",
 ];
 
 /// A training definition, as review-protocol's `TrainModelRequest::definition`

@@ -18,7 +18,7 @@ use crate::{
     error_with_caller,
     graphql::{
         MAX_CONNECTION_SIZE,
-        customer_access::{check_customer_membership, customer_sensor_names},
+        customer_access::{check_customer_membership, customer_event_sensors},
         timestamp::Timestamp,
     },
 };
@@ -65,7 +65,7 @@ pub(super) fn load_by_arrival(
         .unwrap_or_default();
 
     let store = crate::graphql::get_store(ctx)?;
-    let sensors = customer_sensor_names(&store, id)?
+    let sensors = customer_event_sensors(&store, id)?
         .into_iter()
         .collect::<Vec<_>>();
     let policy_sensors = store.time_series_policy_sensors()?;

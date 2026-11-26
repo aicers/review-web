@@ -849,10 +849,20 @@ fn schema_has_one_detection_event_type_and_no_replaced_shapes() {
         "eventCountsByKind",
         "confidenceMin",
         "confidenceMax",
-        "\tlevel:",
     ] {
         assert!(!sdl.contains(removed), "{removed:?}: {REGENERATE}");
     }
+    // The threat level is gone; the only field of that name is the level of
+    // a Windows event log record.
+    assert!(
+        !definition(&sdl, "type DetectionEvent {").contains("\tlevel:"),
+        "{REGENERATE}"
+    );
+    assert_eq!(sdl.matches("\tlevel:").count(), 1, "{REGENERATE}");
+    assert!(
+        definition(&sdl, "type WindowsEventLogBody {").contains("\n\tlevel: Int\n"),
+        "{REGENERATE}"
+    );
     // A detection event no longer carries a learning method; the only field of
     // that name is the static property of a detection model.
     assert!(
@@ -880,4 +890,99 @@ fn schema_has_one_detection_event_type_and_no_replaced_shapes() {
             .collect::<Vec<_>>(),
         ["SOURCE", "DESTINATION"]
     );
+}
+
+/// Returns the members of `union name` in schema order.
+fn union_members(sdl: &str, name: &str) -> Vec<String> {
+    let prefix = format!("union {name} = ");
+    let line = sdl
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no union {name}"));
+    line[prefix.len()..]
+        .split(" | ")
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Returns the values of `enum name` in schema order, leaving out their
+/// descriptions.
+fn enum_values(sdl: &str, name: &str) -> Vec<String> {
+    let header = format!("enum {name} {{");
+    let mut lines = sdl
+        .lines()
+        .skip_while(|line| *line != header)
+        .skip(1)
+        .take_while(|line| *line != "}");
+    let mut values = Vec::new();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if line == "\"\"\"" {
+            for line in lines.by_ref() {
+                if line.trim() == "\"\"\"" {
+                    break;
+                }
+            }
+        } else if !line.starts_with('"') {
+            values.push(line.to_string());
+        }
+    }
+    assert!(!values.is_empty(), "no enum {name}");
+    values
+}
+
+/// The members and values added for Clumit Endpoint come after every
+/// existing one.
+#[test]
+fn endpoint_members_and_values_come_last() {
+    let sdl = rendered_sdl();
+
+    let members = union_members(&sdl, "PrimarySubject");
+    assert_eq!(
+        members,
+        [
+            "HostSubject",
+            "ClusterSubject",
+            "SensorSubject",
+            "NetworkSubject",
+            "SentaEndpointSubject",
+        ]
+    );
+
+    let members = union_members(&sdl, "RawEventBody");
+    assert_eq!(members.len(), 44);
+    assert_eq!(members[..2], ["ConnBody", "DnsBody"]);
+    assert_eq!(
+        members[34..],
+        [
+            "Netflow5Body",
+            "Netflow9Body",
+            "DriverLoadBody",
+            "CreateRemoteThreadBody",
+            "RawAccessReadBody",
+            "ProcessAccessBody",
+            "RegistryObjectAddDelBody",
+            "WindowsEventLogBody",
+            "JournaldBody",
+            "AuditdBody",
+        ]
+    );
+
+    let values = enum_values(&sdl, "RawEventKind");
+    assert_eq!(
+        values[values.len() - 8..],
+        [
+            "DRIVER_LOAD",
+            "CREATE_REMOTE_THREAD",
+            "RAW_ACCESS_READ",
+            "PROCESS_ACCESS",
+            "REGISTRY_OBJECT_ADD_DEL",
+            "WINDOWS_EVENT_LOG",
+            "JOURNALD",
+            "AUDITD",
+        ]
+    );
+
+    let values = enum_values(&sdl, "DetectionModelSubjectKind");
+    assert_eq!(values.last().map(String::as_str), Some("ENDPOINT"));
 }
