@@ -196,14 +196,14 @@ impl AgentManager for Relay {
         anyhow::bail!("not expected to be called")
     }
 
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }
 
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {

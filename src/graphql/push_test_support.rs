@@ -26,16 +26,16 @@ type Recorded<T> = Vec<(Vec<String>, T)>;
 /// pair it sent.
 pub(super) type Push = Recorded<HostNetworkGroup>;
 
-/// One allowlist or blocklist push: the target lookup keys and the items of
-/// each pair it sent.
+/// One exclusion list or watchlist push: the target lookup keys and the items
+/// of each pair it sent.
 pub(super) type ItemsPush = Recorded<Vec<NetworkListEntry>>;
 
 /// The pushes a [`RecordingAgentManager`] received, by kind, in order.
 #[derive(Clone, Default)]
 pub(super) struct Pushes {
     internal: Arc<Mutex<Vec<Push>>>,
-    allow: Arc<Mutex<Vec<ItemsPush>>>,
-    block: Arc<Mutex<Vec<ItemsPush>>>,
+    exclusion_list: Arc<Mutex<Vec<ItemsPush>>>,
+    watchlist: Arc<Mutex<Vec<ItemsPush>>>,
 }
 
 impl Pushes {
@@ -44,14 +44,14 @@ impl Pushes {
         recorded(&self.internal)
     }
 
-    /// Returns the allowlist pushes.
-    pub(super) fn allow(&self) -> Vec<ItemsPush> {
-        recorded(&self.allow)
+    /// Returns the exclusion list pushes.
+    pub(super) fn exclusion_list(&self) -> Vec<ItemsPush> {
+        recorded(&self.exclusion_list)
     }
 
-    /// Returns the blocklist pushes.
-    pub(super) fn block(&self) -> Vec<ItemsPush> {
-        recorded(&self.block)
+    /// Returns the watchlist pushes.
+    pub(super) fn watchlist(&self) -> Vec<ItemsPush> {
+        recorded(&self.watchlist)
     }
 }
 
@@ -91,7 +91,7 @@ fn record<P, T>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PushKind {
     Internal,
-    Allow,
+    ExclusionList,
 }
 
 /// A pause of the first push of one kind a [`RecordingAgentManager`] receives.
@@ -103,8 +103,8 @@ pub(super) struct Pause {
     pub(super) release: Notify,
 }
 
-/// An `AgentManager` that records every internal network, allowlist and
-/// blocklist push, and reaches no agent otherwise.
+/// An `AgentManager` that records every internal network, exclusion list and
+/// watchlist push, and reaches no agent otherwise.
 pub(super) struct RecordingAgentManager {
     pushes: Pushes,
     /// Whether every push fails after it is recorded.
@@ -198,20 +198,20 @@ impl AgentManager for RecordingAgentManager {
         sent
     }
 
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        let sent = self.record_items(&self.pushes.allow, items);
-        self.hold(PushKind::Allow).await;
+        let sent = self.record_items(&self.pushes.exclusion_list, items);
+        self.hold(PushKind::ExclusionList).await;
         sent
     }
 
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.record_items(&self.pushes.block, items)
+        self.record_items(&self.pushes.watchlist, items)
     }
 
     async fn online_apps_by_host_id(

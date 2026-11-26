@@ -1981,6 +1981,30 @@ input EventTriagePolicyInput {
 	response: [ResponseInput!]!
 }
 
+"""
+The raw events one engine kind excluded for one exclusion-list entry on
+one UTC day, summed over the customer's engine instances.
+"""
+type ExclusionCount {
+	"""
+	The ID of the exclusion-list entry.
+	"""
+	entryId: StringNumber!
+	"""
+	The UTC day the counted raw events fall on, as `YYYY-MM-DD`.
+	"""
+	day: String!
+	"""
+	The engine kind that excluded the raw events: `SEMI_SUPERVISED` or
+	`UNSUPERVISED`.
+	"""
+	engine: AgentKind!
+	"""
+	The number of raw events excluded.
+	"""
+	count: StringNumber!
+}
+
 type ExternalDdosDetail {
 	proto: Int!
 	truncatedRelatedIps: StringNumber!
@@ -3490,18 +3514,18 @@ type Mutation {
 	"""
 	removeCustomerNetworks(customerId: ID!): Boolean!
 	"""
-	Replaces the allowlist and blocklist of the customer, returning the
-	stored revision.
+	Replaces the exclusion list and watchlist of the customer, returning
+	the stored revision.
 	
-	`allowlist` and `blocklist` are the customer's full lists; empty lists
-	are stored as such. A `revision` lower than the stored one is refused
-	with the error code `STALE_REVISION`, whose `storedRevision` extension
-	holds the stored revision.
+	`exclusionList` and `watchlist` are the customer's full lists; empty
+	lists are stored as such. A `revision` lower than the stored one is
+	refused with the error code `STALE_REVISION`, whose `storedRevision`
+	extension holds the stored revision.
 	"""
-	replaceNetworkLists(customerId: ID!, revision: StringNumber!, allowlist: [NetworkListEntryInput!]!, blocklist: [NetworkListEntryInput!]!): StringNumber!
+	replaceNetworkLists(customerId: ID!, revision: StringNumber!, exclusionList: [NetworkListEntryInput!]!, watchlist: [NetworkListEntryInput!]!): StringNumber!
 	"""
-	Removes the allowlist and blocklist of the customer, returning whether
-	any were stored.
+	Removes the exclusion list and watchlist of the customer, returning
+	whether any were stored.
 	"""
 	removeNetworkLists(customerId: ID!): Boolean!
 	"""
@@ -4527,7 +4551,8 @@ type NetworkListEntry {
 input NetworkListEntryInput {
 	"""
 	The writer's ID of the entry, unique within its list and stored as
-	given. The same ID may appear in both the allowlist and the blocklist.
+	given. The same ID may appear in both the exclusion list and the
+	watchlist.
 	"""
 	id: StringNumber!
 	name: String!
@@ -4544,13 +4569,13 @@ type NetworkListSet {
 	"""
 	revision: StringNumber!
 	"""
-	The entries of the allowlist.
+	The entries of the exclusion list.
 	"""
-	allowlist: [NetworkListEntry!]!
+	exclusionList: [NetworkListEntry!]!
 	"""
-	The entries of the blocklist.
+	The entries of the watchlist.
 	"""
-	blocklist: [NetworkListEntry!]!
+	watchlist: [NetworkListEntry!]!
 	"""
 	The time when this set was last written.
 	"""
@@ -5674,10 +5699,23 @@ type Query {
 	"""
 	customerNetworks(customerId: ID!): OwnedNetworkSet
 	"""
-	The allowlist and blocklist of the customer, or null if none were
+	The exclusion list and watchlist of the customer, or null if none were
 	stored for it.
 	"""
 	networkLists(customerId: ID!): NetworkListSet
+	"""
+	The raw events the customer's engines excluded, summed per engine
+	kind, exclusion-list entry and UTC day, ordered by engine kind, then
+	entry, then day.
+	
+	`SEMI_SUPERVISED` counts are of the raw events the Semi-supervised
+	Engine (hog) skipped before detection; `UNSUPERVISED` counts are of the
+	raw events the Unsupervised Engine's detectors removed from their
+	detection results. The two count different things and are never added
+	together, so an entry and day can have one count of each. A customer
+	with no reported counts gets an empty list.
+	"""
+	exclusionCounts(customerId: ID!): [ExclusionCount!]!
 	"""
 	Look up an Indicator by the given name.
 	

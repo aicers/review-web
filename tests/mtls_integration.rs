@@ -108,14 +108,14 @@ mod mtls_integration {
             Ok(Vec::new())
         }
 
-        async fn send_agent_specific_allow_networks(
+        async fn send_agent_specific_exclusion_list(
             &self,
             _networks: &[review_web::graphql::customer::NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
 
-        async fn send_agent_specific_block_networks(
+        async fn send_agent_specific_watchlist(
             &self,
             _networks: &[review_web::graphql::customer::NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {

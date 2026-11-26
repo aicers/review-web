@@ -114,7 +114,7 @@ pub use self::customer::{
     get_customer_networks,
 };
 pub(crate) use self::customer_deletion_guard::{data_store_in_use_message, data_stores_in_use};
-pub use self::network_list::{get_allow_networks, get_block_networks};
+pub use self::network_list::{get_exclusion_list, get_watchlist};
 pub(crate) use self::node::listed_rows;
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
@@ -972,7 +972,7 @@ impl AgentManager for MockAgentManager {
         Ok(vec!["semi-supervised@hostA".to_string()])
     }
 
-    async fn send_agent_specific_allow_networks(
+    async fn send_agent_specific_exclusion_list(
         &self,
         _networks: &[customer::NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
@@ -982,7 +982,7 @@ impl AgentManager for MockAgentManager {
         ])
     }
 
-    async fn send_agent_specific_block_networks(
+    async fn send_agent_specific_watchlist(
         &self,
         _networks: &[customer::NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {

@@ -38,8 +38,8 @@ impl NetworksTargetAgentLookupKeysPair {
     }
 }
 
-/// The items of an allowlist or a blocklist, in stored order, with the lookup
-/// keys of the agents they are sent to.
+/// The items of an exclusion list or a watchlist, in stored order, with the
+/// lookup keys of the agents they are sent to.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct NetworkListItemsTargetAgentLookupKeysPair {
     items: Vec<database::NetworkListEntry>,
@@ -251,34 +251,34 @@ pub async fn send_agent_specific_customer_networks(
         .map_err(Into::into)
 }
 
-/// Returns a list of agents that received the allowlist.
+/// Returns a list of agents that received the exclusion list.
 ///
 /// # Errors
 ///
 /// Returns an error if the broadcast fails.
-pub(super) async fn send_agent_specific_allow_networks(
+pub(super) async fn send_agent_specific_exclusion_list(
     ctx: &Context<'_>,
     items: &[NetworkListItemsTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
-        .send_agent_specific_allow_networks(items)
+        .send_agent_specific_exclusion_list(items)
         .await
         .map_err(Into::into)
 }
 
-/// Returns a list of agents that received the blocklist.
+/// Returns a list of agents that received the watchlist.
 ///
 /// # Errors
 ///
 /// Returns an error if the broadcast fails.
-pub(super) async fn send_agent_specific_block_networks(
+pub(super) async fn send_agent_specific_watchlist(
     ctx: &Context<'_>,
     items: &[NetworkListItemsTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
-        .send_agent_specific_block_networks(items)
+        .send_agent_specific_watchlist(items)
         .await
         .map_err(Into::into)
 }

@@ -1,26 +1,30 @@
-//! The allowlist and blocklist of each customer, keyed by customer ID.
+//! The exclusion list and watchlist of each customer, keyed by customer ID.
 //!
-//! The network lists table holds a copy of every customer's allowlist and
-//! blocklist as the writer last sent them, and is the source of the lists hog
+//! The network lists table holds a copy of every customer's exclusion list and
+//! watchlist as the writer last sent them, and is the source of the lists hog
 //! receives.
+//!
+//! The exclusion counts of a customer are read from the engine instance
+//! records: how many raw events each engine kind excluded for each
+//! exclusion-list entry, per UTC day.
 
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
-use async_graphql::{Context, InputObject, Object, Result, StringNumber, types::ID};
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject, StringNumber, types::ID};
 use review_database::{self as database, NetworkListReplaceOutcome, Store};
 use tracing::{error, info};
 
 use super::customer::{
     HostNetworkGroup, HostNetworkGroupInput, NetworkListItemsTargetAgentLookupKeysPair,
-    send_agent_specific_allow_networks, send_agent_specific_block_networks,
+    send_agent_specific_exclusion_list, send_agent_specific_watchlist,
 };
 use super::customer_access::check_customer_membership;
 use super::customer_network::{
     hog_agent_lookup_keys, parse_customer_id, stale_revision, validate_group,
 };
-use super::node::SEMI_SUPERVISED_AGENT;
+use super::node::{AgentKind, SEMI_SUPERVISED_AGENT};
 use super::{Role, RoleGuard};
 use crate::graphql::timestamp::Timestamp;
 use crate::{error_with_caller, info_with_caller};
@@ -103,23 +107,23 @@ pub(super) async fn lock_network_lists<'a>(ctx: &Context<'a>) -> Result<NetworkL
     })
 }
 
-/// Returns the allowlist items of a customer, with their IDs, names and
+/// Returns the exclusion list items of a customer, with their IDs, names and
 /// groups, in stored order, or an empty vector if none is stored for it.
 ///
 /// # Errors
 ///
 /// Returns an error if the stored row could not be read or decoded.
-pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
+pub fn get_exclusion_list(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
     Ok(db.network_lists_map().exclusion_list_items(customer_id)?)
 }
 
-/// Returns the blocklist items of a customer, with their IDs, names and
+/// Returns the watchlist items of a customer, with their IDs, names and
 /// groups, in stored order, or an empty vector if none is stored for it.
 ///
 /// # Errors
 ///
 /// Returns an error if the stored row could not be read or decoded.
-pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
+pub fn get_watchlist(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
     Ok(db.network_lists_map().watchlist_items(customer_id)?)
 }
 
@@ -128,7 +132,7 @@ pub(super) struct NetworkListQuery;
 
 #[Object]
 impl NetworkListQuery {
-    /// The allowlist and blocklist of the customer, or null if none were
+    /// The exclusion list and watchlist of the customer, or null if none were
     /// stored for it.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -145,6 +149,59 @@ impl NetworkListQuery {
             .get(customer_id)?
             .map(|inner| NetworkListSet { customer_id, inner }))
     }
+
+    /// The raw events the customer's engines excluded, summed per engine
+    /// kind, exclusion-list entry and UTC day, ordered by engine kind, then
+    /// entry, then day.
+    ///
+    /// `SEMI_SUPERVISED` counts are of the raw events the Semi-supervised
+    /// Engine (hog) skipped before detection; `UNSUPERVISED` counts are of the
+    /// raw events the Unsupervised Engine's detectors removed from their
+    /// detection results. The two count different things and are never added
+    /// together, so an entry and day can have one count of each. A customer
+    /// with no reported counts gets an empty list.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn exclusion_counts(
+        &self,
+        ctx: &Context<'_>,
+        customer_id: ID,
+    ) -> Result<Vec<ExclusionCount>> {
+        check_customer_membership(ctx, &customer_id)?;
+        let customer_id = parse_customer_id(&customer_id)?;
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(store
+            .engine_exclusion_totals(customer_id)?
+            .into_iter()
+            .map(ExclusionCount::from)
+            .collect())
+    }
+}
+
+/// The raw events one engine kind excluded for one exclusion-list entry on
+/// one UTC day, summed over the customer's engine instances.
+#[derive(SimpleObject)]
+struct ExclusionCount {
+    /// The ID of the exclusion-list entry.
+    entry_id: StringNumber<u64>,
+    /// The UTC day the counted raw events fall on, as `YYYY-MM-DD`.
+    day: String,
+    /// The engine kind that excluded the raw events: `SEMI_SUPERVISED` or
+    /// `UNSUPERVISED`.
+    engine: AgentKind,
+    /// The number of raw events excluded.
+    count: StringNumber<u64>,
+}
+
+impl From<database::EngineExclusionTotal> for ExclusionCount {
+    fn from(total: database::EngineExclusionTotal) -> Self {
+        Self {
+            entry_id: StringNumber(total.entry),
+            day: total.day.to_string(),
+            engine: total.engine.into(),
+            count: StringNumber(total.count),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -152,13 +209,13 @@ pub(super) struct NetworkListMutation;
 
 #[Object]
 impl NetworkListMutation {
-    /// Replaces the allowlist and blocklist of the customer, returning the
-    /// stored revision.
+    /// Replaces the exclusion list and watchlist of the customer, returning
+    /// the stored revision.
     ///
-    /// `allowlist` and `blocklist` are the customer's full lists; empty lists
-    /// are stored as such. A `revision` lower than the stored one is refused
-    /// with the error code `STALE_REVISION`, whose `storedRevision` extension
-    /// holds the stored revision.
+    /// `exclusionList` and `watchlist` are the customer's full lists; empty
+    /// lists are stored as such. A `revision` lower than the stored one is
+    /// refused with the error code `STALE_REVISION`, whose `storedRevision`
+    /// extension holds the stored revision.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn replace_network_lists(
@@ -166,14 +223,14 @@ impl NetworkListMutation {
         ctx: &Context<'_>,
         customer_id: ID,
         revision: StringNumber<u64>,
-        allowlist: Vec<NetworkListEntryInput>,
-        blocklist: Vec<NetworkListEntryInput>,
+        exclusion_list: Vec<NetworkListEntryInput>,
+        watchlist: Vec<NetworkListEntryInput>,
     ) -> Result<StringNumber<u64>> {
         check_customer_membership(ctx, &customer_id)?;
         let customer_id = parse_customer_id(&customer_id)?;
         let StringNumber(revision) = revision;
-        let allowlist = validate_list(NetworkList::Allowlist, allowlist)?;
-        let blocklist = validate_list(NetworkList::Blocklist, blocklist)?;
+        let exclusion_list = validate_list(NetworkList::ExclusionList, exclusion_list)?;
+        let watchlist = validate_list(NetworkList::Watchlist, watchlist)?;
 
         let _lock = lock_network_lists(ctx).await?;
         let pushes = {
@@ -181,8 +238,8 @@ impl NetworkListMutation {
             let outcome = store.network_lists_map().replace(
                 customer_id,
                 revision,
-                allowlist.clone(),
-                blocklist.clone(),
+                exclusion_list.clone(),
+                watchlist.clone(),
             )?;
             let previous = match outcome {
                 NetworkListReplaceOutcome::Written { previous } => previous,
@@ -197,7 +254,7 @@ impl NetworkListMutation {
                 &store,
                 customer_id,
                 previous.as_ref(),
-                (allowlist, blocklist),
+                (exclusion_list, watchlist),
             )
         };
         send_pushes(ctx, customer_id, pushes).await;
@@ -205,8 +262,8 @@ impl NetworkListMutation {
         Ok(StringNumber(revision))
     }
 
-    /// Removes the allowlist and blocklist of the customer, returning whether
-    /// any were stored.
+    /// Removes the exclusion list and watchlist of the customer, returning
+    /// whether any were stored.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_network_lists(&self, ctx: &Context<'_>, customer_id: ID) -> Result<bool> {
@@ -231,7 +288,7 @@ impl NetworkListMutation {
     }
 }
 
-/// The allowlist and blocklist of a customer.
+/// The exclusion list and watchlist of a customer.
 struct NetworkListSet {
     customer_id: u32,
     inner: database::NetworkListSet,
@@ -249,8 +306,8 @@ impl NetworkListSet {
         StringNumber(self.inner.revision)
     }
 
-    /// The entries of the allowlist.
-    async fn allowlist(&self) -> Vec<NetworkListEntry<'_>> {
+    /// The entries of the exclusion list.
+    async fn exclusion_list(&self) -> Vec<NetworkListEntry<'_>> {
         self.inner
             .exclusion_list
             .iter()
@@ -258,8 +315,8 @@ impl NetworkListSet {
             .collect()
     }
 
-    /// The entries of the blocklist.
-    async fn blocklist(&self) -> Vec<NetworkListEntry<'_>> {
+    /// The entries of the watchlist.
+    async fn watchlist(&self) -> Vec<NetworkListEntry<'_>> {
         self.inner
             .watchlist
             .iter()
@@ -273,7 +330,7 @@ impl NetworkListSet {
     }
 }
 
-/// An entry of a customer's allowlist or blocklist.
+/// An entry of a customer's exclusion list or watchlist.
 struct NetworkListEntry<'a> {
     inner: &'a database::NetworkListEntry,
 }
@@ -299,7 +356,8 @@ impl NetworkListEntry<'_> {
 #[derive(InputObject)]
 struct NetworkListEntryInput {
     /// The writer's ID of the entry, unique within its list and stored as
-    /// given. The same ID may appear in both the allowlist and the blocklist.
+    /// given. The same ID may appear in both the exclusion list and the
+    /// watchlist.
     id: StringNumber<u64>,
     name: String,
     network_group: HostNetworkGroupInput,
@@ -308,15 +366,15 @@ struct NetworkListEntryInput {
 /// One of a customer's two lists.
 #[derive(Clone, Copy)]
 enum NetworkList {
-    Allowlist,
-    Blocklist,
+    ExclusionList,
+    Watchlist,
 }
 
 impl fmt::Display for NetworkList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Allowlist => "allowlist",
-            Self::Blocklist => "blocklist",
+            Self::ExclusionList => "exclusion list",
+            Self::Watchlist => "watchlist",
         })
     }
 }
@@ -369,15 +427,15 @@ fn validate_list(
         .collect()
 }
 
-/// The items of the allowlist and the blocklist, in that order.
+/// The items of the exclusion list and the watchlist, in that order.
 type ListItems = (
     Vec<database::NetworkListEntry>,
     Vec<database::NetworkListEntry>,
 );
 
 /// Returns the pushes that bring the customer's hog agents from `previous` to
-/// the `(allowlist, blocklist)` items in `current`: one for each list whose
-/// items changed, to the hog agents of the customer's nodes.
+/// the `(exclusion_list, watchlist)` items in `current`: one for each list
+/// whose items changed, to the hog agents of the customer's nodes.
 ///
 /// Items are compared by ID, name and group, in order, so a list whose entries
 /// were only renamed, renumbered or reordered is pushed too: hog names the
@@ -392,13 +450,18 @@ fn hog_pushes(
     current: ListItems,
 ) -> Vec<(NetworkList, NetworkListItemsTargetAgentLookupKeysPair)> {
     let no_items: &[database::NetworkListEntry] = &[];
-    let (previous_allowlist, previous_blocklist) = previous.map_or((no_items, no_items), |set| {
-        (set.exclusion_list.as_slice(), set.watchlist.as_slice())
-    });
-    let (allowlist, blocklist) = current;
+    let (previous_exclusion_list, previous_watchlist) = previous
+        .map_or((no_items, no_items), |set| {
+            (set.exclusion_list.as_slice(), set.watchlist.as_slice())
+        });
+    let (exclusion_list, watchlist) = current;
     let changed: Vec<_> = [
-        (NetworkList::Allowlist, allowlist, previous_allowlist),
-        (NetworkList::Blocklist, blocklist, previous_blocklist),
+        (
+            NetworkList::ExclusionList,
+            exclusion_list,
+            previous_exclusion_list,
+        ),
+        (NetworkList::Watchlist, watchlist, previous_watchlist),
     ]
     .into_iter()
     .filter(|(_, current, previous)| current.as_slice() != *previous)
@@ -436,8 +499,8 @@ async fn send_pushes(
 ) {
     for (list, push) in pushes {
         let sent = match list {
-            NetworkList::Allowlist => send_agent_specific_allow_networks(ctx, &[push]).await,
-            NetworkList::Blocklist => send_agent_specific_block_networks(ctx, &[push]).await,
+            NetworkList::ExclusionList => send_agent_specific_exclusion_list(ctx, &[push]).await,
+            NetworkList::Watchlist => send_agent_specific_watchlist(ctx, &[push]).await,
         };
         if let Err(e) = sent {
             error_with_caller!(
@@ -452,21 +515,27 @@ async fn send_pushes(
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use review_database::{HostNetworkGroup, NetworkListEntry, Store};
+    use review_database::{
+        AgentKind, DetectorState, DetectorStatus, EngineDetectorRef, EngineDocumentRefs,
+        EngineDocumentWrite, HostNetworkGroup, NetworkListEntry, NodeUpdate, Store,
+    };
+    use review_protocol::types::{EngineExclusionReport, ExcludedCount};
     use serde_json::{Value, json};
 
-    use super::{get_allow_networks, get_block_networks};
+    use super::{get_exclusion_list, get_watchlist};
     use crate::graphql::{
         Role, TestSchema,
+        model_test_support::TestModel,
         push_test_support::{
             ItemsPush, Push, PushKind, failing_schema, group, insert_node, paused_schema,
             recording_schema,
         },
+        run_test_support::{insert_agent_node, insert_engine_instance},
     };
 
-    fn replace(customer_id: &str, revision: &str, allowlist: &str, blocklist: &str) -> String {
+    fn replace(customer_id: &str, revision: &str, exclusion_list: &str, watchlist: &str) -> String {
         format!(
-            r#"mutation {{ replaceNetworkLists(customerId: "{customer_id}", revision: "{revision}", allowlist: [{allowlist}], blocklist: [{blocklist}]) }}"#
+            r#"mutation {{ replaceNetworkLists(customerId: "{customer_id}", revision: "{revision}", exclusionList: [{exclusion_list}], watchlist: [{watchlist}]) }}"#
         )
     }
 
@@ -492,14 +561,20 @@ mod tests {
         format!(
             r#"{{ networkLists(customerId: "{customer_id}") {{
                 customerId revision updatedAt
-                allowlist {{ name networkGroup {{ hosts networks ranges {{ start end }} }} }}
-                blocklist {{ name networkGroup {{ hosts networks ranges {{ start end }} }} }}
+                exclusionList {{ name networkGroup {{ hosts networks ranges {{ start end }} }} }}
+                watchlist {{ name networkGroup {{ hosts networks ranges {{ start end }} }} }}
             }} }}"#
         )
     }
 
     fn remove(customer_id: &str) -> String {
         format!(r#"mutation {{ removeNetworkLists(customerId: "{customer_id}") }}"#)
+    }
+
+    fn counts(customer_id: &str) -> String {
+        format!(
+            r#"{{ exclusionCounts(customerId: "{customer_id}") {{ entryId day engine count }} }}"#
+        )
     }
 
     const OFFICE: &str = r#"{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }"#;
@@ -550,7 +625,7 @@ mod tests {
         let res = as_admin(query("7")).await;
         assert_eq!(data(res), json!({ "networkLists": null }));
 
-        let allowlist = [
+        let exclusion_list = [
             entry("office", OFFICE),
             entry(
                 "partner",
@@ -558,7 +633,13 @@ mod tests {
             ),
         ]
         .join(", ");
-        let res = as_admin(replace("7", "3", &allowlist, &entry("office", SCANNER))).await;
+        let res = as_admin(replace(
+            "7",
+            "3",
+            &exclusion_list,
+            &entry("office", SCANNER),
+        ))
+        .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "3" }));
 
         let res = as_admin(query("7")).await;
@@ -573,14 +654,14 @@ mod tests {
             json!({ "networkLists": {
                 "customerId": "7",
                 "revision": "3",
-                "allowlist": [
+                "exclusionList": [
                     { "name": "office", "networkGroup": {
                         "hosts": [], "networks": ["10.0.0.0/8"], "ranges": [] } },
                     { "name": "partner", "networkGroup": {
                         "hosts": ["2001:db8::1"], "networks": [],
                         "ranges": [{ "start": "192.168.1.1", "end": "192.168.1.9" }] } },
                 ],
-                "blocklist": [
+                "watchlist": [
                     { "name": "office", "networkGroup": {
                         "hosts": ["192.0.2.1"], "networks": [], "ranges": [] } },
                 ],
@@ -603,7 +684,12 @@ mod tests {
             .network_lists_map()
             .replace(8, 1, vec![], vec![])
             .unwrap();
-        for query in [query("8"), replace("8", "2", "", ""), remove("8")] {
+        for query in [
+            query("8"),
+            replace("8", "2", "", ""),
+            remove("8"),
+            counts("8"),
+        ] {
             let res = schema
                 .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![7]))
                 .await;
@@ -622,7 +708,12 @@ mod tests {
             .replace(7, 1, vec![], vec![])
             .unwrap();
         for role in [Role::SecurityMonitor, Role::SecurityManager] {
-            for query in [query("7"), replace("7", "2", "", ""), remove("7")] {
+            for query in [
+                query("7"),
+                replace("7", "2", "", ""),
+                remove("7"),
+                counts("7"),
+            ] {
                 let res = schema
                     .execute_as_scoped_user(&query, role, Some(vec![7]))
                     .await;
@@ -675,6 +766,7 @@ mod tests {
                 query(customer_id),
                 replace(customer_id, "1", "", ""),
                 remove(customer_id),
+                counts(customer_id),
             ] {
                 let res = schema.execute_as_system_admin(&query).await;
                 assert_eq!(error_message(&res), "invalid customer ID", "query: {query}");
@@ -691,7 +783,10 @@ mod tests {
             .execute_as_system_admin(&replace("7", "5", &entry("office", OFFICE), ""))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "5" }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 0));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (1, 0)
+        );
         let before = schema.store().network_lists_map().get(7).unwrap();
 
         let res = schema
@@ -704,14 +799,20 @@ mod tests {
             json!({ "code": "STALE_REVISION", "storedRevision": "5" })
         );
         assert_eq!(schema.store().network_lists_map().get(7).unwrap(), before);
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 0));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (1, 0)
+        );
 
         // An equal revision overwrites the row.
         let res = schema
             .execute_as_system_admin(&replace("7", "5", "", &entry("scanner", SCANNER)))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "5" }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (2, 1)
+        );
 
         // So does a higher one.
         let res = schema
@@ -727,7 +828,10 @@ mod tests {
             ),
             (6, 0, 0)
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 2));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (2, 2)
+        );
     }
 
     #[tokio::test]
@@ -791,8 +895,8 @@ mod tests {
         let valid = entry("valid", SCANNER);
         for (entries, expected) in &invalid_entries {
             for (list, query) in [
-                ("allowlist", replace("7", "1", entries, &valid)),
-                ("blocklist", replace("7", "1", &valid, entries)),
+                ("exclusion list", replace("7", "1", entries, &valid)),
+                ("watchlist", replace("7", "1", &valid, entries)),
             ] {
                 let expected = expected.replace("{}", list);
                 let res = schema.execute_as_system_admin(&query).await;
@@ -804,16 +908,16 @@ mod tests {
                 assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
             }
         }
-        // The allowlist is checked first.
+        // The exclusion list is checked first.
         let res = schema
             .execute_as_system_admin(&replace("7", "1", &entry(" ", OFFICE), &entry("", OFFICE)))
             .await;
         assert_eq!(
             error_message(&res),
-            "allowlist entry name must not be empty"
+            "exclusion list entry name must not be empty"
         );
-        assert_eq!(pushes.allow(), Vec::<ItemsPush>::new());
-        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.exclusion_list(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
 
         // The limits themselves are accepted, and a name may be in both lists.
         let max_entries = (0..256)
@@ -880,8 +984,8 @@ mod tests {
             "001.hog.n7b.example.com".to_string(),
         ];
 
-        // A first write with an allowlist only pushes the allowlist.
-        let allowlist = [
+        // A first write with an exclusion list only pushes the exclusion list.
+        let exclusion_list = [
             entry("office", OFFICE),
             entry(
                 "edge",
@@ -891,7 +995,7 @@ mod tests {
         .join(", ");
         let res = schema
             .execute_as_scoped_user(
-                &replace("7", "1", &allowlist, ""),
+                &replace("7", "1", &exclusion_list, ""),
                 Role::SecurityAdministrator,
                 Some(vec![7]),
             )
@@ -908,8 +1012,8 @@ mod tests {
                 ),
             ),
         ];
-        assert_eq!(pushes.allow(), vec![vec![(n7.clone(), items)]]);
-        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.exclusion_list(), vec![vec![(n7.clone(), items)]]);
+        assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
         assert_eq!(pushes.internal(), Vec::<Push>::new());
 
         // Renaming the entries and splitting them differently covers the same
@@ -941,19 +1045,22 @@ mod tests {
             ),
         ];
         assert_eq!(
-            pushes.allow().get(1),
+            pushes.exclusion_list().get(1),
             Some(&vec![(n7.clone(), renamed_items)])
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 0));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (2, 0)
+        );
 
-        // A blocklist change pushes only the blocklist.
+        // A watchlist change pushes only the watchlist.
         let res = schema
             .execute_as_system_admin(&replace("7", "3", &renamed, &entry("scanner", SCANNER)))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "3" }));
-        assert_eq!(pushes.allow().len(), 2);
+        assert_eq!(pushes.exclusion_list().len(), 2);
         assert_eq!(
-            pushes.block(),
+            pushes.watchlist(),
             vec![vec![(n7.clone(), vec![stored_entry("scanner", scanner())])]]
         );
         assert_eq!(pushes.internal(), Vec::<Push>::new());
@@ -988,20 +1095,29 @@ mod tests {
 
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
-        assert_eq!(pushes.allow(), vec![vec![(n7.clone(), Vec::new())]]);
-        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+        assert_eq!(
+            pushes.exclusion_list(),
+            vec![vec![(n7.clone(), Vec::new())]]
+        );
+        assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
 
         // Nothing was removed, so nothing is pushed.
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": false }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 0));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (1, 0)
+        );
 
         // Both lists were non-empty, so both are pushed.
         let res = schema.execute_as_system_admin(&remove("8")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         let n8 = vec!["001.hog.n8.example.com".to_string()];
-        assert_eq!(pushes.allow().get(1), Some(&vec![(n8.clone(), Vec::new())]));
-        assert_eq!(pushes.block(), vec![vec![(n8, Vec::new())]]);
+        assert_eq!(
+            pushes.exclusion_list().get(1),
+            Some(&vec![(n8.clone(), Vec::new())])
+        );
+        assert_eq!(pushes.watchlist(), vec![vec![(n8, Vec::new())]]);
         assert_eq!(pushes.internal(), Vec::<Push>::new());
     }
 
@@ -1031,8 +1147,8 @@ mod tests {
         assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
-        assert_eq!(pushes.allow(), Vec::<ItemsPush>::new());
-        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.exclusion_list(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
     }
 
     #[tokio::test]
@@ -1055,19 +1171,22 @@ mod tests {
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 2));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (2, 2)
+        );
     }
 
     #[tokio::test]
     async fn concurrent_replaces_push_in_the_order_they_were_stored() {
         const CUSTOMER: u32 = 7;
-        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let (schema, pushes, pause) = paused_schema(PushKind::ExclusionList).await;
         insert_node(&schema, CUSTOMER, "n.example.com");
         let target = vec!["001.hog.n.example.com".to_string()];
-        let older_allowlist = vec![stored_entry("a", office())];
-        let older_blocklist = vec![stored_entry("b", scanner())];
-        let newer_allowlist = vec![stored_entry("a", scanner())];
-        let newer_blocklist = vec![stored_entry("b", office())];
+        let older_exclusion_list = vec![stored_entry("a", office())];
+        let older_watchlist = vec![stored_entry("b", scanner())];
+        let newer_exclusion_list = vec![stored_entry("a", scanner())];
+        let newer_watchlist = vec![stored_entry("b", office())];
         let id = CUSTOMER.to_string();
         let older = replace(&id, "5", &entry("a", OFFICE), &entry("b", SCANNER));
         let newer = replace(&id, "6", &entry("a", SCANNER), &entry("b", OFFICE));
@@ -1076,7 +1195,8 @@ mod tests {
         let (older_res, newer_res, ()) = tokio::join!(
             schema.execute_as_system_admin(&older),
             async {
-                // Starts once the older replace is paused in its allowlist push.
+                // Starts once the older replace is paused in its exclusion
+                // list push.
                 pause.entered.notified().await;
                 let res = schema.execute_as_system_admin(&newer).await;
                 newer_done.store(true, Ordering::SeqCst);
@@ -1089,10 +1209,10 @@ mod tests {
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(
-                    pushes.allow(),
-                    vec![vec![(target.clone(), older_allowlist.clone())]]
+                    pushes.exclusion_list(),
+                    vec![vec![(target.clone(), older_exclusion_list.clone())]]
                 );
-                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
+                assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -1100,17 +1220,17 @@ mod tests {
         assert_eq!(data(older_res), json!({ "replaceNetworkLists": "5" }));
         assert_eq!(data(newer_res), json!({ "replaceNetworkLists": "6" }));
         assert_eq!(
-            pushes.allow(),
+            pushes.exclusion_list(),
             vec![
-                vec![(target.clone(), older_allowlist)],
-                vec![(target.clone(), newer_allowlist)],
+                vec![(target.clone(), older_exclusion_list)],
+                vec![(target.clone(), newer_exclusion_list)],
             ]
         );
         assert_eq!(
-            pushes.block(),
+            pushes.watchlist(),
             vec![
-                vec![(target.clone(), older_blocklist)],
-                vec![(target, newer_blocklist)],
+                vec![(target.clone(), older_watchlist)],
+                vec![(target, newer_watchlist)],
             ]
         );
         let stored = schema.store().network_lists_map().get(CUSTOMER).unwrap();
@@ -1118,7 +1238,7 @@ mod tests {
         assert_eq!(schema.network_lists_lock_users(), 0);
     }
 
-    /// Returns what `get_allow_networks` and `get_block_networks` return for
+    /// Returns what `get_exclusion_list` and `get_watchlist` return for
     /// the customer.
     fn served(
         schema: &TestSchema,
@@ -1126,17 +1246,17 @@ mod tests {
     ) -> (Vec<NetworkListEntry>, Vec<NetworkListEntry>) {
         let store = schema.store();
         (
-            get_allow_networks(&store, customer_id).unwrap(),
-            get_block_networks(&store, customer_id).unwrap(),
+            get_exclusion_list(&store, customer_id).unwrap(),
+            get_watchlist(&store, customer_id).unwrap(),
         )
     }
 
     #[tokio::test]
-    async fn get_allow_and_block_networks_read_the_network_lists_table() {
+    async fn get_exclusion_list_and_watchlist_read_the_network_lists_table() {
         let schema = TestSchema::new().await;
         assert_eq!(served(&schema, 0), Default::default());
 
-        let allowlist = [
+        let exclusion_list = [
             entry("office", r#"{ hosts: ["192.168.0.1"], networks: [], ranges: [] }"#),
             entry(
                 "partner",
@@ -1145,7 +1265,12 @@ mod tests {
         ]
         .join(", ");
         let res = schema
-            .execute_as_system_admin(&replace("0", "1", &allowlist, &entry("scanner", SCANNER)))
+            .execute_as_system_admin(&replace(
+                "0",
+                "1",
+                &exclusion_list,
+                &entry("scanner", SCANNER),
+            ))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
         // Each reader returns the items of its own list, in stored order.
@@ -1211,7 +1336,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_id_within_a_list_is_refused_and_nothing_is_stored() {
         let schema = TestSchema::new().await;
-        for (allowlist, blocklist, list) in [
+        for (exclusion_list, watchlist, list) in [
             (
                 [
                     entry_with_id(4, "office", OFFICE),
@@ -1219,7 +1344,7 @@ mod tests {
                 ]
                 .join(", "),
                 String::new(),
-                "allowlist",
+                "exclusion list",
             ),
             (
                 String::new(),
@@ -1228,11 +1353,11 @@ mod tests {
                     entry_with_id(9, "scanner", SCANNER),
                 ]
                 .join(", "),
-                "blocklist",
+                "watchlist",
             ),
         ] {
             let res = schema
-                .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+                .execute_as_system_admin(&replace("7", "1", &exclusion_list, &watchlist))
                 .await;
             let message = error_message(&res);
             assert!(
@@ -1251,14 +1376,14 @@ mod tests {
         const WIDE_ID: u64 = (1 << 53) + 1;
 
         let schema = TestSchema::new().await;
-        let allowlist = [
+        let exclusion_list = [
             entry_with_id(WIDE_ID, "office", OFFICE),
             entry_with_id(u64::MAX, "partner", SCANNER),
         ]
         .join(", ");
-        let blocklist = entry_with_id(WIDE_ID, "scanner", SCANNER);
+        let watchlist = entry_with_id(WIDE_ID, "scanner", SCANNER);
         let res = schema
-            .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+            .execute_as_system_admin(&replace("7", "1", &exclusion_list, &watchlist))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
 
@@ -1278,17 +1403,17 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(
-                r#"{ networkLists(customerId: "7") { allowlist { id name } blocklist { id name } } }"#,
+                r#"{ networkLists(customerId: "7") { exclusionList { id name } watchlist { id name } } }"#,
             )
             .await;
         assert_eq!(
             data(res),
             json!({ "networkLists": {
-                "allowlist": [
+                "exclusionList": [
                     { "id": WIDE_ID.to_string(), "name": "office" },
                     { "id": u64::MAX.to_string(), "name": "partner" },
                 ],
-                "blocklist": [{ "id": WIDE_ID.to_string(), "name": "scanner" }],
+                "watchlist": [{ "id": WIDE_ID.to_string(), "name": "scanner" }],
             } })
         );
     }
@@ -1299,12 +1424,12 @@ mod tests {
         let (schema, pushes) = recording_schema().await;
         insert_node(&schema, 7, "n7.example.com");
         let n7 = vec!["001.hog.n7.example.com".to_string()];
-        let blocklist = entry_with_id(3, "scanner", SCANNER);
-        let send = |revision: &'static str, allowlist: String, blocklist: String| {
+        let watchlist = entry_with_id(3, "scanner", SCANNER);
+        let send = |revision: &'static str, exclusion_list: String, watchlist: String| {
             let schema = &schema;
             async move {
                 schema
-                    .execute_as_system_admin(&replace("7", revision, &allowlist, &blocklist))
+                    .execute_as_system_admin(&replace("7", revision, &exclusion_list, &watchlist))
                     .await
             }
         };
@@ -1316,11 +1441,14 @@ mod tests {
                 entry_with_id(2, "partner", SCANNER),
             ]
             .join(", "),
-            blocklist.clone(),
+            watchlist.clone(),
         )
         .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (1, 1)
+        );
 
         // Only a name changes.
         let res = send(
@@ -1330,12 +1458,12 @@ mod tests {
                 entry_with_id(2, "partner", SCANNER),
             ]
             .join(", "),
-            blocklist.clone(),
+            watchlist.clone(),
         )
         .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
         assert_eq!(
-            pushes.allow().last(),
+            pushes.exclusion_list().last(),
             Some(&vec![(
                 n7.clone(),
                 vec![
@@ -1344,7 +1472,10 @@ mod tests {
                 ]
             )])
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (2, 1)
+        );
 
         // Only an ID changes.
         let res = send(
@@ -1354,12 +1485,12 @@ mod tests {
                 entry_with_id(2, "partner", SCANNER),
             ]
             .join(", "),
-            blocklist.clone(),
+            watchlist.clone(),
         )
         .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "3" }));
         assert_eq!(
-            pushes.allow().last(),
+            pushes.exclusion_list().last(),
             Some(&vec![(
                 n7.clone(),
                 vec![
@@ -1368,7 +1499,10 @@ mod tests {
                 ]
             )])
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (3, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (3, 1)
+        );
 
         // Only the order changes.
         let reordered = [
@@ -1376,10 +1510,10 @@ mod tests {
             entry_with_id(10, "main office", OFFICE),
         ]
         .join(", ");
-        let res = send("4", reordered.clone(), blocklist.clone()).await;
+        let res = send("4", reordered.clone(), watchlist.clone()).await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "4" }));
         assert_eq!(
-            pushes.allow().last(),
+            pushes.exclusion_list().last(),
             Some(&vec![(
                 n7.clone(),
                 vec![
@@ -1388,15 +1522,21 @@ mod tests {
                 ]
             )])
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (4, 1)
+        );
 
         // Identical items in the same order push nothing, even at a new
         // revision.
-        let res = send("5", reordered.clone(), blocklist.clone()).await;
+        let res = send("5", reordered.clone(), watchlist.clone()).await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "5" }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 1));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (4, 1)
+        );
 
-        // A change to the blocklist alone pushes only the blocklist.
+        // A change to the watchlist alone pushes only the watchlist.
         let res = send(
             "6",
             reordered.clone(),
@@ -1405,18 +1545,24 @@ mod tests {
         .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "6" }));
         assert_eq!(
-            pushes.block().last(),
+            pushes.watchlist().last(),
             Some(&vec![(
                 n7.clone(),
                 vec![stored_entry_with_id(3, "scanners", scanner())]
             )])
         );
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 2));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (4, 2)
+        );
 
         // A stale replacement that would change both lists pushes nothing.
         let res = send("5", entry_with_id(4, "other", OFFICE), String::new()).await;
         assert_eq!(error_message(&res), "stale revision");
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 2));
+        assert_eq!(
+            (pushes.exclusion_list().len(), pushes.watchlist().len()),
+            (4, 2)
+        );
     }
 
     #[tokio::test]
@@ -1426,14 +1572,14 @@ mod tests {
 
         let (schema, pushes) = recording_schema().await;
         insert_node(&schema, 7, "n7.example.com");
-        let allowlist = [
+        let exclusion_list = [
             entry_with_id(WIDE_ID, "office", OFFICE),
             entry_with_id(u64::MAX, "partner", SCANNER),
         ]
         .join(", ");
-        let blocklist = entry_with_id(WIDE_ID, "scanner", SCANNER);
+        let watchlist = entry_with_id(WIDE_ID, "scanner", SCANNER);
         let res = schema
-            .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+            .execute_as_system_admin(&replace("7", "1", &exclusion_list, &watchlist))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
 
@@ -1444,12 +1590,12 @@ mod tests {
                 .map(|(_, items)| items.into_iter().map(|item| item.id).collect())
                 .collect()
         };
-        assert_eq!(ids(pushes.allow()), vec![vec![WIDE_ID, u64::MAX]]);
-        assert_eq!(ids(pushes.block()), vec![vec![WIDE_ID]]);
+        assert_eq!(ids(pushes.exclusion_list()), vec![vec![WIDE_ID, u64::MAX]]);
+        assert_eq!(ids(pushes.watchlist()), vec![vec![WIDE_ID]]);
     }
 
     #[test]
-    fn get_allow_and_block_networks_fail_on_an_undecodable_row() {
+    fn get_exclusion_list_and_watchlist_fail_on_an_undecodable_row() {
         const CUSTOMER_ID: u32 = 7;
         const STATES_DIRECTORY: &str = "states.db";
         const NETWORK_LISTS_COLUMN_FAMILY: &str = "network lists";
@@ -1475,10 +1621,222 @@ mod tests {
         }
         let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
 
-        assert!(get_allow_networks(&store, CUSTOMER_ID).is_err());
-        assert!(get_block_networks(&store, CUSTOMER_ID).is_err());
+        assert!(get_exclusion_list(&store, CUSTOMER_ID).is_err());
+        assert!(get_watchlist(&store, CUSTOMER_ID).is_err());
         // Another customer's row is not read.
-        assert_eq!(get_allow_networks(&store, CUSTOMER_ID + 1).unwrap(), []);
-        assert_eq!(get_block_networks(&store, CUSTOMER_ID + 1).unwrap(), []);
+        assert_eq!(get_exclusion_list(&store, CUSTOMER_ID + 1).unwrap(), []);
+        assert_eq!(get_watchlist(&store, CUSTOMER_ID + 1).unwrap(), []);
+    }
+
+    #[tokio::test]
+    async fn old_argument_names_are_refused_and_nothing_is_stored_or_pushed() {
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+
+        let office = entry("office", OFFICE);
+        let scanner = entry("scanner", SCANNER);
+        for query in [
+            format!(
+                r#"mutation {{ replaceNetworkLists(customerId: "7", revision: "1", allowlist: [{office}], blocklist: [{scanner}]) }}"#
+            ),
+            format!(
+                r#"mutation {{ replaceNetworkLists(customerId: "7", revision: "1", allowlist: [{office}], watchlist: [{scanner}]) }}"#
+            ),
+            format!(
+                r#"mutation {{ replaceNetworkLists(customerId: "7", revision: "1", exclusionList: [{office}], blocklist: [{scanner}]) }}"#
+            ),
+        ] {
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(!res.errors.is_empty(), "expected a refusal: {query}");
+            assert!(
+                res.errors.iter().any(|e| {
+                    e.message.contains("Unknown argument \"allowlist\"")
+                        || e.message.contains("Unknown argument \"blocklist\"")
+                }),
+                "unexpected errors: {:?}",
+                res.errors
+            );
+        }
+        for query in [
+            r#"{ networkLists(customerId: "7") { allowlist { id } } }"#,
+            r#"{ networkLists(customerId: "7") { blocklist { id } } }"#,
+        ] {
+            let res = schema.execute_as_system_admin(query).await;
+            assert!(!res.errors.is_empty(), "expected a refusal: {query}");
+        }
+        assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
+        assert_eq!(pushes.exclusion_list(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.watchlist(), Vec::<ItemsPush>::new());
+    }
+
+    const DAY_1: jiff::civil::Date = jiff::civil::date(2026, 11, 3);
+    const DAY_2: jiff::civil::Date = jiff::civil::date(2026, 11, 4);
+    /// Above 2^53, where a JSON number would lose precision.
+    const WIDE: u64 = (1 << 53) + 1;
+
+    fn excluded(entry: u64, day: jiff::civil::Date, count: u64) -> ExcludedCount {
+        ExcludedCount { entry, day, count }
+    }
+
+    /// Stores a node of `customer_id` with a hog instance that reported
+    /// `counts`.
+    fn insert_hog_report(
+        store: &Store,
+        customer_id: u32,
+        hostname: &str,
+        counts: Vec<ExcludedCount>,
+    ) {
+        let hog = insert_agent_node(
+            store,
+            customer_id,
+            hostname,
+            "001.hog",
+            AgentKind::SemiSupervised,
+            Some(1),
+        );
+        store
+            .set_engine_exclusion_report(&hog, &EngineExclusionReport { counts })
+            .unwrap();
+    }
+
+    /// Stores a node of `customer_id` with an Unsupervised Engine instance
+    /// whose detectors `1..` reported the `excluded` counts of `statuses`, one
+    /// status per detector.
+    fn insert_reconverge_statuses(
+        store: &Store,
+        customer_id: u32,
+        hostname: &str,
+        statuses: Vec<Vec<ExcludedCount>>,
+    ) {
+        let instance = insert_engine_instance(store, customer_id, hostname, "001.reconverge");
+        let detectors: Vec<(i32, String)> = (1..)
+            .zip(&statuses)
+            .map(|(id, _)| (id, format!("model-{hostname}-{id}")))
+            .collect();
+        for (_, model) in &detectors {
+            TestModel {
+                instance: instance.clone(),
+                ..TestModel::new(model, customer_id)
+            }
+            .replace(store);
+        }
+        let mut map = store.node_map();
+        let (node, _, _) = map
+            .get_by_id(instance.node_id)
+            .expect("read engine node")
+            .expect("engine node exists");
+        let update = NodeUpdate::from(node);
+        let document = EngineDocumentWrite {
+            agent_key: instance.agent_key.clone(),
+            applied: Some(EngineDocumentRefs {
+                detectors: detectors
+                    .iter()
+                    .map(|(id, model)| EngineDetectorRef {
+                        id: *id,
+                        model: model.clone(),
+                        sources: vec![],
+                        indicator: None,
+                    })
+                    .collect(),
+            }),
+            pending: None,
+        };
+        map.update_with_engine_documents(instance.node_id, &update, &update, &[document])
+            .expect("write engine document references");
+        for ((id, _), excluded) in detectors.iter().zip(statuses) {
+            let status = DetectorStatus {
+                state: DetectorState::Running,
+                finished_at: None,
+                outcome: None,
+                reason: None,
+                events: 0,
+                sources: vec![],
+                detection_models: vec![],
+                excluded,
+                reported_at: jiff::Timestamp::UNIX_EPOCH,
+            };
+            store.set_detector_status(&instance, *id, &status).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn exclusion_counts_return_each_engines_totals_in_stored_order() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            // Customer 7 has two hog instances and one Unsupervised Engine
+            // instance with two detectors; entry 5 on DAY_1 is counted by both
+            // kinds.
+            insert_hog_report(
+                &store,
+                7,
+                "hog-7a.example.com",
+                vec![
+                    excluded(5, DAY_2, 3),
+                    excluded(5, DAY_1, 10),
+                    excluded(2, DAY_1, 4),
+                ],
+            );
+            insert_hog_report(
+                &store,
+                7,
+                "hog-7b.example.com",
+                vec![excluded(5, DAY_1, 1), excluded(WIDE, DAY_1, WIDE)],
+            );
+            insert_reconverge_statuses(
+                &store,
+                7,
+                "engine-7.example.com",
+                vec![
+                    vec![excluded(5, DAY_1, 6)],
+                    vec![excluded(5, DAY_1, 2), excluded(9, DAY_2, 1)],
+                ],
+            );
+            // Customer 8's counts are not customer 7's.
+            insert_hog_report(
+                &store,
+                8,
+                "hog-8.example.com",
+                vec![excluded(5, DAY_1, 100)],
+            );
+            insert_reconverge_statuses(
+                &store,
+                8,
+                "engine-8.example.com",
+                vec![vec![excluded(5, DAY_1, 200)]],
+            );
+        }
+
+        let expected = json!({ "exclusionCounts": [
+            { "entryId": "5", "day": "2026-11-03", "engine": "UNSUPERVISED", "count": "8" },
+            { "entryId": "9", "day": "2026-11-04", "engine": "UNSUPERVISED", "count": "1" },
+            { "entryId": "2", "day": "2026-11-03", "engine": "SEMI_SUPERVISED", "count": "4" },
+            { "entryId": "5", "day": "2026-11-03", "engine": "SEMI_SUPERVISED", "count": "11" },
+            { "entryId": "5", "day": "2026-11-04", "engine": "SEMI_SUPERVISED", "count": "3" },
+            { "entryId": WIDE.to_string(), "day": "2026-11-03", "engine": "SEMI_SUPERVISED",
+              "count": WIDE.to_string() },
+        ] });
+        let res = schema.execute_as_system_admin(&counts("7")).await;
+        assert_eq!(data(res), expected);
+        let res = schema
+            .execute_as_scoped_user(&counts("7"), Role::SecurityAdministrator, Some(vec![7]))
+            .await;
+        assert_eq!(data(res), expected);
+
+        let res = schema.execute_as_system_admin(&counts("8")).await;
+        assert_eq!(
+            data(res),
+            json!({ "exclusionCounts": [
+                { "entryId": "5", "day": "2026-11-03", "engine": "UNSUPERVISED", "count": "200" },
+                { "entryId": "5", "day": "2026-11-03", "engine": "SEMI_SUPERVISED", "count": "100" },
+            ] })
+        );
+
+        // A customer with no reports, with or without nodes, gets nothing.
+        insert_node(&schema, 9, "n9.example.com");
+        for customer_id in ["9", "10"] {
+            let res = schema.execute_as_system_admin(&counts(customer_id)).await;
+            assert_eq!(data(res), json!({ "exclusionCounts": [] }));
+        }
     }
 }
