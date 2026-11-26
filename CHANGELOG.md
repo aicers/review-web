@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0](https://github.com/aicers/review-web/compare/0.62.0...0.63.0) - 2026-11-26
+
+### Added
+
+- [**breaking**] add System Administrator mutations for registering and managing Clumit Endpoint trust, documents, enrollments and commands ([#1296](https://github.com/aicers/review-web/pull/1296))
+- [**breaking**] rename the event-frequency period and template time intervals to slot sizes ([#1297](https://github.com/aicers/review-web/pull/1297))
+- [**breaking**] check time-series training definitions and detector sources by time-series type and expose the cluster count at training ([#1294](https://github.com/aicers/review-web/pull/1294))
+- delete a customer's device identification data in customer data deletion ([#1293](https://github.com/aicers/review-web/pull/1293))
+- send hog only the customer's internal networks, without extranet ([#1292](https://github.com/aicers/review-web/pull/1292))
+- [**breaking**] replace sampling policies with time-series generation policies over sensor bundles and catalog types ([#1290](https://github.com/aicers/review-web/pull/1290))
+
 ## [0.62.0](https://github.com/aicers/review-web/compare/0.61.0...0.62.0) - 2026-11-23
 
 ### Added
