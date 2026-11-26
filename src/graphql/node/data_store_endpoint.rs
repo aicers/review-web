@@ -705,6 +705,7 @@ mod tests {
             1,
             vec!["piglet.host1.example.com".to_string()],
             vec!["7".to_string()],
+            vec![uuid::Uuid::from_u128(1)],
         );
 
         let request = stub

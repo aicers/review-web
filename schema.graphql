@@ -4706,10 +4706,15 @@ type Mutation {
 	deletion.
 	
 	Refused before anything is written, with `extensions.code`
-	`DATA_STORE_IN_USE`, while a Data Store on one of the customer's
-	nodes is named by an agent on another node, a training definition of
-	another customer, or a system log collector. The message names each
-	such Data Store, its users, and how to free it.
+	`ENDPOINTS_ACTIVE`, while an entry of the active list, whatever its
+	state, is one of the customer's Clumit Endpoint endpoints. The message
+	names those endpoints.
+	
+	Refused the same way, with `DATA_STORE_IN_USE`, while a Data Store on
+	one of the customer's nodes is named by an agent on another node, a
+	training definition of another customer, or a system log collector,
+	or has received data from an endpoint of another customer. The
+	message names each such Data Store, its users, and how to free it.
 	
 	Refused the same way, with `CUSTOMER_DATA_ALREADY_DELETED`, when the
 	customer's data was already deleted and it holds nodes, time series
@@ -4869,6 +4874,10 @@ type Mutation {
 	Resolves an enrollment attempt, keyed by the SPKI hash of the
 	enrolling endpoint (64 lowercase hexadecimal characters) and the
 	attempt id.
+	
+	Approving an attempt of a customer with a data deletion job is
+	refused, with `CUSTOMER_DELETION_IN_PROGRESS` or
+	`CUSTOMER_DATA_ALREADY_DELETED`.
 	"""
 	resolveEndpointEnrollment(spkiHash: String!, attemptId: ID!, resolution: SentaEndpointEnrollmentResolution!): Boolean!
 	"""

@@ -8,10 +8,12 @@
 //!    other than its Data Stores, is uninstalled, so that nothing sends the
 //!    customer's data any more.
 //! 3. The Data Store step asks every listed Data Store to delete the
-//!    customer's events and its time series generation policies' periodic time series.
+//!    customer's events, its time series generation policies' periodic time
+//!    series and its endpoints' data.
 //! 4. The Data Stores on the customer's nodes are uninstalled.
 //! 5. The Review stage deletes what the Central Manager keeps, its device
-//!    identification data and its nodes among it.
+//!    identification data, its nodes and its Clumit Endpoint rows among it,
+//!    and then tells `REview` that the customer's endpoint data is deleted.
 //!
 //! Each stage decides from the job and the store, so a deletion resumed after
 //! a restart skips what is done. A deletion that stops leaves no result it
@@ -43,6 +45,11 @@
 //! - The modules on a given-up host keep running and writing until their
 //!   current certificates expire, and are no longer renewed. The customer's
 //!   data in a given-up Data Store stays in it.
+//! - A Data Store given up with `abandonDataStores` or `abandonHosts` was not
+//!   asked to block or delete the customer's endpoints, and their data in it
+//!   stays. The removal of the endpoints from the active list and the expiry
+//!   of their leases end that node's intake of them, so nothing new is
+//!   written there.
 #![allow(clippy::unused_async_trait_impl)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -69,10 +76,14 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::{error, warn};
+use uuid::Uuid;
 
 use crate::{
     auth::MtlsIdentity,
-    backend::{DeployError, MODULE_PACKAGE_IDS, SharedAgentManager, SharedPackageDeployer},
+    backend::{
+        DeployError, MODULE_PACKAGE_IDS, SharedAgentManager, SharedEndpointManager,
+        SharedPackageDeployer,
+    },
     graphql::{
         RoleGuard, TimeSeriesGenerationPoliciesLock, agent_lookup_key_service_token,
         data_store_in_use_message, data_stores_in_use, listed_rows, operator_installs,
@@ -103,6 +114,9 @@ const DATA_STORE_IN_USE: &str = "DATA_STORE_IN_USE";
 /// The `extensions.code` of a request refused because the customer's data
 /// was already deleted and it holds records created since.
 pub(crate) const CUSTOMER_DATA_ALREADY_DELETED: &str = "CUSTOMER_DATA_ALREADY_DELETED";
+/// The `extensions.code` of a deletion refused while an endpoint of the
+/// customer is in the active list.
+const ENDPOINTS_ACTIVE: &str = "ENDPOINTS_ACTIVE";
 /// How often a stage re-reads the job, an attempt or a row it waits for.
 const STAGE_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// How long a Sensor or Semi-supervised result may stay unreported, from the
@@ -143,6 +157,13 @@ struct DataStoreInUseError(String);
 #[error("{0}")]
 struct CustomerDataAlreadyDeletedError(String);
 
+/// A deletion refused, before anything is written, because an endpoint of
+/// the customer is in the stored active list. The message names those
+/// endpoints.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct EndpointsActiveError(String);
+
 /// A remote service that must delete data belonging to a customer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomerDataDeletionTarget {
@@ -177,8 +198,8 @@ impl CustomerDataDeletionTarget {
     }
 }
 
-/// A Data Store that must delete a customer's events and the periodic time
-/// series of its time series generation policies.
+/// A Data Store that must delete a customer's events, the periodic time
+/// series of its time series generation policies and its endpoints' data.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataStoreDeletionTarget {
     customer_id: u32,
@@ -187,6 +208,7 @@ pub struct DataStoreDeletionTarget {
     instance: u32,
     service_fqdns: Vec<String>,
     periodic_time_series_ids: Vec<String>,
+    endpoint_ids: Vec<Uuid>,
 }
 
 impl DataStoreDeletionTarget {
@@ -197,6 +219,7 @@ impl DataStoreDeletionTarget {
         instance: u32,
         service_fqdns: Vec<String>,
         periodic_time_series_ids: Vec<String>,
+        endpoint_ids: Vec<Uuid>,
     ) -> Self {
         Self {
             customer_id,
@@ -205,6 +228,7 @@ impl DataStoreDeletionTarget {
             instance,
             service_fqdns,
             periodic_time_series_ids,
+            endpoint_ids,
         }
     }
 
@@ -244,6 +268,13 @@ impl DataStoreDeletionTarget {
     #[must_use]
     pub fn periodic_time_series_ids(&self) -> &[String] {
         &self.periodic_time_series_ids
+    }
+
+    /// Returns the IDs of the customer's endpoints, as the deletion job lists
+    /// them, whose data the Data Store blocks and deletes. It may be empty.
+    #[must_use]
+    pub fn endpoint_ids(&self) -> &[Uuid] {
+        &self.endpoint_ids
     }
 }
 
@@ -468,10 +499,15 @@ impl CustomerDataDeletionMutation {
     /// deletion.
     ///
     /// Refused before anything is written, with `extensions.code`
-    /// `DATA_STORE_IN_USE`, while a Data Store on one of the customer's
-    /// nodes is named by an agent on another node, a training definition of
-    /// another customer, or a system log collector. The message names each
-    /// such Data Store, its users, and how to free it.
+    /// `ENDPOINTS_ACTIVE`, while an entry of the active list, whatever its
+    /// state, is one of the customer's Clumit Endpoint endpoints. The message
+    /// names those endpoints.
+    ///
+    /// Refused the same way, with `DATA_STORE_IN_USE`, while a Data Store on
+    /// one of the customer's nodes is named by an agent on another node, a
+    /// training definition of another customer, or a system log collector,
+    /// or has received data from an endpoint of another customer. The
+    /// message names each such Data Store, its users, and how to free it.
     ///
     /// Refused the same way, with `CUSTOMER_DATA_ALREADY_DELETED`, when the
     /// customer's data was already deleted and it holds nodes, time series
@@ -510,6 +546,7 @@ impl CustomerDataDeletionMutation {
         let task_manager = ctx.data::<Arc<CustomerDataDeletionTaskManager>>()?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
         let agent_manager = ctx.data::<SharedAgentManager>()?;
+        let endpoint_manager = ctx.data::<SharedEndpointManager>()?;
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         let give_up = GiveUp::new(
             abandon_hosts.unwrap_or_default(),
@@ -520,6 +557,7 @@ impl CustomerDataDeletionMutation {
             customer_id,
             store,
             agent_manager,
+            endpoint_manager,
             deployer,
             task_manager,
             give_up,
@@ -530,6 +568,9 @@ impl CustomerDataDeletionMutation {
             if let Some(DataStoreInUseError(message)) = error.downcast_ref() {
                 async_graphql::Error::new(message)
                     .extend_with(|_, extensions| extensions.set("code", DATA_STORE_IN_USE))
+            } else if let Some(EndpointsActiveError(message)) = error.downcast_ref() {
+                async_graphql::Error::new(message)
+                    .extend_with(|_, extensions| extensions.set("code", ENDPOINTS_ACTIVE))
             } else if let Some(CustomerDataAlreadyDeletedError(message)) = error.downcast_ref() {
                 async_graphql::Error::new(message).extend_with(|_, extensions| {
                     extensions.set("code", CUSTOMER_DATA_ALREADY_DELETED);
@@ -622,10 +663,13 @@ fn abandoned_host_data_store(host: &str, server_name: &str) -> String {
 /// Requests the deletion of customer `customer_id`, or a retry of its
 /// stopped deletion that gives up what `give_up` names, on behalf of
 /// `caller`.
+// The managers and locks are the schema's, each passed on to the supervisor.
+#[allow(clippy::too_many_arguments)]
 async fn request_deletion(
     customer_id: u32,
     store: &Arc<RwLock<Store>>,
     agent_manager: &SharedAgentManager,
+    endpoint_manager: &SharedEndpointManager,
     deployer: &SharedPackageDeployer,
     task_manager: &Arc<CustomerDataDeletionTaskManager>,
     give_up: GiveUp,
@@ -697,6 +741,7 @@ async fn request_deletion(
         {
             return Ok(CustomerDataDeletionRequestStatus::DeletionInProgress);
         }
+        check_endpoints_active(store, customer_id, &job.endpoint_ids)?;
         // A job exists, so the customer's nodes can no longer leave it.
         check_data_stores_in_use(store, customer_id, false)?;
         retry(store, &job, &give_up, caller)?
@@ -704,6 +749,7 @@ async fn request_deletion(
         let Some(plan) = collect_initial_plan(store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
         };
+        check_endpoints_active(store, customer_id, &[])?;
         check_data_stores_in_use(store, customer_id, true)?;
         let job = initial_job(&plan, timestamp_nanos()?);
         persist_request(store, &job)?;
@@ -713,6 +759,7 @@ async fn request_deletion(
     let supervisor = Supervisor {
         store: Arc::clone(store),
         agent_manager: Arc::clone(agent_manager),
+        endpoint_manager: Arc::clone(endpoint_manager),
         deployer: Arc::clone(deployer),
         policies_lock: Arc::clone(task_manager.time_series_generation_policies_lock()),
         shutdown: task_manager.shutdown.subscribe(),
@@ -740,6 +787,58 @@ fn check_data_stores_in_use(
         return Ok(());
     }
     Err(DataStoreInUseError(data_store_in_use_message(&in_use, node_may_move)).into())
+}
+
+/// Refuses the deletion of customer `customer_id` with an
+/// [`EndpointsActiveError`] while an entry of the stored active list,
+/// whatever its state, is one of the customer's endpoints: an endpoint whose
+/// endpoint row is the customer's, or one of `job_endpoint_ids`, the
+/// endpoints a retried job lists.
+fn check_endpoints_active(
+    store: &RwLock<Store>,
+    customer_id: u32,
+    job_endpoint_ids: &[Uuid],
+) -> anyhow::Result<()> {
+    let store = read_store(store)?;
+    let Some(list) = store
+        .senta_endpoint_active_list_map()
+        .get()
+        .context("reading the endpoint active list")?
+    else {
+        return Ok(());
+    };
+    let mut endpoint_ids: Vec<Uuid> = store
+        .senta_endpoint_map()
+        .of_customer(customer_id)
+        .with_context(|| format!("reading the endpoints of customer {customer_id}"))?
+        .into_iter()
+        .map(|endpoint| endpoint.endpoint_id)
+        .collect();
+    endpoint_ids.extend_from_slice(job_endpoint_ids);
+    sort_dedup(&mut endpoint_ids);
+    let mut active: Vec<Uuid> = list
+        .entries
+        .iter()
+        .map(|entry| entry.endpoint_id)
+        .filter(|endpoint_id| endpoint_ids.binary_search(endpoint_id).is_ok())
+        .collect();
+    sort_dedup(&mut active);
+    if active.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<String> = active.iter().map(ToString::to_string).collect();
+    Err(EndpointsActiveError(format!(
+        "the active list holds {} of customer {customer_id}: {}; remove {} from the active \
+         list, then retry",
+        if active.len() == 1 {
+            "an endpoint"
+        } else {
+            "endpoints"
+        },
+        names.join(", "),
+        if active.len() == 1 { "it" } else { "them" },
+    ))
+    .into())
 }
 
 /// Returns the refusal of a request for a customer whose deletion `job` is
@@ -816,14 +915,19 @@ fn already_deleted_refusal(
     )))
 }
 
+/// Writes the first deletion job of a customer, whose `endpoint_ids` the
+/// store fills with the IDs of the customer's endpoint rows.
+///
+/// The store refuses if the customer already has a job; the supervisor lock
+/// orders the requests, so that is an internal error here.
 fn persist_request(store: &RwLock<Store>, job: &CustomerDataDeletionJob) -> anyhow::Result<()> {
     let store = read_store(store)?;
     #[cfg(test)]
     tests::checkpoint(&store, tests::Stage::PersistRequest, job.customer_id)?;
     store
-        .customer_data_deletion_map()
-        .put(job)
-        .context("persisting initial customer data deletion job")
+        .create_customer_data_deletion_job(job)
+        .context("persisting initial customer data deletion job")?;
+    Ok(())
 }
 
 fn persist_retry_request(
@@ -1079,6 +1183,7 @@ fn collect_initial_plan(
     if node_ids.is_empty()
         && policy_ids.is_empty()
         && !has_unsupervised_records(&store, customer_id)?
+        && !has_endpoint_records(&store, customer_id)?
     {
         return Ok(None);
     }
@@ -1111,6 +1216,24 @@ fn has_unsupervised_records(store: &Store, customer_id: u32) -> anyhow::Result<b
         .context("collecting customer deletion training definitions")?
         .iter()
         .any(|definition| definition.customer_id == customer_id))
+}
+
+/// Returns whether the customer has an endpoint-customer row or an endpoint
+/// row.
+fn has_endpoint_records(store: &Store, customer_id: u32) -> anyhow::Result<bool> {
+    if store
+        .senta_endpoint_customer_map()
+        .get(customer_id)
+        .context("collecting the customer's endpoint registration")?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(!store
+        .senta_endpoint_map()
+        .of_customer(customer_id)
+        .context("collecting the customer's endpoints")?
+        .is_empty())
 }
 
 fn sort_dedup<T: Ord>(values: &mut Vec<T>) {
@@ -1524,6 +1647,9 @@ fn failed_removal(attempt: &OperationAttempt) -> Stop {
 struct Supervisor {
     store: Arc<RwLock<Store>>,
     agent_manager: SharedAgentManager,
+    /// Told, once the Review stage deleted the customer's endpoint rows, that
+    /// the customer's endpoint data is deleted.
+    endpoint_manager: SharedEndpointManager,
     deployer: SharedPackageDeployer,
     policies_lock: Arc<TimeSeriesGenerationPoliciesLock>,
     /// Turns `true` when shutdown starts. Once it has, the supervisor records
@@ -1542,7 +1668,8 @@ impl Supervisor {
     /// 3. Every listed Data Store deletes its data.
     /// 4. Its own Data Stores are uninstalled.
     /// 5. The Review stage deletes what the Central Manager keeps, when the
-    ///    plan has Review targets.
+    ///    plan has Review targets, and then tells the endpoint manager that
+    ///    the customer's endpoint data is deleted.
     ///
     /// A resumed job whose Review result is not `InProgress` was stopped; only
     /// the wait of stage 1 runs for it.
@@ -1602,6 +1729,7 @@ impl Supervisor {
             run_review_worker_and_persist(
                 Arc::clone(&self.store),
                 Arc::clone(&self.policies_lock),
+                Arc::clone(&self.endpoint_manager),
                 customer_id,
                 targets,
             )
@@ -2555,16 +2683,17 @@ enum DataStoreNext {
     },
 }
 
-/// Asks every listed Data Store to delete the customer's events and its time
-/// series generation policies' periodic time series, and waits until each one's
-/// result is terminal.
+/// Asks every listed Data Store to delete the customer's events, its time
+/// series generation policies' periodic time series and its endpoints' data,
+/// and waits until each one's result is terminal.
 ///
 /// The targets are computed when the step runs: one per listed Data Store,
 /// with `piglet.<host>` and `reproduce.<host>` for each host FQDN of the
-/// job's Review result, and the job's periodic time series IDs. A service
-/// FQDN the Data Store would refuse, one with fewer than three non-empty
-/// labels, is left out; no event can have been ingested under it. With
-/// neither a service FQDN nor an ID, no Data Store is asked.
+/// job's Review result, the job's periodic time series IDs, and the job's
+/// endpoint IDs. A service FQDN the Data Store would refuse, one with fewer
+/// than three non-empty labels, is left out; no event can have been ingested
+/// under it. With no service FQDN, no periodic time series ID and no
+/// endpoint ID, no Data Store is asked.
 ///
 /// A Data Store with no result or a `Failed` one has its result recorded
 /// `InProgress` and is sent to; one with an `InProgress` result, sent before
@@ -2666,6 +2795,8 @@ struct DataStoreStart {
 /// Unless `sending`, only the Data Stores with an `InProgress` result are
 /// considered. Returns `None`, before recording a given-up Data Store, once
 /// shutdown has started.
+// One pass over the listed Data Stores, which reads best in one piece.
+#[allow(clippy::too_many_lines)]
 fn data_store_starts(
     store: &RwLock<Store>,
     shutdown: &watch::Receiver<bool>,
@@ -2674,7 +2805,10 @@ fn data_store_starts(
 ) -> anyhow::Result<Option<Vec<DataStoreStart>>> {
     let job = read_job(store, customer_id)?;
     let service_fqdns = data_store_service_fqdns(review_hosts(&job));
-    if service_fqdns.is_empty() && job.periodic_time_series_ids.is_empty() {
+    if service_fqdns.is_empty()
+        && job.periodic_time_series_ids.is_empty()
+        && job.endpoint_ids.is_empty()
+    {
         return Ok(Some(Vec::new()));
     }
     let mut rows = listed_rows(&*read_store(store)?)
@@ -2747,6 +2881,7 @@ fn data_store_starts(
             row.instance,
             service_fqdns.clone(),
             job.periodic_time_series_ids.clone(),
+            job.endpoint_ids.clone(),
         );
         let stored = existing
             .iter()
@@ -3005,9 +3140,17 @@ async fn wait_for_data_store(
     }
 }
 
+/// Runs the Review stage's worker, and records its result.
+///
+/// Once the worker has deleted everything, `endpoint_manager` is told that
+/// the customer's endpoint data is deleted, before the Review result is
+/// recorded `Succeeded`. An error it returns, including that `REview` does
+/// not support it, is logged and fails nothing; a Review stage resumed after
+/// a restart tells it again.
 async fn run_review_worker_and_persist(
     store: Arc<RwLock<Store>>,
     policies_lock: Arc<TimeSeriesGenerationPoliciesLock>,
+    endpoint_manager: SharedEndpointManager,
     customer_id: u32,
     targets: ReviewDeletionTargets,
 ) {
@@ -3022,6 +3165,16 @@ async fn run_review_worker_and_persist(
         delete_review_data(&worker_store, &policies_lock, customer_id, &targets)
     })
     .await;
+    if let Ok(Ok(())) = outcome
+        && let Err(notify_error) = endpoint_manager
+            .customer_endpoint_data_deleted(customer_id)
+            .await
+    {
+        warn!(
+            customer_id,
+            "failed to tell REview that the customer's endpoint data is deleted: {notify_error:#}"
+        );
+    }
     let (status, error_message) = match outcome {
         Ok(Ok(())) => (CustomerDataDeletionStatus::Succeeded, None),
         Ok(Err(worker_error)) => (
@@ -3175,6 +3328,11 @@ fn delete_review_data(
         .with_context(|| {
             format!("deleting Unsupervised Engine records for customer {customer_id}")
         })?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::Endpoints, customer_id)
+        .with_context(|| format!("deleting the endpoint rows of customer {customer_id}"))?;
+    delete_endpoint_rows(&store, customer_id)
+        .with_context(|| format!("deleting the endpoint rows of customer {customer_id}"))?;
     // Removing the nodes detached the customer's engine instances and
     // cleared every assignment of its generators, so no generator is told.
     // The customer's models and definitions, which may have named these
@@ -3190,6 +3348,100 @@ fn delete_review_data(
             format!("deleting time series generation policies for customer {customer_id}")
         })?;
     Ok(())
+}
+
+/// Deletes the Clumit Endpoint rows of customer `customer_id`.
+///
+/// Its endpoints are those the stored job lists and any endpoint row of the
+/// customer. Per endpoint, it deletes the unenroll request, the document
+/// results, the commands, the status report, the endpoint events, the
+/// Giganto losses and Giganto last-received rows, and then the endpoint row.
+/// It then deletes the customer's enrollment attempts, its keyset documents,
+/// current documents and address-document roots, and last its
+/// endpoint-customer row. What is already gone is skipped, so a resumed
+/// Review stage deletes whatever is left.
+///
+/// The install rows, the recovery-key documents, the active list and the
+/// Giganto entry rows are not the customer's alone, and are left.
+fn delete_endpoint_rows(store: &Store, customer_id: u32) -> anyhow::Result<()> {
+    let mut endpoint_ids = store
+        .customer_data_deletion_map()
+        .get(customer_id)
+        .context("reading the deletion job")?
+        .map_or_else(Vec::new, |job| job.endpoint_ids);
+    let endpoints = store.senta_endpoint_map();
+    endpoint_ids.extend(
+        endpoints
+            .of_customer(customer_id)
+            .context("reading the endpoints")?
+            .into_iter()
+            .map(|endpoint| endpoint.endpoint_id),
+    );
+    sort_dedup(&mut endpoint_ids);
+    let commands = store.senta_endpoint_command_map();
+    for endpoint_id in endpoint_ids {
+        let context = |table: &str| format!("deleting the {table} of endpoint {endpoint_id}");
+        store
+            .senta_endpoint_unenroll_request_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("unenroll request"))?;
+        store
+            .senta_endpoint_document_result_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("document results"))?;
+        for command in commands
+            .of_endpoint(endpoint_id)
+            .with_context(|| context("commands"))?
+        {
+            commands
+                .delete(command.command_id)
+                .with_context(|| context("commands"))?;
+        }
+        store
+            .senta_endpoint_status_report_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("status report"))?;
+        store
+            .senta_endpoint_event_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("events"))?;
+        store
+            .senta_endpoint_giganto_loss_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("Giganto losses"))?;
+        store
+            .senta_endpoint_giganto_last_received_map()
+            .delete_endpoint(endpoint_id)
+            .with_context(|| context("Giganto last-received rows"))?;
+        endpoints
+            .delete(endpoint_id)
+            .with_context(|| context("row"))?;
+    }
+    let attempts = store.senta_endpoint_enrollment_attempt_map();
+    for attempt in attempts
+        .of_customer(customer_id)
+        .context("reading the enrollment attempts")?
+    {
+        attempts
+            .delete(&attempt.spki_hash, attempt.attempt_id)
+            .with_context(|| format!("deleting enrollment attempt {}", attempt.attempt_id))?;
+    }
+    store
+        .senta_endpoint_keyset_document_map()
+        .delete_customer(customer_id)
+        .context("deleting the keyset documents")?;
+    store
+        .senta_endpoint_current_document_map()
+        .delete_customer(customer_id)
+        .context("deleting the current documents")?;
+    store
+        .senta_endpoint_address_root_map()
+        .delete_customer(customer_id)
+        .context("deleting the address-document roots")?;
+    store
+        .senta_endpoint_customer_map()
+        .delete(customer_id)
+        .context("deleting the endpoint registration")
 }
 
 /// Refuses while one of `node_ids` holds a row with an instance number.
@@ -3410,8 +3662,9 @@ impl RecoveredDeletions {
     /// is `InProgress`. A stopped job, whose Review result is not
     /// `InProgress`, only waits for its Sensor and Semi-supervised results.
     ///
-    /// `deployer` uninstalls the customer's modules; it is the one the GraphQL
-    /// schema holds.
+    /// `deployer` uninstalls the customer's modules, and `endpoint_manager`
+    /// is told when a Review stage deleted a customer's endpoint rows; each is
+    /// the one the GraphQL schema holds.
     ///
     /// # Errors
     ///
@@ -3421,6 +3674,7 @@ impl RecoveredDeletions {
         self,
         deployer: SharedPackageDeployer,
         agent_manager: SharedAgentManager,
+        endpoint_manager: SharedEndpointManager,
         task_manager: Arc<CustomerDataDeletionTaskManager>,
     ) -> anyhow::Result<()> {
         let Some(first_customer_id) = self.jobs.first().map(|job| job.customer_id) else {
@@ -3443,6 +3697,7 @@ impl RecoveredDeletions {
         let deletion = Supervisor {
             store: self.store,
             agent_manager,
+            endpoint_manager,
             deployer,
             policies_lock: Arc::clone(task_manager.time_series_generation_policies_lock()),
             shutdown: task_manager.shutdown.subscribe(),
@@ -4336,6 +4591,151 @@ mod tests {
         Arc::new(RecordingDeployer::new(&test_store.store))
     }
 
+    /// What the endpoint manager saw when it was told that a customer's
+    /// endpoint data is deleted.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct EndpointDataDeleted {
+        customer_id: u32,
+        /// How many endpoint rows of the customer were left.
+        endpoints_left: usize,
+        /// Whether the customer's endpoint-customer row was left.
+        registration_left: bool,
+        /// The status of the customer's Review result.
+        review: Option<CustomerDataDeletionStatus>,
+    }
+
+    /// An endpoint manager that records every customer it is told the
+    /// endpoint data of is deleted, with what the store held then, and
+    /// answers that call with `error`, or succeeds when there is none.
+    /// Every other method is not supported.
+    #[derive(Default)]
+    struct RecordingEndpointManager {
+        store: Option<Arc<RwLock<Store>>>,
+        error: Option<fn() -> crate::backend::EndpointManagerError>,
+        deleted: std::sync::Mutex<Vec<EndpointDataDeleted>>,
+    }
+
+    impl RecordingEndpointManager {
+        fn with_store(store: &Arc<RwLock<Store>>) -> Self {
+            Self {
+                store: Some(Arc::clone(store)),
+                ..Self::default()
+            }
+        }
+
+        fn deleted(&self) -> Vec<EndpointDataDeleted> {
+            self.deleted.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl crate::backend::EndpointManager for RecordingEndpointManager {
+        async fn register_customer(
+            &self,
+            _customer_id: u32,
+            _customer_endpoint_id: Uuid,
+            _key_name: &str,
+            _install_id: &str,
+            _keyset: &str,
+        ) -> Result<(), crate::backend::EndpointManagerError> {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn register_install(
+            &self,
+            _install_id: &str,
+            _recovery_key: &str,
+            _version: u64,
+        ) -> Result<(), crate::backend::EndpointManagerError> {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn set_active_list(
+            &self,
+            _update: Vec<u8>,
+        ) -> Result<u64, crate::backend::EndpointManagerError> {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn put_documents(
+            &self,
+            _documents: Vec<String>,
+        ) -> Result<
+            Vec<crate::backend::EndpointDocumentOutcome>,
+            crate::backend::EndpointManagerError,
+        > {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn resolve_enrollment(
+            &self,
+            _attempt: crate::backend::EndpointEnrollmentAttemptKey,
+            _resolution: crate::backend::EndpointEnrollmentResolution,
+        ) -> Result<(), crate::backend::EndpointManagerError> {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn submit_command(
+            &self,
+            _command: &str,
+        ) -> Result<Uuid, crate::backend::EndpointManagerError> {
+            Err(crate::backend::EndpointManagerError::NotSupported)
+        }
+
+        async fn customer_endpoint_data_deleted(
+            &self,
+            customer_id: u32,
+        ) -> Result<(), crate::backend::EndpointManagerError> {
+            let (endpoints_left, registration_left, review) = match &self.store {
+                Some(store) => {
+                    let store = read_store(store).unwrap();
+                    let review = store
+                        .customer_data_deletion_map()
+                        .get(customer_id)
+                        .unwrap()
+                        .and_then(|job| {
+                            job.service_results
+                                .iter()
+                                .find(|result| {
+                                    result.service == CustomerDataDeletionService::Review
+                                })
+                                .map(|result| result.status)
+                        });
+                    (
+                        store
+                            .senta_endpoint_map()
+                            .of_customer(customer_id)
+                            .unwrap()
+                            .len(),
+                        store
+                            .senta_endpoint_customer_map()
+                            .get(customer_id)
+                            .unwrap()
+                            .is_some(),
+                        review,
+                    )
+                }
+                None => (0, false, None),
+            };
+            self.deleted.lock().unwrap().push(EndpointDataDeleted {
+                customer_id,
+                endpoints_left,
+                registration_left,
+                review,
+            });
+            match self.error {
+                Some(error) => Err(error()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    /// Returns an endpoint manager that succeeds every time it is told a
+    /// customer's endpoint data is deleted.
+    fn endpoints() -> SharedEndpointManager {
+        Arc::new(RecordingEndpointManager::default())
+    }
+
     fn test_schema(
         test_store: &TestStore,
         agent_manager: SharedAgentManager,
@@ -4344,6 +4744,7 @@ mod tests {
         Schema::build(TestQuery, CustomerDataDeletionMutation, EmptySubscription)
             .data(Arc::clone(&test_store.store))
             .data(agent_manager)
+            .data(endpoints())
             .data(deployer(test_store))
             .data(task_manager)
             .finish()
@@ -4698,6 +5099,8 @@ mod tests {
         Nodes,
         ConfigHistory,
         Unsupervised,
+        /// Before the deletion of the customer's endpoint rows.
+        Endpoints,
         DataStoreRecorded,
         /// Before the write recording overdue Sensor and Semi-supervised
         /// results `Failed`.
@@ -4861,6 +5264,7 @@ mod tests {
             .start(
                 Arc::new(RecordingDeployer::new(store)),
                 Arc::new(RecordingAgentManager::with_store(store)),
+                endpoints(),
                 Arc::clone(manager),
             )
             .await
@@ -5321,6 +5725,7 @@ mod tests {
             1,
             &test_store.store,
             &agent_manager,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -5352,6 +5757,7 @@ mod tests {
             2,
             &test_store.store,
             &agent_manager,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -5457,6 +5863,7 @@ mod tests {
             1,
             &test_store.store,
             &agent_manager,
+            &endpoints(),
             &deployer(&test_store),
             &Arc::new(CustomerDataDeletionTaskManager::default()),
             GiveUp::default(),
@@ -5489,6 +5896,7 @@ mod tests {
                 1,
                 &test_store.store,
                 &agent_manager,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -5511,6 +5919,7 @@ mod tests {
                 2,
                 &test_store.store,
                 &agent_manager,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -5537,6 +5946,7 @@ mod tests {
                 3,
                 &test_store.store,
                 &agent_manager,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -5551,6 +5961,7 @@ mod tests {
                 4,
                 &test_store.store,
                 &agent_manager,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -5647,6 +6058,7 @@ mod tests {
             42,
             &test_store.store,
             &shared_agent_manager,
+            &endpoints(),
             &deployer(&test_store),
             &task_manager,
             GiveUp::default(),
@@ -5830,6 +6242,7 @@ mod tests {
             55,
             &test_store.store,
             &agent_manager,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -5873,6 +6286,7 @@ mod tests {
                 56,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -5931,6 +6345,7 @@ mod tests {
                     customer_id,
                     &test_store.store,
                     &shared,
+                    &endpoints(),
                     &deployer(&test_store),
                     &manager,
                     GiveUp::default(),
@@ -6032,6 +6447,7 @@ mod tests {
             run_review_worker_and_persist(
                 Arc::clone(&test_store.store),
                 Arc::default(),
+                endpoints(),
                 1,
                 targets,
             )
@@ -6147,8 +6563,14 @@ mod tests {
 
         let targets =
             restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
-            .await;
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            endpoints(),
+            1,
+            targets,
+        )
+        .await;
         assert_eq!(
             job(&test_store.store, 1).service_results.remove(0).status,
             CustomerDataDeletionStatus::Succeeded
@@ -6191,6 +6613,7 @@ mod tests {
         let worker = tokio::spawn(run_review_worker_and_persist(
             Arc::clone(&test_store.store),
             Arc::clone(&lock),
+            endpoints(),
             1,
             targets,
         ));
@@ -6264,8 +6687,14 @@ mod tests {
 
         let targets =
             restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
-            .await;
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            endpoints(),
+            1,
+            targets,
+        )
+        .await;
 
         let result = job(&test_store.store, 1).service_results.remove(0);
         assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
@@ -6607,8 +7036,14 @@ mod tests {
         );
         let targets =
             restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
-            .await;
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            endpoints(),
+            1,
+            targets,
+        )
+        .await;
         assert_eq!(
             job(&test_store.store, 1)
                 .service_results
@@ -6624,8 +7059,14 @@ mod tests {
 
         let targets =
             restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
-            .await;
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            endpoints(),
+            1,
+            targets,
+        )
+        .await;
         let result = job(&test_store.store, 1);
         let result = result.service_results.first().unwrap();
         assert_eq!(
@@ -6715,6 +7156,7 @@ mod tests {
             run_review_worker_and_persist(
                 Arc::clone(&test_store.store),
                 Arc::default(),
+                endpoints(),
                 1,
                 targets,
             )
@@ -6846,6 +7288,7 @@ mod tests {
                     1,
                     &test_store.store,
                     &shared,
+                    &endpoints(),
                     &deployer(&test_store),
                     &manager,
                     GiveUp::default(),
@@ -6871,6 +7314,7 @@ mod tests {
                     1,
                     &test_store.store,
                     &shared,
+                    &endpoints(),
                     &deployer(&test_store),
                     &manager,
                     GiveUp::default(),
@@ -7155,6 +7599,7 @@ mod tests {
                 77,
                 &test_store.store,
                 &shared_agent_manager,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -7329,6 +7774,7 @@ mod tests {
                         customer_id,
                         &test_store.store,
                         &agent_manager,
+                        &endpoints(),
                         &deployer(&test_store),
                         &manager,
                         GiveUp::default(),
@@ -7694,10 +8140,12 @@ mod tests {
         tokio::pin!(shutdown);
         assert!(futures::poll!(&mut shutdown).is_pending());
         let deployer = deployer(&test_store);
+        let endpoints = endpoints();
         let request = request_deletion(
             1,
             &test_store.store,
             &shared,
+            &endpoints,
             &deployer,
             &manager,
             GiveUp::default(),
@@ -7898,6 +8346,7 @@ mod tests {
                 7,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -8024,6 +8473,7 @@ mod tests {
             7,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -8071,6 +8521,7 @@ mod tests {
                     customer_id,
                     &test_store.store,
                     &shared,
+                    &endpoints(),
                     &deployer(&test_store),
                     &manager,
                     GiveUp::default(),
@@ -8122,6 +8573,7 @@ mod tests {
                 5,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -8168,6 +8620,7 @@ mod tests {
                 6,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -8194,6 +8647,7 @@ mod tests {
                 7,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(test_store),
                 &manager,
                 GiveUp::default(),
@@ -8449,7 +8903,12 @@ mod tests {
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
         recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store))
             .unwrap()
-            .start(deployer(&test_store), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer(&test_store),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -8515,6 +8974,7 @@ mod tests {
             7,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -8538,7 +8998,12 @@ mod tests {
             recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
         assert_eq!(recovered.resumed_customer_ids(), [7]);
         recovered
-            .start(deployer(&test_store), second.clone(), Arc::clone(&manager))
+            .start(
+                deployer(&test_store),
+                second.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -8588,6 +9053,7 @@ mod tests {
                 7,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -8646,6 +9112,7 @@ mod tests {
             7,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer(&test_store),
             &manager,
             GiveUp::default(),
@@ -8665,6 +9132,7 @@ mod tests {
                 7,
                 &test_store.store,
                 &shared,
+                &endpoints(),
                 &deployer(&test_store),
                 &manager,
                 GiveUp::default(),
@@ -8692,7 +9160,12 @@ mod tests {
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
         recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store))
             .unwrap()
-            .start(deployer(&test_store), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer(&test_store),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -8734,6 +9207,7 @@ mod tests {
             7,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer,
             &manager,
             GiveUp::default(),
@@ -8827,7 +9301,12 @@ mod tests {
         assert_eq!(recovered.remote_targets(), []);
         assert_eq!(recovered.resumed_customer_ids(), [7]);
         recovered
-            .start(deployer(&test_store), first.clone(), Arc::clone(&manager))
+            .start(
+                deployer(&test_store),
+                first.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_secs(100)).await;
@@ -8848,7 +9327,12 @@ mod tests {
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
         recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store))
             .unwrap()
-            .start(deployer(&test_store), second.clone(), Arc::clone(&manager))
+            .start(
+                deployer(&test_store),
+                second.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -8903,7 +9387,12 @@ mod tests {
         assert_eq!(recovered.remote_targets(), []);
         assert_eq!(recovered.resumed_customer_ids(), [7]);
         recovered
-            .start(deployer(test_store), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer(test_store),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -9315,6 +9804,7 @@ server_name = "{server_name}"
             customer_id,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer,
             manager,
             GiveUp::default(),
@@ -10510,8 +11000,14 @@ server_name = "{server_name}"
             vec![pending_result(CustomerDataDeletionService::Review, &[A])],
         );
         let targets = restore_review_targets(&test_store.store, 7, &[A.to_string()]).unwrap();
-        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 7, targets)
-            .await;
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            endpoints(),
+            7,
+            targets,
+        )
+        .await;
         let failed = review_of(&job(&test_store.store, 7)).clone();
         assert_eq!(failed.status, CustomerDataDeletionStatus::Failed);
         assert_eq!(
@@ -10563,7 +11059,12 @@ server_name = "{server_name}"
             recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
         assert_eq!(recovered.remote_targets().len(), 0);
         recovered
-            .start(deployer.clone(), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer.clone(),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_mins(10)).await;
@@ -10632,7 +11133,12 @@ server_name = "{server_name}"
             let targets = recovered.take_remote_targets();
             assert_eq!(targets.len(), 1);
             recovered
-                .start(deployer.clone(), agent.clone(), Arc::clone(&manager))
+                .start(
+                    deployer.clone(),
+                    agent.clone(),
+                    endpoints(),
+                    Arc::clone(&manager),
+                )
                 .await
                 .unwrap();
 
@@ -10693,7 +11199,12 @@ server_name = "{server_name}"
             recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
         assert_eq!(recovered.resumed_customer_ids(), [7]);
         recovered
-            .start(deployer.clone(), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer.clone(),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -11156,6 +11667,7 @@ server_name = "{server_name}"
             7,
             &test_store.store,
             &shared,
+            &endpoints(),
             &deployer,
             manager,
             GiveUp::new(names(hosts), names(data_stores)),
@@ -11294,7 +11806,12 @@ server_name = "{server_name}"
             recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
         assert_eq!(recovered.remote_targets(), []);
         recovered
-            .start(deployer.clone(), agent.clone(), Arc::clone(&manager))
+            .start(
+                deployer.clone(),
+                agent.clone(),
+                endpoints(),
+                Arc::clone(&manager),
+            )
             .await
             .unwrap();
         finish_supervisor(&manager).await;
@@ -12068,5 +12585,1067 @@ server_name = "{server_name}"
         );
         assert!(!in_progress(&stopped));
         assert_eq!(stopped.abandoned_hosts, [A]);
+    }
+
+    /// The install every Clumit Endpoint customer of these tests belongs to.
+    const ENDPOINT_INSTALL: &str = "install-1";
+
+    /// Registers the install, and rotates its recovery key once so that it
+    /// holds a recovery-key document.
+    fn put_endpoint_install(store: &Store) {
+        store
+            .senta_endpoint_install_map()
+            .register(ENDPOINT_INSTALL, "{\"k\":1}", 1)
+            .unwrap();
+        store
+            .rotate_senta_endpoint_recovery_key(
+                &review_database::SentaEndpointRecoveryKeyDocument {
+                    install_id: ENDPOINT_INSTALL.to_string(),
+                    recovery_key_version: 2,
+                    jws: "r.k.d".to_string(),
+                },
+                "{\"k\":2}",
+                &[],
+            )
+            .unwrap();
+    }
+
+    /// Returns the install's rows: its own and its recovery-key documents.
+    fn endpoint_install_rows(store: &Store) -> (bool, usize) {
+        (
+            store
+                .senta_endpoint_install_map()
+                .get(ENDPOINT_INSTALL)
+                .unwrap()
+                .is_some(),
+            store
+                .senta_endpoint_recovery_key_document_map()
+                .of_install(ENDPOINT_INSTALL)
+                .unwrap()
+                .len(),
+        )
+    }
+
+    fn endpoint_spki_hash(endpoint_id: Uuid) -> [u8; 32] {
+        let mut hash = [0xff_u8; 32];
+        for (byte, value) in hash.iter_mut().zip(endpoint_id.as_bytes()) {
+            *byte = *value;
+        }
+        hash
+    }
+
+    fn endpoint_node(host: &str, instance: u32) -> review_database::SentaEndpointGigantoNode {
+        review_database::SentaEndpointGigantoNode {
+            host: host.to_string(),
+            instance,
+        }
+    }
+
+    fn pending_attempt(
+        customer_id: u32,
+        spki_hash: [u8; 32],
+        attempt_id: Uuid,
+    ) -> review_database::SentaEndpointEnrollmentAttempt {
+        review_database::SentaEndpointEnrollmentAttempt {
+            spki_hash,
+            attempt_id,
+            customer_id,
+            request: vec![1],
+            source_address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            received_at: 1,
+            result: review_database::SentaEndpointEnrollmentResult::Pending {
+                reason: "awaiting_approval".to_string(),
+            },
+        }
+    }
+
+    /// Registers customer `customer_id` for Clumit Endpoint, with a keyset
+    /// document, a current document naming an address root and a pending
+    /// enrollment attempt, and enrolls `endpoint_ids`, each with a command
+    /// and the rows [`put_endpoint_observations`] writes on `node`.
+    fn put_endpoint_customer(
+        store: &Store,
+        customer_id: u32,
+        endpoint_ids: &[Uuid],
+        node: &review_database::SentaEndpointGigantoNode,
+    ) {
+        let customer_endpoint_id = Uuid::from_u128(u128::from(customer_id) << 64);
+        let recovery_key_version = store
+            .senta_endpoint_install_map()
+            .get(ENDPOINT_INSTALL)
+            .unwrap()
+            .unwrap()
+            .current_recovery_key_version;
+        store
+            .register_senta_endpoint_customer(
+                &review_database::SentaEndpointCustomer {
+                    customer_id,
+                    trust_state: vec![1],
+                    customer_endpoint_id,
+                    customer_key_name: "customer-key".to_string(),
+                    install_id: ENDPOINT_INSTALL.to_string(),
+                    last_keyset: review_database::SentaEndpointKeysetVersion::default(),
+                    recovery_key_version,
+                },
+                &review_database::SentaEndpointKeysetDocument {
+                    customer_id,
+                    recovery_epoch: 0,
+                    keyset_version: 1,
+                    signing_kid: "kid".to_string(),
+                    jws: "k.s.d".to_string(),
+                },
+            )
+            .unwrap();
+        store
+            .write_senta_endpoint_current_document(
+                &review_database::SentaEndpointCurrentDocument {
+                    customer_id,
+                    typ: "address".to_string(),
+                    target: "all".to_string(),
+                    recovery_epoch: 0,
+                    version: 1,
+                    jws: "a.d.d".to_string(),
+                    put_at: 1,
+                },
+                &[[7_u8; 32]],
+            )
+            .unwrap();
+        let attempts = store.senta_endpoint_enrollment_attempt_map();
+        attempts
+            .insert(&pending_attempt(
+                customer_id,
+                [0xaa_u8; 32],
+                Uuid::from_u128(customer_endpoint_id.as_u128() | 1),
+            ))
+            .unwrap();
+        for &endpoint_id in endpoint_ids {
+            let spki_hash = endpoint_spki_hash(endpoint_id);
+            let attempt_id = Uuid::from_u128(!endpoint_id.as_u128());
+            attempts
+                .insert(&pending_attempt(customer_id, spki_hash, attempt_id))
+                .unwrap();
+            store
+                .approve_senta_endpoint_enrollment(
+                    &spki_hash,
+                    attempt_id,
+                    "e.r.j",
+                    &review_database::SentaEndpoint {
+                        endpoint_id,
+                        customer_id,
+                        customer_endpoint_id,
+                        spki_hash,
+                        standing: "active".to_string(),
+                        host_name: "pc.example".to_string(),
+                        os: "linux".to_string(),
+                        senta_version: "1.0.0".to_string(),
+                        bundle: "bundle".to_string(),
+                        enrolled_at: 1,
+                        last_connected_at: 1,
+                        connected: true,
+                    },
+                )
+                .unwrap();
+            store
+                .insert_senta_endpoint_command(
+                    customer_id,
+                    &review_database::SentaEndpointCommand {
+                        command_id: Uuid::from_u128(endpoint_id.as_u128() ^ (0xc0 << 96)),
+                        endpoint_id,
+                        sequence: 1,
+                        jws: "c.m.d".to_string(),
+                        expires_at: 1,
+                        state: review_database::SentaEndpointCommandState::Pending,
+                        result: None,
+                    },
+                )
+                .unwrap();
+            put_endpoint_observations(store, endpoint_id, node);
+        }
+    }
+
+    /// Writes an unenroll request, a document result, a status report, an
+    /// event, a Giganto loss and a Giganto last-received row of `endpoint_id`
+    /// on `node`.
+    fn put_endpoint_observations(
+        store: &Store,
+        endpoint_id: Uuid,
+        node: &review_database::SentaEndpointGigantoNode,
+    ) {
+        store
+            .senta_endpoint_unenroll_request_map()
+            .put(&review_database::SentaEndpointUnenrollRequest {
+                endpoint_id,
+                received_at: 1,
+            })
+            .unwrap();
+        store
+            .senta_endpoint_document_result_map()
+            .put(&review_database::SentaEndpointDocumentResult {
+                key: review_database::SentaEndpointDocumentResultKey {
+                    endpoint_id,
+                    typ: "address".to_string(),
+                    target: "all".to_string(),
+                },
+                version: Some(1),
+                result: "applied".to_string(),
+                at: 1,
+            })
+            .unwrap();
+        store
+            .senta_endpoint_status_report_map()
+            .put(&review_database::SentaEndpointStatusReport {
+                endpoint_id,
+                report: "{}".to_string(),
+                received_at: 1,
+                address_document_slot: None,
+            })
+            .unwrap();
+        store
+            .senta_endpoint_event_map()
+            .insert(&review_database::SentaEndpointEvent {
+                key: review_database::SentaEndpointEventKey {
+                    endpoint_id,
+                    at: 1,
+                    source: review_database::SentaEndpointEventSource::Node(node.clone()),
+                    sequence: 1,
+                },
+                spki_hash: endpoint_spki_hash(endpoint_id),
+                addresses: vec!["10.0.0.1".to_string()],
+                replacement_count: 1,
+                fetched_at: Some(2),
+            })
+            .unwrap();
+        store
+            .senta_endpoint_giganto_loss_map()
+            .insert(&review_database::SentaEndpointGigantoLoss {
+                key: review_database::SentaEndpointGigantoLossKey {
+                    endpoint_id,
+                    received_at: 1,
+                    node: node.clone(),
+                    stream_id: Uuid::from_u128(5),
+                    range_from: 1,
+                    range_to: 2,
+                    reason_code: "dropped".to_string(),
+                },
+                reason_detail: "dropped".to_string(),
+                fetched_at: 2,
+            })
+            .unwrap();
+        put_last_received(store, endpoint_id, node);
+    }
+
+    /// Writes the Giganto last-received row of `endpoint_id` on `node`.
+    fn put_last_received(
+        store: &Store,
+        endpoint_id: Uuid,
+        node: &review_database::SentaEndpointGigantoNode,
+    ) {
+        store
+            .senta_endpoint_giganto_last_received_map()
+            .put(&review_database::SentaEndpointGigantoLastReceived {
+                key: review_database::SentaEndpointGigantoLastReceivedKey {
+                    endpoint_id,
+                    node: node.clone(),
+                },
+                last_received_at: 1,
+                fetched_at: 2,
+            })
+            .unwrap();
+    }
+
+    /// Stores the active list with an entry for each of `endpoint_ids`.
+    fn put_active_list(store: &Store, endpoint_ids: &[Uuid]) {
+        store
+            .senta_endpoint_active_list_map()
+            .put(&review_database::SentaEndpointActiveList {
+                version: 1,
+                entries: endpoint_ids
+                    .iter()
+                    .map(
+                        |&endpoint_id| review_database::SentaEndpointActiveListEntry {
+                            endpoint_id,
+                            spki_hash: endpoint_spki_hash(endpoint_id),
+                            customer_endpoint_id: Uuid::nil(),
+                            state: "suspended:operator".to_string(),
+                        },
+                    )
+                    .collect(),
+            })
+            .unwrap();
+    }
+
+    /// Returns how many rows each Clumit Endpoint table holds of customer
+    /// `customer_id` and its endpoints `endpoint_ids`.
+    // One count per table, which reads best as one list.
+    #[allow(clippy::too_many_lines)]
+    fn endpoint_rows(
+        store: &Store,
+        customer_id: u32,
+        endpoint_ids: &[Uuid],
+    ) -> BTreeMap<&'static str, usize> {
+        let per_endpoint = |count: &dyn Fn(Uuid) -> usize| -> usize {
+            endpoint_ids
+                .iter()
+                .map(|&endpoint_id| count(endpoint_id))
+                .sum()
+        };
+        BTreeMap::from([
+            (
+                "endpoint",
+                per_endpoint(&|id| {
+                    usize::from(store.senta_endpoint_map().get(id).unwrap().is_some())
+                }),
+            ),
+            (
+                "unenroll request",
+                per_endpoint(&|id| {
+                    usize::from(
+                        store
+                            .senta_endpoint_unenroll_request_map()
+                            .get(id)
+                            .unwrap()
+                            .is_some(),
+                    )
+                }),
+            ),
+            (
+                "document result",
+                per_endpoint(&|id| {
+                    store
+                        .senta_endpoint_document_result_map()
+                        .iter_endpoint(id)
+                        .count()
+                }),
+            ),
+            (
+                "command",
+                per_endpoint(&|id| {
+                    store
+                        .senta_endpoint_command_map()
+                        .of_endpoint(id)
+                        .unwrap()
+                        .len()
+                }),
+            ),
+            (
+                "status report",
+                per_endpoint(&|id| {
+                    usize::from(
+                        store
+                            .senta_endpoint_status_report_map()
+                            .get(id)
+                            .unwrap()
+                            .is_some(),
+                    )
+                }),
+            ),
+            (
+                "event",
+                per_endpoint(&|id| store.senta_endpoint_event_map().iter_endpoint(id).count()),
+            ),
+            (
+                "Giganto loss",
+                per_endpoint(&|id| {
+                    store
+                        .senta_endpoint_giganto_loss_map()
+                        .iter_endpoint(id)
+                        .count()
+                }),
+            ),
+            (
+                "Giganto last received",
+                per_endpoint(&|id| {
+                    store
+                        .senta_endpoint_giganto_last_received_map()
+                        .iter_endpoint(id)
+                        .count()
+                }),
+            ),
+            (
+                "enrollment attempt",
+                store
+                    .senta_endpoint_enrollment_attempt_map()
+                    .of_customer(customer_id)
+                    .unwrap()
+                    .len(),
+            ),
+            (
+                "keyset document",
+                store
+                    .senta_endpoint_keyset_document_map()
+                    .of_customer(customer_id)
+                    .unwrap()
+                    .len(),
+            ),
+            (
+                "current document",
+                store
+                    .senta_endpoint_current_document_map()
+                    .of_customer(customer_id)
+                    .unwrap()
+                    .len(),
+            ),
+            (
+                "address root",
+                store
+                    .senta_endpoint_address_root_map()
+                    .of_customer(customer_id)
+                    .unwrap()
+                    .len(),
+            ),
+            (
+                "customer",
+                usize::from(
+                    store
+                        .senta_endpoint_customer_map()
+                        .get(customer_id)
+                        .unwrap()
+                        .is_some(),
+                ),
+            ),
+        ])
+    }
+
+    /// Returns what [`endpoint_rows`] counts for a customer
+    /// [`put_endpoint_customer`] wrote with `endpoints` endpoints.
+    fn all_endpoint_rows(endpoints: usize) -> BTreeMap<&'static str, usize> {
+        BTreeMap::from([
+            ("endpoint", endpoints),
+            ("unenroll request", endpoints),
+            ("document result", endpoints),
+            ("command", endpoints),
+            ("status report", endpoints),
+            ("event", endpoints),
+            ("Giganto loss", endpoints),
+            ("Giganto last received", endpoints),
+            ("enrollment attempt", endpoints + 1),
+            ("keyset document", 1),
+            ("current document", 1),
+            ("address root", 1),
+            ("customer", 1),
+        ])
+    }
+
+    fn no_endpoint_rows() -> BTreeMap<&'static str, usize> {
+        all_endpoint_rows(0)
+            .into_keys()
+            .map(|table| (table, 0))
+            .collect()
+    }
+
+    /// Requests, through `deleteCustomerData`, the deletion of `customer_id`,
+    /// giving up `abandon_data_stores`, with `agent` and `endpoints`.
+    async fn request_through_graphql(
+        test_store: &TestStore,
+        manager: &Arc<CustomerDataDeletionTaskManager>,
+        agent: SharedAgentManager,
+        endpoints: SharedEndpointManager,
+        customer_id: u32,
+        abandon_data_stores: &[&str],
+    ) -> async_graphql::Response {
+        let abandon: Vec<String> = abandon_data_stores
+            .iter()
+            .map(|name| format!("{name:?}"))
+            .collect();
+        Schema::build(TestQuery, CustomerDataDeletionMutation, EmptySubscription)
+            .data(Arc::clone(&test_store.store))
+            .data(agent)
+            .data(endpoints)
+            .data(deployer(test_store))
+            .data(Arc::clone(manager))
+            .finish()
+            .execute(admin_request(&format!(
+                r#"mutation {{ deleteCustomerData(customerId: "{customer_id}", abandonDataStores: [{}]) }}"#,
+                abandon.join(", ")
+            )))
+            .await
+    }
+
+    fn accepted(response: &async_graphql::Response) {
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(response.data.to_string(), "{deleteCustomerData: ACCEPTED}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_endpoint_in_the_active_list_refuses_the_deletion_until_it_is_removed() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let (own, idle, other) = (
+            Uuid::from_u128(0x11),
+            Uuid::from_u128(0x12),
+            Uuid::from_u128(0x21),
+        );
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            let node = endpoint_node("ds.example", 1);
+            put_endpoint_customer(&store, 1, &[own, idle], &node);
+            put_endpoint_customer(&store, 2, &[other], &node);
+            put_active_list(&store, &[other, own]);
+        }
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent: SharedAgentManager =
+            Arc::new(RecordingAgentManager::with_store(&test_store.store));
+
+        let response =
+            request_through_graphql(&test_store, &manager, agent.clone(), endpoints(), 1, &[])
+                .await;
+        let (code, message) = refusal(&response);
+        assert_eq!(code, "\"ENDPOINTS_ACTIVE\"");
+        assert_eq!(
+            message,
+            format!(
+                "the active list holds an endpoint of customer 1: {own}; remove it from the \
+                 active list, then retry"
+            )
+        );
+        assert!(job_of(&test_store, 1).is_none());
+        assert!(manager.state.lock().await.active.is_none());
+
+        put_active_list(&read_store(&test_store.store).unwrap(), &[other]);
+        accepted(&request_through_graphql(&test_store, &manager, agent, endpoints(), 1, &[]).await);
+        finish_supervisor(&manager).await;
+        assert_eq!(job_of(&test_store, 1).unwrap().endpoint_ids, [own, idle]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_is_refused_while_an_endpoint_of_the_job_is_in_the_active_list() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        // The job lists an endpoint whose row is gone.
+        let listed = Uuid::from_u128(0x31);
+        let mut stopped = CustomerDataDeletionJob::new(
+            3,
+            vec![terminal_result(
+                CustomerDataDeletionService::Review,
+                "a.example",
+                CustomerDataDeletionStatus::Failed,
+            )],
+        );
+        stopped.endpoint_ids = vec![listed];
+        {
+            let store = read_store(&test_store.store).unwrap();
+            store.customer_data_deletion_map().put(&stopped).unwrap();
+            put_active_list(&store, &[listed]);
+        }
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent: SharedAgentManager =
+            Arc::new(RecordingAgentManager::with_store(&test_store.store));
+
+        let response =
+            request_through_graphql(&test_store, &manager, agent.clone(), endpoints(), 3, &[])
+                .await;
+        let (code, message) = refusal(&response);
+        assert_eq!(code, "\"ENDPOINTS_ACTIVE\"");
+        assert!(message.contains(&listed.to_string()), "{message}");
+        assert_eq!(job_of(&test_store, 3).unwrap(), stopped);
+        assert!(manager.state.lock().await.active.is_none());
+
+        read_store(&test_store.store)
+            .unwrap()
+            .senta_endpoint_active_list_map()
+            .delete()
+            .unwrap();
+        accepted(&request_through_graphql(&test_store, &manager, agent, endpoints(), 3, &[]).await);
+        finish_supervisor(&manager).await;
+        let done = job_of(&test_store, 3).unwrap();
+        assert_eq!(done.endpoint_ids, [listed]);
+        assert_eq!(
+            done.service_results.first().unwrap().status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn another_customers_endpoints_on_its_data_store_hold_the_customer() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_data_store(&test_store, 1, "store.example", 1, vec![sensor_agent()]);
+        put_data_store(&test_store, "second.example", 1);
+        let node = endpoint_node("store.example", 1);
+        let others = [Uuid::from_u128(0x21), Uuid::from_u128(0x22)];
+        let own = Uuid::from_u128(0x11);
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 1, &[own], &node);
+            put_endpoint_customer(&store, 2, &others, &node);
+            // An endpoint with no endpoint row names no user, nor does a row
+            // on a Data Store that is not the customer's.
+            put_last_received(&store, Uuid::from_u128(0x99), &node);
+            put_last_received(
+                &store,
+                Uuid::from_u128(0x23),
+                &endpoint_node("second.example", 1),
+            );
+        }
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+        let response = request_customer_1(&test_store, &manager).await;
+        let (code, message) = refusal(&response);
+        assert_eq!(code, "\"DATA_STORE_IN_USE\"");
+        assert_eq!(
+            message,
+            format!(
+                "Data Store {OWN_DATA_STORE} on store.example is used by 2 endpoints of customer \
+                 2. Point them at another Data Store — another customer's agents in their own \
+                 settings, the platform's system log collector with \
+                 `setSystemLogCollectorDataStore` — then retry. Nothing has been deleted yet, so \
+                 you may also move the node that holds the Data Store to another customer first."
+            )
+        );
+        assert!(job_of(&test_store, 1).is_none());
+
+        {
+            let store = read_store(&test_store.store).unwrap();
+            for endpoint_id in others {
+                store
+                    .senta_endpoint_giganto_last_received_map()
+                    .delete_endpoint(endpoint_id)
+                    .unwrap();
+            }
+        }
+        // Only the customer's own endpoint and an endpoint with no row are
+        // left on the Data Store.
+        assert!(
+            data_stores_in_use(&read_store(&test_store.store).unwrap(), 1)
+                .unwrap()
+                .is_empty()
+        );
+        let response = request_customer_1(&test_store, &manager).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        finish_supervisor(&manager).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[allow(clippy::too_many_lines)]
+    async fn an_endpoint_only_customer_is_deleted_in_every_data_store_and_the_review_stage() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let own = [Uuid::from_u128(0x72), Uuid::from_u128(0x71)];
+        let other = [Uuid::from_u128(0x81)];
+        let node = endpoint_node("ds1.example", 1);
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 7, &own, &node);
+            put_endpoint_customer(&store, 8, &other, &node);
+            put_active_list(&store, &other);
+        }
+        put_data_store(&test_store, "ds2.example", 2);
+        put_data_store(&test_store, "ds1.example", 1);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let shared: SharedAgentManager = agent.clone();
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        let shared_endpoints: SharedEndpointManager = notified.clone();
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+        assert_eq!(
+            request_deletion(
+                7,
+                &test_store.store,
+                &shared,
+                &shared_endpoints,
+                &deployer(&test_store),
+                &manager,
+                GiveUp::default(),
+                None
+            )
+            .await
+            .unwrap(),
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        let sorted_own = [Uuid::from_u128(0x71), Uuid::from_u128(0x72)];
+        let initial = job(&test_store.store, 7);
+        assert_eq!(initial.endpoint_ids, sorted_own);
+        assert_eq!(services(&initial), [CustomerDataDeletionService::Review]);
+        assert_eq!(initial.periodic_time_series_ids, Vec::<String>::new());
+        finish_supervisor(&manager).await;
+
+        assert!(agent.targets.lock().unwrap().is_empty());
+        {
+            let sent = agent.sent.lock().unwrap();
+            let names: Vec<_> = sent
+                .iter()
+                .map(|(target, _)| target.server_name().to_string())
+                .collect();
+            assert_eq!(
+                names,
+                ["001.giganto.ds1.example", "002.giganto.ds2.example"]
+            );
+            for (target, _) in sent.iter() {
+                assert_eq!(target.customer_id(), 7);
+                assert_eq!(target.endpoint_ids(), sorted_own);
+                assert_eq!(target.service_fqdns(), Vec::<String>::new());
+                assert_eq!(target.periodic_time_series_ids(), Vec::<String>::new());
+            }
+        }
+        let done = job(&test_store.store, 7);
+        assert!(
+            done.service_results
+                .iter()
+                .all(|result| result.status == CustomerDataDeletionStatus::Succeeded),
+            "{done:?}"
+        );
+        assert_eq!(done.endpoint_ids, sorted_own);
+        // REview was told once, after the rows were gone and before the
+        // Review result was recorded.
+        assert_eq!(
+            notified.deleted(),
+            [EndpointDataDeleted {
+                customer_id: 7,
+                endpoints_left: 0,
+                registration_left: false,
+                review: Some(CustomerDataDeletionStatus::InProgress),
+            }]
+        );
+        let store = read_store(&test_store.store).unwrap();
+        assert_eq!(endpoint_rows(&store, 7, &own), no_endpoint_rows());
+        assert_eq!(endpoint_rows(&store, 8, &other), all_endpoint_rows(1));
+        assert_eq!(endpoint_install_rows(&store), (true, 1));
+        assert_eq!(
+            store
+                .senta_endpoint_active_list_map()
+                .get()
+                .unwrap()
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_customer_with_only_an_endpoint_registration_is_deleted() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 9, &[], &endpoint_node("ds.example", 1));
+        }
+        put_data_store(&test_store, "ds.example", 1);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let shared: SharedAgentManager = agent.clone();
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        let shared_endpoints: SharedEndpointManager = notified.clone();
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            request_deletion(
+                9,
+                &test_store.store,
+                &shared,
+                &shared_endpoints,
+                &deployer(&test_store),
+                &manager,
+                GiveUp::default(),
+                None
+            )
+            .await
+            .unwrap(),
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        assert_eq!(job(&test_store.store, 9).endpoint_ids, Vec::<Uuid>::new());
+        finish_supervisor(&manager).await;
+
+        // With no host, no ID and no endpoint, no Data Store is asked.
+        assert!(agent.sent.lock().unwrap().is_empty());
+        assert_eq!(
+            job(&test_store.store, 9)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 9, &[]),
+            no_endpoint_rows()
+        );
+        assert_eq!(notified.deleted().len(), 1);
+    }
+
+    /// Requests the deletion of customer 7, giving up what `give_up` names,
+    /// through `agent` and `notified`, and waits for the supervisor.
+    async fn delete_endpoint_customer(
+        test_store: &TestStore,
+        agent: &Arc<RecordingAgentManager>,
+        notified: &Arc<RecordingEndpointManager>,
+        give_up: GiveUp,
+    ) -> CustomerDataDeletionRequestStatus {
+        let shared: SharedAgentManager = agent.clone();
+        let shared_endpoints: SharedEndpointManager = notified.clone();
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let status = request_deletion(
+            7,
+            &test_store.store,
+            &shared,
+            &shared_endpoints,
+            &deployer(test_store),
+            &manager,
+            give_up,
+            None,
+        )
+        .await
+        .unwrap();
+        finish_supervisor(&manager).await;
+        status
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_data_store_send_keeps_the_endpoint_rows_until_a_retry_completes() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let own = [Uuid::from_u128(0x71)];
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 7, &own, &endpoint_node("ds1.example", 1));
+        }
+        put_data_store(&test_store, "ds1.example", 1);
+        put_data_store(&test_store, "ds2.example", 2);
+        let first = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        *first.answers.lock().unwrap() = VecDeque::from([
+            Err("refused".to_string()),
+            Ok(DataStoreRequestAnswer::Accepted),
+        ]);
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        assert_eq!(
+            delete_endpoint_customer(&test_store, &first, &notified, GiveUp::default()).await,
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        let stopped = job(&test_store.store, 7);
+        let failed = data_store_result(&stopped, "001.giganto.ds1.example");
+        assert_eq!(failed.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(failed.error.as_deref(), Some("refused"));
+        assert_eq!(
+            data_store_result(&stopped, "002.giganto.ds2.example").status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let review = stopped.service_results.first().unwrap();
+        assert_eq!(review.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(
+            review.error.as_deref(),
+            Some("stopped before this part: refused")
+        );
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+            all_endpoint_rows(1)
+        );
+        assert_eq!(notified.deleted(), Vec::new());
+
+        let second = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        assert_eq!(
+            delete_endpoint_customer(&test_store, &second, &notified, GiveUp::default()).await,
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        {
+            let sent = second.sent.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            let target = &sent.first().unwrap().0;
+            assert_eq!(target.server_name(), "001.giganto.ds1.example");
+            assert_eq!(target.endpoint_ids(), own);
+        }
+        let done = job(&test_store.store, 7);
+        assert_eq!(done.endpoint_ids, own);
+        assert!(
+            done.service_results
+                .iter()
+                .all(|result| result.status == CustomerDataDeletionStatus::Succeeded),
+            "{done:?}"
+        );
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+            no_endpoint_rows()
+        );
+        assert_eq!(notified.deleted().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_given_up_data_store_still_lets_the_review_stage_delete_the_endpoint_rows() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let own = [Uuid::from_u128(0x71)];
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 7, &own, &endpoint_node("ds.example", 1));
+        }
+        put_data_store(&test_store, "ds.example", 1);
+        let first = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        *first.answers.lock().unwrap() = VecDeque::from([Err("unreachable".to_string())]);
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        delete_endpoint_customer(&test_store, &first, &notified, GiveUp::default()).await;
+        assert_eq!(
+            data_store_result(&job(&test_store.store, 7), DATA_STORE).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert_eq!(notified.deleted(), Vec::new());
+
+        let second = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        assert_eq!(
+            delete_endpoint_customer(
+                &test_store,
+                &second,
+                &notified,
+                GiveUp::new(Vec::new(), vec![DATA_STORE.to_string()])
+            )
+            .await,
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        assert!(second.sent.lock().unwrap().is_empty());
+        let done = job(&test_store.store, 7);
+        let given_up = data_store_result(&done, DATA_STORE);
+        assert_eq!(given_up.status, CustomerDataDeletionStatus::Succeeded);
+        assert!(
+            given_up
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with(ABANDONED_PREFIX)),
+            "{given_up:?}"
+        );
+        assert_eq!(
+            done.service_results.first().unwrap().status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+            no_endpoint_rows()
+        );
+        assert_eq!(notified.deleted().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_error_telling_review_does_not_fail_the_deletion() {
+        let errors: [fn() -> crate::backend::EndpointManagerError; 2] = [
+            || crate::backend::EndpointManagerError::NotSupported,
+            || crate::backend::EndpointManagerError::Other(anyhow!("REview is unreachable")),
+        ];
+        for error in errors {
+            let test_store = TestStore::new();
+            let _clock = ClockGuard::install(&test_store);
+            let own = [Uuid::from_u128(0x71)];
+            {
+                let store = read_store(&test_store.store).unwrap();
+                put_endpoint_install(&store);
+                put_endpoint_customer(&store, 7, &own, &endpoint_node("ds.example", 1));
+            }
+            let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+            let notified = Arc::new(RecordingEndpointManager {
+                error: Some(error),
+                ..RecordingEndpointManager::with_store(&test_store.store)
+            });
+            delete_endpoint_customer(&test_store, &agent, &notified, GiveUp::default()).await;
+            let done = job(&test_store.store, 7);
+            let review = done.service_results.first().unwrap();
+            assert_eq!(review.status, CustomerDataDeletionStatus::Succeeded);
+            assert_eq!(review.error, None);
+            assert_eq!(notified.deleted().len(), 1);
+            assert_eq!(
+                endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+                no_endpoint_rows()
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_resumed_review_stage_deletes_what_is_left_and_tells_review_again() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let own = [Uuid::from_u128(0x71), Uuid::from_u128(0x72)];
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 7, &own, &endpoint_node("ds.example", 1));
+            let mut running = CustomerDataDeletionJob::new(
+                7,
+                vec![pending_result(CustomerDataDeletionService::Review, &[])],
+            );
+            running.endpoint_ids = own.to_vec();
+            store.customer_data_deletion_map().put(&running).unwrap();
+            // A Review stage stopped by a restart after deleting one endpoint
+            // and its rows, but none of the customer's other rows.
+            let gone = own.first().copied().unwrap();
+            store
+                .senta_endpoint_giganto_loss_map()
+                .delete_endpoint(gone)
+                .unwrap();
+            store.senta_endpoint_map().delete(gone).unwrap();
+        }
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let recovered =
+            recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
+        recovered
+            .start(
+                deployer(&test_store),
+                Arc::new(RecordingAgentManager::with_store(&test_store.store)),
+                notified.clone(),
+                Arc::clone(&manager),
+            )
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        assert_eq!(
+            job(&test_store.store, 7)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+            no_endpoint_rows()
+        );
+        assert_eq!(notified.deleted().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_endpoint_deletion_fails_the_review_stage_without_telling_review() {
+        let test_store = TestStore::new();
+        let own = [Uuid::from_u128(0x71)];
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            put_endpoint_customer(&store, 7, &own, &endpoint_node("ds.example", 1));
+        }
+        put_job(
+            &test_store.store,
+            7,
+            vec![pending_result(CustomerDataDeletionService::Review, &[])],
+        );
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(|stage, _| {
+                if stage == Stage::Endpoints {
+                    bail!("injected RocksDB boundary error");
+                }
+                Ok(())
+            }),
+        );
+        let targets = restore_review_targets(&test_store.store, 7, &[]).unwrap();
+        let notified = Arc::new(RecordingEndpointManager::with_store(&test_store.store));
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            notified.clone(),
+            7,
+            targets,
+        )
+        .await;
+        let failed = review_of(&job(&test_store.store, 7)).clone();
+        assert_eq!(failed.status, CustomerDataDeletionStatus::Failed);
+        let error = failed.error.unwrap();
+        assert!(
+            error.contains("deleting the endpoint rows of customer 7"),
+            "{error}"
+        );
+        assert!(error.contains("injected RocksDB boundary error"), "{error}");
+        assert_eq!(
+            endpoint_rows(&read_store(&test_store.store).unwrap(), 7, &own),
+            all_endpoint_rows(1)
+        );
+        assert_eq!(notified.deleted(), Vec::new());
     }
 }
