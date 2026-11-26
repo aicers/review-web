@@ -1192,6 +1192,1365 @@ enum CustomerDataDeletionStatus {
 }
 
 """
+Whether a device is seen.
+"""
+enum DaiActivity {
+	"""
+	Seen within the last 90 days, or not expired yet.
+	"""
+	ACTIVE
+	"""
+	Not seen for 90 days; set by retention only.
+	"""
+	NOT_SEEN
+	"""
+	Hidden by an operator.
+	"""
+	HIDDEN
+}
+
+type DaiAfterComparedTime {
+	"""
+	The sensor whose value set the compared time.
+	"""
+	sensor: String!
+	"""
+	Which value of the sensor it was.
+	"""
+	value: DaiComparedValue!
+	"""
+	The observation kind of a cursor or an earliest pending slot; null
+	for the other values.
+	"""
+	kind: DaiObservationKind
+	"""
+	The compared time.
+	"""
+	time: DateTime!
+}
+
+"""
+Why a device id became an alias of another.
+"""
+enum DaiAliasReason {
+	"""
+	The device was merged into the current one.
+	"""
+	MERGED
+	"""
+	An import replaced the device by the current one.
+	"""
+	IMPORTED
+}
+
+type DaiBindingSpan {
+	site: String!
+	ip: String!
+	start: DateTime!
+	"""
+	The effective end; null while the binding is open.
+	"""
+	end: DateTime
+	"""
+	Whether `end` is an estimate rather than a stored close.
+	"""
+	endEstimated: Boolean!
+}
+
+type DaiCatchupGap {
+	sensor: String!
+	kind: DaiObservationKind!
+	start: DateTime!
+	"""
+	The end, exclusive.
+	"""
+	end: DateTime!
+}
+
+"""
+The kind of a device change.
+"""
+enum DaiChangeKind {
+	CREATED
+	CHANGED
+	MERGED
+	SPLIT
+}
+
+"""
+The operation of a changed field.
+"""
+enum DaiChangeOp {
+	SET
+	ADD
+	REMOVE
+}
+
+"""
+What made a device change.
+"""
+enum DaiChangeSource {
+	"""
+	An observation, of `observationKind`.
+	"""
+	OBSERVATION
+	"""
+	An operator import.
+	"""
+	IMPORT
+	"""
+	Another operator operation.
+	"""
+	OPERATOR
+	"""
+	Retention.
+	"""
+	EXPIRY
+}
+
+type DaiCollectionStatus {
+	"""
+	Each stored site, in token order.
+	"""
+	sites: [DaiSiteCollection!]!
+	"""
+	Each sensor of the customer, in name order.
+	"""
+	sensors: [DaiSensorCollection!]!
+	"""
+	The catch-up gaps of the customer's sensors still stored, ordered by
+	sensor, kind and start.
+	"""
+	catchupGaps: [DaiCatchupGap!]!
+	"""
+	The slots skipped by the catch-up limit, per date.
+	"""
+	skippedByCatchup: [DaiDateCount!]!
+	"""
+	The relay DHCP observations whose site could not be determined, per
+	date.
+	"""
+	relaySiteUnknown: [DaiDateCount!]!
+	"""
+	The observations filtered at receipt, per date.
+	"""
+	filteredAtReceipt: [DaiDateCount!]!
+	"""
+	The observations deleted before they were applied, per date.
+	"""
+	notApplied: [DaiDateCount!]!
+	"""
+	The number of candidate unregistered ranges.
+	"""
+	candidateRanges: StringNumber!
+}
+
+"""
+The value of a sensor that set its site's compared time.
+"""
+enum DaiComparedValue {
+	"""
+	The cursor of the sensor's pair of `kind`.
+	"""
+	CURSOR
+	"""
+	The earliest pending slot start of the sensor's pair of `kind`.
+	"""
+	EARLIEST_PENDING
+	"""
+	The sensor's last received record time.
+	"""
+	LAST_RECORD_TIME
+	"""
+	The sensor's resolver point.
+	"""
+	RESOLVER_POINT
+}
+
+type DaiCurrentIp {
+	site: String!
+	ip: String!
+	"""
+	The start of the binding in effect now.
+	"""
+	start: DateTime!
+}
+
+type DaiCursorLag {
+	kind: DaiObservationKind!
+	"""
+	The slot boundary up to which every slot of the kind is stored.
+	"""
+	cursor: DateTime!
+	"""
+	Now minus the cursor, in whole seconds.
+	"""
+	lagSecs: StringNumber!
+}
+
+type DaiCustomerSettings {
+	"""
+	The ID of the customer.
+	"""
+	customerId: ID!
+	"""
+	Whether device account identification is enabled.
+	"""
+	deviceAccountIdentification: Boolean!
+	"""
+	When device account identification was last turned on; null if it
+	never was.
+	"""
+	lastEnabledTime: DateTime
+	"""
+	The multiple of a lease time after which a device with a lease is
+	inactive.
+	"""
+	inactivityMultiplier: Int!
+	"""
+	The time, in seconds, after which a device without a lease is
+	inactive.
+	"""
+	noLeaseInactivitySecs: StringNumber!
+	"""
+	The time, in seconds, after which evidence ages out.
+	"""
+	evidenceAgingSecs: StringNumber!
+	"""
+	The Kerberos realms confirmed to enforce pre-authentication, in the
+	order given.
+	"""
+	kerberosPreauthRealms: [String!]!
+	"""
+	The settings revision, incremented by every settings write.
+	"""
+	revision: StringNumber!
+	"""
+	The relay site table revision, incremented by every replacement of
+	the table.
+	"""
+	relayRevision: StringNumber!
+}
+
+"""
+The settable device identification settings of a customer.
+"""
+input DaiCustomerSettingsInput {
+	"""
+	Whether device account identification is enabled.
+	"""
+	deviceAccountIdentification: Boolean!
+	"""
+	The multiple of a lease time after which a device with a lease is
+	inactive; at least 1.
+	"""
+	inactivityMultiplier: Int!
+	"""
+	The time, in seconds, after which a device without a lease is
+	inactive; at least 1.
+	"""
+	noLeaseInactivitySecs: StringNumber!
+	"""
+	The time, in seconds, after which evidence ages out; at least 1.
+	"""
+	evidenceAgingSecs: StringNumber!
+	"""
+	The Kerberos realms confirmed to enforce pre-authentication; each
+	non-empty.
+	"""
+	kerberosPreauthRealms: [String!]!
+}
+
+"""
+A count of a UTC date.
+"""
+type DaiDateCount {
+	"""
+	The UTC date, as `YYYY-MM-DD`.
+	"""
+	date: String!
+	count: StringNumber!
+}
+
+type DaiDecidingBinding {
+	"""
+	The current id of the binding's device.
+	"""
+	deviceId: ID!
+	start: DateTime!
+	"""
+	The effective end; null while the binding is open.
+	"""
+	end: DateTime
+	"""
+	Whether `end` is an estimate, the last strong evidence time plus the
+	inactivity time, rather than a stored close.
+	"""
+	endEstimated: Boolean!
+	"""
+	The kind of the observation that started the binding.
+	"""
+	evidenceKind: DaiObservationKind
+	"""
+	Up to 10 evidence rows at the address last seen within the binding
+	and at or before the time (within the window), newest first.
+	"""
+	evidence: [DaiEvidenceRef!]!
+}
+
+type DaiDevice {
+	deviceId: ID!
+	verdict: DaiVerdict!
+	activity: DaiActivity!
+	representativeName: String
+	"""
+	Null for a device no observation has applied to.
+	"""
+	firstSeen: DateTime
+	"""
+	Null for a device no observation has applied to.
+	"""
+	lastSeen: DateTime
+	"""
+	The bindings in effect now, ordered by site, IP and start.
+	"""
+	currentIps: [DaiCurrentIp!]!
+	"""
+	The binding with the latest start, for a device with no current IP
+	that has a binding.
+	"""
+	latestBinding: DaiBindingSpan
+}
+
+type DaiDeviceAlias {
+	"""
+	The old id.
+	"""
+	deviceId: ID!
+	"""
+	When it became an alias.
+	"""
+	time: DateTime!
+	reason: DaiAliasReason!
+}
+
+type DaiDeviceBinding {
+	site: String!
+	ip: String!
+	start: DateTime!
+	"""
+	The effective end; null while the binding is open.
+	"""
+	end: DateTime
+	"""
+	Whether `end` is an estimate rather than a stored close.
+	"""
+	endEstimated: Boolean!
+	"""
+	The kind of the observation that started the binding.
+	"""
+	evidenceKind: DaiObservationKind
+}
+
+type DaiDeviceChange {
+	"""
+	The device version the change made.
+	"""
+	version: StringNumber!
+	kind: DaiChangeKind!
+	"""
+	The other device of a merge or a split, as its current id.
+	"""
+	relatedDeviceId: ID
+	"""
+	The fields the change changed.
+	"""
+	fields: [DaiFieldChange!]!
+	time: DateTime!
+	"""
+	What made the change.
+	"""
+	source: DaiChangeSource!
+	"""
+	The observation kind of a change an observation made.
+	"""
+	observationKind: DaiObservationKind
+}
+
+type DaiDeviceConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DaiDeviceEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [DaiDevice!]!
+	"""
+	The number of rows that match the filter, on every page.
+	"""
+	totalCount: StringNumber!
+}
+
+type DaiDeviceDetail {
+	"""
+	The id asked for.
+	"""
+	requestedId: ID!
+	"""
+	The current device id.
+	"""
+	deviceId: ID!
+	"""
+	Whether the id asked for is an old id followed through its alias.
+	"""
+	aliasFollowed: Boolean!
+	"""
+	The strong identifiers the device holds, machine accounts included,
+	in the order they were added.
+	"""
+	identifiers: [DaiDeviceIdentifier!]!
+	names: [DaiDeviceName!]!
+	representativeName: String
+	"""
+	Whether the device was seen serving DHCP.
+	"""
+	wasDhcpServer: Boolean!
+	verdict: DaiVerdict!
+	activity: DaiActivity!
+	origin: DaiOrigin!
+	"""
+	The operator asset id.
+	"""
+	assetId: String
+	"""
+	The operator memo; empty for none.
+	"""
+	memo: String!
+	"""
+	The device version, incremented by every substantive change.
+	"""
+	version: StringNumber!
+	"""
+	Null for a device no observation has applied to.
+	"""
+	firstSeen: DateTime
+	"""
+	Null for a device no observation has applied to.
+	"""
+	lastSeen: DateTime
+	"""
+	The addresses an operator fixed to the device.
+	"""
+	fixedIps: [DaiSiteIp!]!
+	"""
+	Every binding of the device, newest start first.
+	"""
+	ipHistory: [DaiDeviceBinding!]!
+	"""
+	The services, ordered by port and protocol.
+	"""
+	services: [DaiService!]!
+	software: [DaiSoftware!]!
+	"""
+	The change history, in version order.
+	"""
+	changes: [DaiDeviceChange!]!
+	"""
+	The old ids aliased to the device, ordered by time and then id.
+	"""
+	aliases: [DaiDeviceAlias!]!
+}
+
+"""
+An edge in a connection.
+"""
+type DaiDeviceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: DaiDevice!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+The filter of the device list; each field absent matches every device.
+"""
+input DaiDeviceFilterInput {
+	"""
+	The site tokens.
+	"""
+	sites: [String!]
+	verdicts: [DaiVerdict!]
+	activities: [DaiActivity!]
+	"""
+	An IP network, such as `10.0.0.0/24`.
+	"""
+	network: String
+	"""
+	Matches a device whose first-to-last seen range overlaps it; a device
+	never observed never matches it.
+	"""
+	seen: DaiTimeRangeInput
+}
+
+type DaiDeviceIdentifier {
+	kind: DaiIdentifierKind!
+	"""
+	The value, in the form its kind describes.
+	"""
+	value: String!
+	"""
+	When the identifier was last confirmed.
+	"""
+	lastConfirmed: DateTime
+}
+
+type DaiDeviceName {
+	value: String!
+	source: DaiNameSource!
+	lastSeen: DateTime!
+}
+
+type DaiEvidenceRef {
+	kind: DaiObservationKind!
+	time: DateTime!
+	sensor: String!
+}
+
+"""
+What decided a resolve answer: the kind of the observation that started
+a binding, or the device an operator fixed at the address.
+"""
+enum DaiEvidenceSource {
+	DHCP_LEASE
+	DHCP_SERVER
+	KERBEROS
+	NTLM
+	SERVICE
+	SOFTWARE_STRING
+	DNS_NAME
+	IP_ACTIVITY
+	"""
+	The device an operator fixed at the address.
+	"""
+	OPERATOR_FIXED_IP
+}
+
+type DaiExplanation {
+	"""
+	The bindings that decided the answer, in start order.
+	"""
+	bindings: [DaiDecidingBinding!]!
+	"""
+	The causes of an evidence gap; empty if there is none.
+	"""
+	gapCauses: [DaiGapCause!]!
+}
+
+type DaiFieldChange {
+	"""
+	The field.
+	"""
+	path: String!
+	op: DaiChangeOp!
+	"""
+	The value before, as JSON text; `null` for none.
+	"""
+	before: String!
+	"""
+	The value after, as JSON text; `null` for none.
+	"""
+	after: String!
+}
+
+"""
+A fixed IP of an import row.
+"""
+input DaiFixedIpInput {
+	"""
+	The site token; null for the customer's one site in use, which a
+	multi-site customer does not have.
+	"""
+	site: String
+	"""
+	The IP address.
+	"""
+	ip: String!
+}
+
+"""
+A cause of an evidence gap.
+"""
+union DaiGapCause = DaiAfterComparedTime | DaiSkippedByCatchup
+
+"""
+A strong identifier of a device to move.
+"""
+input DaiIdentifierInput {
+	kind: DaiIdentifierKind!
+	"""
+	The value, in the form `daiDevice` lists it.
+	"""
+	value: String!
+}
+
+"""
+The kind of a strong identifier of a device.
+"""
+enum DaiIdentifierKind {
+	"""
+	A MAC address, as lowercase colon-separated hex.
+	"""
+	MAC
+	"""
+	An operator asset id, as imported.
+	"""
+	OPERATOR_ASSET_ID
+	"""
+	A machine account, as `<CNAME>@<REALM>` ASCII-uppercased.
+	"""
+	MACHINE_ACCOUNT
+}
+
+type DaiIgnoredRange {
+	"""
+	The range, as a network address.
+	"""
+	range: String!
+	"""
+	When it was ignored.
+	"""
+	ignoredAt: DateTime!
+	"""
+	The name of the account that ignored it.
+	"""
+	account: String!
+}
+
+type DaiImportError {
+	reason: DaiImportErrorReason!
+	"""
+	The cause, in words.
+	"""
+	message: String!
+	"""
+	The devices the refusal names: the devices to merge first, the device
+	holding the row's MACs with another asset id, or the device a fixed
+	IP is fixed to.
+	"""
+	deviceIds: [ID!]!
+}
+
+"""
+Why an import row was refused.
+"""
+enum DaiImportErrorReason {
+	"""
+	The asset id is empty.
+	"""
+	EMPTY_ASSET_ID
+	"""
+	An earlier row of the request has the asset id.
+	"""
+	DUPLICATE_ASSET_ID
+	"""
+	A MAC does not parse, or is all `00`, all `FF` or a group address.
+	"""
+	INVALID_MAC
+	"""
+	A fixed IP does not parse.
+	"""
+	INVALID_IP
+	"""
+	A fixed IP names a token that is not one of the customer's sites.
+	"""
+	UNKNOWN_SITE
+	"""
+	A fixed IP has no site token and the customer is multi-site.
+	"""
+	SITE_REQUIRED
+	"""
+	The row's asset id and MACs name two or more devices; merge them
+	first.
+	"""
+	MERGE_FIRST
+	"""
+	The row's asset id is new, but its MACs belong to a device with
+	another asset id.
+	"""
+	ASSET_ID_MISMATCH
+	"""
+	A fixed IP of the row is fixed to another device.
+	"""
+	FIXED_IP_HELD
+}
+
+"""
+The outcome of one import row.
+"""
+enum DaiImportOutcome {
+	"""
+	A new device was created for the row.
+	"""
+	CREATED
+	"""
+	The device holding the row's asset id was updated, or was already as
+	the row says.
+	"""
+	UPDATED
+	"""
+	The row's asset id was attached to the device holding its MACs.
+	"""
+	ATTACHED
+	"""
+	The row was refused and wrote nothing.
+	"""
+	ERROR
+}
+
+type DaiImportResult {
+	outcome: DaiImportOutcome!
+	"""
+	The device the row created, updated or attached to; null for an
+	error.
+	"""
+	deviceId: ID
+	"""
+	Why the row was refused; null unless the outcome is `ERROR`.
+	"""
+	error: DaiImportError
+}
+
+"""
+A row of an operator device import.
+"""
+input DaiImportRowInput {
+	"""
+	The operator asset id; required, and unique within the customer.
+	"""
+	assetId: String!
+	"""
+	The operator name; null or empty for none.
+	"""
+	name: String
+	"""
+	The MAC addresses, as `aa:bb:cc:dd:ee:ff`, `aa-bb-cc-dd-ee-ff` or
+	`aabb.ccdd.eeff`, in any case.
+	"""
+	macs: [String!]!
+	"""
+	The fixed IPs.
+	"""
+	fixedIps: [DaiFixedIpInput!]!
+	"""
+	The note; null or empty for none.
+	"""
+	note: String
+}
+
+type DaiIpDevice {
+	site: String!
+	ip: String!
+	firstSeen: DateTime!
+	lastSeen: DateTime!
+}
+
+type DaiIpDeviceConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DaiIpDeviceEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [DaiIpDevice!]!
+	"""
+	The number of rows that match the filter, on every page.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type DaiIpDeviceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: DaiIpDevice!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+The filter of the IP device rows; each field absent matches every row.
+"""
+input DaiIpDeviceFilterInput {
+	"""
+	The site tokens.
+	"""
+	sites: [String!]
+	"""
+	An IP network, such as `10.0.0.0/24`.
+	"""
+	network: String
+	"""
+	Matches a row whose first-to-last seen range overlaps it.
+	"""
+	seen: DaiTimeRangeInput
+}
+
+type DaiKindReceipt {
+	kind: DaiObservationKind!
+	"""
+	The latest time a send carrying observations of the kind finished for
+	one of the site's sensors; null if none ever did.
+	"""
+	time: DateTime
+	"""
+	The sensor of that send.
+	"""
+	sensor: String
+}
+
+"""
+The source of a name of a device.
+"""
+enum DaiNameSource {
+	"""
+	A DNS name resolved to the device's address.
+	"""
+	DNS
+	"""
+	A DHCP hostname.
+	"""
+	DHCP
+	"""
+	A name an operator set.
+	"""
+	OPERATOR
+}
+
+"""
+The kind of a DAI observation.
+"""
+enum DaiObservationKind {
+	DHCP_LEASE
+	DHCP_SERVER
+	KERBEROS
+	NTLM
+	SERVICE
+	SOFTWARE_STRING
+	DNS_NAME
+	IP_ACTIVITY
+}
+
+"""
+How a device came to be.
+"""
+enum DaiOrigin {
+	"""
+	Created by an observation.
+	"""
+	OBSERVATION
+	"""
+	Created by an operator import.
+	"""
+	IMPORT
+}
+
+type DaiRangeCandidate {
+	"""
+	The range, as a network address.
+	"""
+	range: String!
+	"""
+	The largest number of distinct addresses one sensor saw in the range
+	on one date of the window.
+	"""
+	seenAddrs: StringNumber!
+	"""
+	Whether `seenAddrs` is a lower bound.
+	"""
+	seenAddrsAtLeast: Boolean!
+	"""
+	The number of values of the range per evidence; every evidence is
+	listed.
+	"""
+	values: [DaiRangeEvidenceCount!]!
+	"""
+	The first UTC date of the window with a value, as `YYYY-MM-DD`.
+	"""
+	firstDate: String!
+	"""
+	The last UTC date of the window with a value, as `YYYY-MM-DD`.
+	"""
+	lastDate: String!
+	"""
+	The tokens of the sites the contributing sensors were in, sorted.
+	"""
+	sites: [String!]!
+	"""
+	Whether the range lies within `100.64.0.0/10`.
+	"""
+	cgnat: Boolean!
+}
+
+"""
+The evidence a range count comes from.
+"""
+enum DaiRangeEvidence {
+	"""
+	The sensor's own records.
+	"""
+	SENSOR
+}
+
+"""
+The number of values of a candidate range from one evidence.
+"""
+type DaiRangeEvidenceCount {
+	evidence: DaiRangeEvidence!
+	"""
+	The number of (sensor, date) values of the range in the window.
+	"""
+	count: StringNumber!
+}
+
+type DaiRelaySite {
+	"""
+	The DHCP server the relay forwards to.
+	"""
+	dhcpServer: String!
+	"""
+	The relay agent address.
+	"""
+	giaddr: String!
+	"""
+	The token of the site.
+	"""
+	site: String!
+}
+
+"""
+An entry of a relay site table to store.
+"""
+input DaiRelaySiteInput {
+	"""
+	The DHCP server the relay forwards to.
+	"""
+	dhcpServer: String!
+	"""
+	The relay agent address; never `0.0.0.0` or `::`.
+	"""
+	giaddr: String!
+	"""
+	The token of one of the customer's sites.
+	"""
+	site: String!
+}
+
+type DaiRelaySites {
+	"""
+	The relay site table revision.
+	"""
+	revision: StringNumber!
+	"""
+	The entries, ordered by DHCP server IP and then `giaddr`, IPv4 before
+	IPv6.
+	"""
+	entries: [DaiRelaySite!]!
+}
+
+type DaiResolveAnswer {
+	"""
+	The kind of the answer.
+	"""
+	kind: DaiSubjectKind!
+	"""
+	The subject id the evidence so far gives, also for an evidence gap:
+	`dev:<device id>` when it selects exactly one device, the current id
+	after merges; otherwise `ip:<site token>/<IP>` for a multi-site
+	customer with device account identification on and the IP in one of
+	its Intranet or Gateway networks, else `ip:<IP>`.
+	"""
+	subjectId: String!
+	"""
+	The token of the site the item was resolved at.
+	"""
+	site: String!
+	"""
+	The current ids of the devices the evidence gives, in id order.
+	"""
+	deviceIds: [ID!]!
+	"""
+	The distinct sources of the bindings and the fixed IP that decided
+	the answer; empty for an IP subject.
+	"""
+	evidenceSources: [DaiEvidenceSource!]!
+	"""
+	The explanation; null unless `withExplanation` was set.
+	"""
+	explanation: DaiExplanation
+}
+
+type DaiResolveItemError {
+	"""
+	Why the item has no answer.
+	"""
+	code: DaiResolveItemErrorCode!
+	"""
+	The cause, in words.
+	"""
+	message: String!
+}
+
+"""
+Why one resolve item has no answer.
+"""
+enum DaiResolveItemErrorCode {
+	"""
+	The site token is not one of the customer's sites.
+	"""
+	UNKNOWN_SITE
+	"""
+	The item has no site token and the customer is multi-site.
+	"""
+	SITE_REQUIRED
+	"""
+	The item has no site token and the customer has no site at all.
+	"""
+	NO_SITE
+	"""
+	The window's `from` is after its `to`.
+	"""
+	INVERTED_WINDOW
+	"""
+	The IP address does not parse.
+	"""
+	INVALID_IP
+	"""
+	The item gives neither `at` nor a window, or both, or only one end of
+	the window, or a time outside the years 1677 to 2262.
+	"""
+	INVALID_TIME
+}
+
+"""
+One item to resolve: an IP address at a site, at a time or over a closed
+window.
+"""
+input DaiResolveItemInput {
+	"""
+	The site token; null for the customer's one site in use, which only a
+	customer that is not multi-site has.
+	"""
+	site: String
+	"""
+	The IP address.
+	"""
+	ip: String!
+	"""
+	The time; given alone, without `from` and `to`.
+	"""
+	at: DateTime
+	"""
+	The start of the window; given with `to` and without `at`.
+	"""
+	from: DateTime
+	"""
+	The end of the window, inclusive; given with `from` and without
+	`at`.
+	"""
+	to: DateTime
+}
+
+"""
+The outcome of one resolve item.
+"""
+union DaiResolveOutcome = DaiResolveAnswer | DaiResolveItemError
+
+"""
+A device a search matched.
+"""
+type DaiSearchDevice {
+	"""
+	The current device id.
+	"""
+	deviceId: ID!
+}
+
+type DaiSearchIpDevice {
+	site: String!
+	ip: String!
+	lastSeen: DateTime!
+}
+
+type DaiSearchMatch {
+	"""
+	What the text matched.
+	"""
+	matched: DaiSearchMatchKind!
+	"""
+	The device or the IP device row the match names.
+	"""
+	target: DaiSearchTarget!
+}
+
+"""
+What a search text matched.
+"""
+enum DaiSearchMatchKind {
+	"""
+	An IP address.
+	"""
+	IP
+	"""
+	A MAC address.
+	"""
+	MAC
+	"""
+	An operator asset id.
+	"""
+	ASSET_ID
+	"""
+	A current device id.
+	"""
+	DEVICE_ID
+	"""
+	An old device id.
+	"""
+	OLD_DEVICE_ID
+	"""
+	A substring of a device name.
+	"""
+	NAME
+}
+
+type DaiSearchResult {
+	"""
+	At most 100 matches.
+	"""
+	matches: [DaiSearchMatch!]!
+	"""
+	Whether more matches were found than returned.
+	"""
+	truncated: Boolean!
+}
+
+"""
+What a search match names.
+"""
+union DaiSearchTarget = DaiSearchDevice | DaiSearchIpDevice
+
+type DaiSensorCollection {
+	sensor: String!
+	"""
+	The sensor's current site; null if the customer has no default site.
+	"""
+	site: String
+	"""
+	The time of the last record received from the sensor.
+	"""
+	lastRecordTime: DateTime
+	"""
+	The cursor of each kind with one, in kind order.
+	"""
+	cursors: [DaiCursorLag!]!
+}
+
+"""
+A sensor and an observation kind.
+"""
+type DaiSensorKind {
+	sensor: String!
+	kind: DaiObservationKind!
+}
+
+type DaiService {
+	port: Int!
+	"""
+	The IP protocol number.
+	"""
+	protocol: Int!
+	"""
+	Whether the service was seen used by a client outside the customer's
+	networks.
+	"""
+	externalClient: Boolean!
+	firstSeen: DateTime!
+	lastSeen: DateTime!
+	"""
+	Whether an operator removed it.
+	"""
+	removed: Boolean!
+	"""
+	Whether it was last seen more than 30 days ago.
+	"""
+	notSeen: Boolean!
+}
+
+"""
+The side of a software string.
+"""
+enum DaiSide {
+	CLIENT
+	SERVER
+}
+
+type DaiSite {
+	"""
+	The 8 characters of `[a-z0-9]` assigned to the site at its creation;
+	null for a default site that is not stored yet.
+	"""
+	token: String
+	"""
+	The display name; empty for the default site only.
+	"""
+	name: String!
+	"""
+	Whether this is the customer's default site.
+	"""
+	isDefault: Boolean!
+	"""
+	The names of the sensors in the site. The default site has the
+	customer's sensors that no other site lists.
+	"""
+	sensors: [String!]!
+}
+
+type DaiSiteCollection {
+	"""
+	The site token.
+	"""
+	site: String!
+	"""
+	The latest receipt of each of DHCP, Kerberos and NTLM, in that order.
+	"""
+	receipts: [DaiKindReceipt!]!
+	"""
+	The site's sensors left out of the evidence gap because they
+	received no record in the last 24 hours, in name order.
+	"""
+	quietSensors: [String!]!
+	"""
+	The sensor and kind pairs of the site left out of the evidence gap
+	because their first send has not finished.
+	"""
+	unsentPairs: [DaiSensorKind!]!
+}
+
+"""
+An IP address at a site.
+"""
+type DaiSiteIp {
+	"""
+	The site token.
+	"""
+	site: String!
+	ip: String!
+}
+
+type DaiSkippedByCatchup {
+	sensor: String!
+	kind: DaiObservationKind!
+	start: DateTime!
+	"""
+	The end of the skipped range, exclusive.
+	"""
+	end: DateTime!
+}
+
+type DaiSoftware {
+	side: DaiSide!
+	source: DaiSoftwareSource!
+	text: String!
+	firstSeen: DateTime!
+	lastSeen: DateTime!
+}
+
+"""
+Where a software string came from.
+"""
+enum DaiSoftwareSource {
+	"""
+	An SSH version string.
+	"""
+	SSH
+	"""
+	An HTTP `User-Agent` header.
+	"""
+	HTTP_USER_AGENT
+	"""
+	A TLS certificate subject.
+	"""
+	TLS_CERT_SUBJECT
+}
+
+"""
+The kind of a resolve answer.
+"""
+enum DaiSubjectKind {
+	"""
+	One device.
+	"""
+	DEVICE
+	"""
+	No device: the IP address itself.
+	"""
+	IP_SUBJECT
+	"""
+	Two or more devices over the window.
+	"""
+	AMBIGUOUS
+	"""
+	The evidence for the site does not reach the time yet, or the time
+	lies in a range skipped by the catch-up limit.
+	"""
+	EVIDENCE_GAP
+}
+
+"""
+A closed time range, both ends included.
+"""
+input DaiTimeRangeInput {
+	from: DateTime!
+	to: DateTime!
+}
+
+"""
+The operator's verdict on a device.
+"""
+enum DaiVerdict {
+	"""
+	Seen by observation only.
+	"""
+	OBSERVED
+	"""
+	Confirmed by an operator.
+	"""
+	CONFIRMED
+	"""
+	Ignored by an operator.
+	"""
+	IGNORED
+}
+
+"""
 The endpoint at which `REview` reaches one installed Data Store (Giganto)
 instance.
 """
@@ -3886,6 +5245,11 @@ type Mutation {
 	fix it with `fixTimeSeriesGenerationPolicy`, or with
 	`assignTimeSeriesGenerationPolicy(fix: true)`.
 	
+	A policy whose sensors are in two device identification sites of the
+	customer, under the site assignment in effect or one already
+	scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+	`sites` extension lists each site as `{ site, sensors }`.
+	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	`customerId` is unfinished, also while it is stopped.
 	"""
@@ -3904,6 +5268,11 @@ type Mutation {
 	The caller is checked as `insertTimeSeriesGenerationPolicy` checks it,
 	every entry of `sensors` must be a sensor name of the customer, and
 	the policy is then checked as review-database checks any insert.
+	
+	A policy whose sensors are in two device identification sites of the
+	customer, under the site assignment in effect or one already
+	scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+	`sites` extension lists each site as `{ site, sensors }`.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	`customerId` is unfinished, also while it is stopped.
@@ -3939,6 +5308,11 @@ type Mutation {
 	from, and a draft made from a type is refused if its new spec is not
 	the type's. A caller scoped to customers may update only a policy of
 	a customer in scope.
+	
+	A draft whose sensors are in two device identification sites of the
+	customer, under the site assignment in effect or one already
+	scheduled, is refused with the error code `SENSORS_SPAN_SITES`, whose
+	`sites` extension lists each site as `{ site, sensors }`.
 	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the policy's customer is unfinished, also while it is stopped.
@@ -4435,6 +5809,172 @@ type Mutation {
 	outside the result union.
 	"""
 	updateSystemLogCollector(host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateSystemLogCollectorResult!
+	"""
+	Replaces every settable device identification setting of the customer
+	with `input`, given the stored settings `revision`, and returns the
+	stored settings with the new revision.
+	
+	The customer is left with a stored default site. Turning
+	`deviceAccountIdentification` on records the time of the write as the
+	last-enabled time; turning it off keeps it. A multiplier or a time of
+	0, or an empty realm name, is refused. A `revision` other than the
+	stored one is refused with the error code `STALE_REVISION`, whose
+	`storedRevision` extension holds the stored revision.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	updateDaiCustomerSettings(customerId: ID!, revision: StringNumber!, input: DaiCustomerSettingsInput!): DaiCustomerSettings!
+	"""
+	Creates a site of the customer named `name` listing `sensors`, and
+	returns it.
+	
+	The customer's default site is created first if it has none. The
+	name is non-empty, unique within the customer, and contains none of
+	`|`, `;`, `,` and `"`. Each listed sensor must be a sensor of the
+	customer that no other site lists, and moves out of the default site
+	from the next 5-minute boundary after the write. A change that would
+	make a time series generation policy of the customer read sensors of
+	two sites is refused with the error code
+	`SITE_CHANGE_BREAKS_POLICY`, whose `policies` extension lists each
+	such policy as `{ id, name }`, sorted by id.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	createDaiSite(customerId: ID!, name: String!, sensors: [String!]!): DaiSite!
+	"""
+	Replaces the name and the sensors of the customer's site `token`, and
+	returns it.
+	
+	The default site cannot be changed. A sensor added moves out of the
+	default site, and one removed returns to it, from the next 5-minute
+	boundary after the write. Otherwise checked as `createDaiSite`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	updateDaiSite(customerId: ID!, token: String!, name: String!, sensors: [String!]!): DaiSite!
+	"""
+	Removes the customer's site `token`, and returns the token.
+	
+	The default site, a site that lists sensors, a site the relay site
+	table names, and a site a sensor is still assigned to, in effect or
+	scheduled, cannot be removed.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	removeDaiSite(customerId: ID!, token: String!): String!
+	"""
+	Replaces the customer's whole DHCP relay site table with `entries`,
+	given the stored relay table `revision`, and returns the new
+	revision.
+	
+	An entry whose `giaddr` is `0.0.0.0` or `::`, two entries with the
+	same DHCP server IP and `giaddr`, or an entry naming a token that is
+	not one of the customer's sites, is refused. A `revision` other than
+	the stored one is refused with the error code `STALE_REVISION`, whose
+	`storedRevision` extension holds the stored revision.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	replaceDaiRelaySites(customerId: ID!, revision: StringNumber!, entries: [DaiRelaySiteInput!]!): StringNumber!
+	"""
+	Imports operator device rows, and returns one result per row, in
+	input order.
+	
+	Rows apply in order, each seeing the earlier ones. A row whose asset
+	id a device holds replaces that device's name, MACs, fixed IPs and
+	note with the row's (`UPDATED`); else a row whose MACs belong to one
+	observed device without an asset id attaches the asset id to it, then
+	sets the values (`ATTACHED`); else a new device holding the asset id
+	is created (`CREATED`). A refused row (`ERROR`) writes nothing, and
+	the other rows are written. A fixed IP without `site` is at the
+	customer's one site in use; for a multi-site customer it is a row
+	error. More than 10,000 rows refuse the whole call, and nothing is
+	written.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	importDaiDevices(customerId: ID!, rows: [DaiImportRowInput!]!): [DaiImportResult!]!
+	"""
+	Merges the devices `others` into `survivor`, and returns the
+	survivor's id.
+	
+	The survivor takes the others' bindings, identifiers, names,
+	services, software strings and fixed IPs, the others are removed, and
+	their ids become aliases of the survivor. Merging devices with
+	different asset ids, or the survivor into itself, is refused. Old ids
+	are followed to the current devices.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	mergeDaiDevices(customerId: ID!, survivor: ID!, others: [ID!]!): ID!
+	"""
+	Moves the identifiers `identifiers` of the device `deviceId`, and the
+	bindings whose evidence identifier is one of them, to a new device,
+	and returns the new device's id.
+	
+	Choosing no identifier, every identifier of the device, or one it
+	does not hold, is refused. An old id is followed to the current
+	device.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	splitDaiDevice(customerId: ID!, deviceId: ID!, identifiers: [DaiIdentifierInput!]!): ID!
+	"""
+	Sets the verdict, the activity, or both, of each of up to 1,000
+	devices, and returns `true`.
+	
+	At least one of `verdict` and `activity` is given, and `NOT_SEEN`,
+	which only retention sets, is not accepted. Each device whose state
+	changes gets one change history entry; bindings and resolve answers
+	do not change. An unknown id refuses the whole call. Old ids are
+	followed to the current devices.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	setDaiDeviceStates(customerId: ID!, deviceIds: [ID!]!, verdict: DaiVerdict, activity: DaiActivity): Boolean!
+	"""
+	Marks the service of the device `deviceId` on `port` of the IP
+	protocol number `protocol` as removed by an operator, and returns
+	`true`.
+	
+	The service stays in the device's detail with the removed flag, and
+	the device's version does not change. An old id is followed to the
+	current device.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	removeDaiService(customerId: ID!, deviceId: ID!, port: Int!, protocol: Int!): Boolean!
+	"""
+	Ignores the candidate range `range` for the customer, recording the
+	time and `account`, and returns the range normalized to its network
+	address.
+	
+	`account` is the account name of the user who ignores the range, as
+	the caller knows it; it is stored trimmed, and an empty one is
+	refused. Ignoring a range already ignored changes nothing.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	ignoreDaiRangeCandidate(customerId: ID!, range: String!, account: String!): String!
+	"""
+	Stops ignoring the range `range` for the customer, and returns
+	whether it was ignored.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer is unfinished.
+	"""
+	unignoreDaiRangeCandidate(customerId: ID!, range: String!): Boolean!
 }
 
 type Netflow5Body {
@@ -6177,6 +7717,94 @@ type Query {
 	Returns an error if review could not list the collectors.
 	"""
 	systemLogCollectorList: [SystemLogCollector!]!
+	"""
+	The device identification settings of each customer of
+	`customerIds`, one entry per id, in order.
+	
+	A customer whose settings were never written reads as disabled, never
+	enabled, an inactivity multiplier of 2, 24 hours without a lease, 180
+	days of evidence aging, no realm and both revisions 0. One id the
+	caller is not a member of refuses the whole call with `Forbidden`.
+	"""
+	daiCustomerSettings(customerIds: [ID!]!): [DaiCustomerSettings!]!
+	"""
+	Every site of the customer, in token order.
+	
+	The default site lists the customer's sensors that are in no other
+	site. A customer whose default site is not stored yet lists one
+	unsaved default site with a null token, and nothing is written.
+	"""
+	daiSites(customerId: ID!): [DaiSite!]!
+	"""
+	The customer's DHCP relay site table and its revision.
+	"""
+	daiRelaySites(customerId: ID!): DaiRelaySites!
+	"""
+	Resolves each of `items` to the subject its IP address names at its
+	site, at its time or over its window, and returns one outcome per
+	item, in order: an answer, or the item's own error.
+	
+	An item gives exactly one of `at`, or both `from` and `to`, a closed
+	window. An item without `site` is resolved at the customer's one site
+	in use, which a multi-site customer does not have. More than 1,000
+	items refuse the whole call. With `withExplanation`, each answer
+	carries the bindings that decided it and the causes of an evidence
+	gap.
+	"""
+	daiResolve(customerId: ID!, items: [DaiResolveItemInput!]!, withExplanation: Boolean! = false): [DaiResolveOutcome!]!
+	"""
+	The customer's devices that match `filter`, ordered by device id.
+	
+	Each row carries the device's current IPs, the bindings in effect
+	now, or, for a device with none, its binding with the latest start.
+	The site and network filters match a device one of whose current IPs
+	(or, with none, whose latest binding) is at a listed site and in the
+	network; the seen range matches a device whose first-to-last seen
+	range overlaps it.
+	"""
+	daiDevices(customerId: ID!, filter: DaiDeviceFilterInput, after: String, before: String, first: Int, last: Int): DaiDeviceConnection!
+	"""
+	The customer's IP device rows that match `filter`, ordered by site and
+	IP.
+	
+	An IP device row is an IP address seen in the last 30 days at whose
+	last seen time no device binding is in effect at its site and IP. It
+	is not a device and is not counted as one.
+	"""
+	daiIpOnlyDevices(customerId: ID!, filter: DaiIpDeviceFilterInput, after: String, before: String, first: Int, last: Int): DaiIpDeviceConnection!
+	"""
+	The device `deviceId` names, in detail, or null if it names no device
+	of the customer. An old id, one a merge made an alias, returns the
+	current device.
+	"""
+	daiDevice(customerId: ID!, deviceId: ID!): DaiDeviceDetail
+	"""
+	Searches the customer's devices and IP device rows for `text`.
+	
+	`text` matches an IP address (the devices bound or fixed to it, and
+	its IP device rows), a MAC as `aa:bb:cc:dd:ee:ff`, `aa-bb-cc-dd-ee-ff`
+	or `aabb.ccdd.eeff` in any case, an operator asset id, a current or
+	old device id, and a case-insensitive substring of a device name.
+	Accounts are not searched. At most 100 matches are returned, with
+	`truncated` set if there were more.
+	"""
+	daiSearch(customerId: ID!, text: String!): DaiSearchResult!
+	"""
+	The customer's device identification collection status now.
+	"""
+	daiCollectionStatus(customerId: ID!): DaiCollectionStatus!
+	"""
+	The customer's candidate unregistered internal ranges now, the
+	ignored ones left out.
+	
+	A candidate is accepted by adding it to the customer's networks with
+	`replaceCustomerNetworks`.
+	"""
+	daiRangeCandidates(customerId: ID!): [DaiRangeCandidate!]!
+	"""
+	The ranges the customer ignores, ordered by range.
+	"""
+	daiIgnoredRanges(customerId: ID!): [DaiIgnoredRange!]!
 }
 
 type RadiusBody {
