@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0](https://github.com/aicers/review-web/compare/0.65.0...0.66.0) - 2026-11-26
+
+### Added
+
+- delete a customer's Clumit Endpoint detection events with its customer data ([#1312](https://github.com/aicers/review-web/pull/1312))
+- [**breaking**] show Clumit Endpoint detection events in GraphQL and scope them to the endpoint's customer ([#1308](https://github.com/aicers/review-web/pull/1308))
+
+### Other
+
+- cover arrival reads for callers scoped to both customers ([#1311](https://github.com/aicers/review-web/pull/1311))
+
 ## [0.65.0](https://github.com/aicers/review-web/compare/0.64.0...0.65.0) - 2026-11-26
 
 ### Added
