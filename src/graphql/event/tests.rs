@@ -6701,7 +6701,9 @@ mod endpoint_customer_scope {
                 .collect()
         };
 
-        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_A])] {
+        // A caller of both customers gets only the selected customer's events.
+        let both = Caller::Scoped(&[CUSTOMER_A, CUSTOMER_B]);
+        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_A]), both] {
             let data = run(&schema, caller, &arrival(CUSTOMER_A)).await;
             assert_eq!(
                 data["detectionEventsByArrival"]["events"],
@@ -6709,7 +6711,7 @@ mod endpoint_customer_scope {
                 "{caller:?}"
             );
         }
-        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_B])] {
+        for caller in [Caller::Unscoped, Caller::Scoped(&[CUSTOMER_B]), both] {
             let data = run(&schema, caller, &arrival(CUSTOMER_B)).await;
             assert_eq!(
                 data["detectionEventsByArrival"]["events"],
