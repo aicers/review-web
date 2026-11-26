@@ -39,7 +39,7 @@ impl DaiCollectionQuery {
         let store = crate::graphql::get_store(ctx)?;
         let inner = store
             .dai_collection_status(customer_id, now)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(DaiCollection { inner })
     }
 
@@ -62,7 +62,7 @@ impl DaiCollectionQuery {
         let store = crate::graphql::get_store(ctx)?;
         Ok(store
             .dai_range_candidates(customer_id, now)
-            .map_err(|e| dai_refusal(&e))?
+            .map_err(dai_refusal)?
             .into_iter()
             .map(|inner| DaiRangeCandidateEntry { inner })
             .collect())
@@ -82,7 +82,7 @@ impl DaiCollectionQuery {
         let store = crate::graphql::get_store(ctx)?;
         Ok(store
             .dai_ignored_ranges(customer_id)
-            .map_err(|e| dai_refusal(&e))?
+            .map_err(dai_refusal)?
             .into_iter()
             .map(|inner| DaiIgnoredRangeEntry { inner })
             .collect())
@@ -122,7 +122,7 @@ impl DaiCollectionMutation {
         let now = request_time(ctx)?;
         let range = store
             .ignore_dai_range(customer_id, range, account, now)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(range.to_string())
     }
 
@@ -143,7 +143,7 @@ impl DaiCollectionMutation {
         let range = parse_range(&range)?;
         store
             .unignore_dai_range(customer_id, range)
-            .map_err(|e| dai_refusal(&e))
+            .map_err(dai_refusal)
     }
 }
 

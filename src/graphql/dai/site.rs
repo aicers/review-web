@@ -27,7 +27,7 @@ impl DaiSiteQuery {
     async fn dai_sites(&self, ctx: &Context<'_>, customer_id: ID) -> Result<Vec<DaiSite>> {
         let customer_id = accessible_customer(ctx, &customer_id)?;
         let store = crate::graphql::get_store(ctx)?;
-        let mut sites = store.dai_sites(customer_id).map_err(|e| dai_refusal(&e))?;
+        let mut sites = store.dai_sites(customer_id).map_err(dai_refusal)?;
         if !sites.iter().any(|site| site.is_default) {
             sites.insert(
                 0,
@@ -78,9 +78,7 @@ impl DaiSiteQuery {
     async fn dai_relay_sites(&self, ctx: &Context<'_>, customer_id: ID) -> Result<DaiRelaySites> {
         let customer_id = accessible_customer(ctx, &customer_id)?;
         let store = crate::graphql::get_store(ctx)?;
-        let table = store
-            .dai_relay_sites(customer_id)
-            .map_err(|e| dai_refusal(&e))?;
+        let table = store.dai_relay_sites(customer_id).map_err(dai_refusal)?;
         Ok(DaiRelaySites {
             revision: table.revision,
             entries: table.entries.into_iter().map(Into::into).collect(),
@@ -120,7 +118,7 @@ impl DaiSiteMutation {
         let (customer_id, store) = writable_customer(ctx, &customer_id)?;
         let token = store
             .create_dai_site(customer_id, &name, &sensors)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         stored_site(&store, customer_id, &token)
     }
 
@@ -146,7 +144,7 @@ impl DaiSiteMutation {
         let (customer_id, store) = writable_customer(ctx, &customer_id)?;
         store
             .update_dai_site(customer_id, &token, &name, &sensors)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         stored_site(&store, customer_id, &token)
     }
 
@@ -169,7 +167,7 @@ impl DaiSiteMutation {
         let (customer_id, store) = writable_customer(ctx, &customer_id)?;
         store
             .remove_dai_site(customer_id, &token)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(token)
     }
 
@@ -207,7 +205,7 @@ impl DaiSiteMutation {
             .collect::<Result<Vec<_>, String>>()?;
         let revision = store
             .replace_dai_relay_sites(customer_id, revision.0, &entries)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(StringNumber(revision))
     }
 }
@@ -217,7 +215,7 @@ impl DaiSiteMutation {
 fn stored_site(store: &Store, customer_id: u32, token: &str) -> Result<DaiSite> {
     let site = store
         .dai_site(customer_id, token)
-        .map_err(|e| dai_refusal(&e))?
+        .map_err(dai_refusal)?
         .ok_or_else(|| format!("site {token:?} was removed by another write"))?;
     Ok(DaiSite {
         token: Some(site.token),

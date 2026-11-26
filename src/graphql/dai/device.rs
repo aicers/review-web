@@ -175,7 +175,7 @@ impl DaiDeviceQuery {
                         &request.with_key(from),
                         now,
                     )
-                    .map_err(|e| dai_refusal(&e))?;
+                    .map_err(dai_refusal)?;
                 Ok::<_, async_graphql::Error>(request.connection(
                     page,
                     |row| row.device.to_string().into_bytes(),
@@ -226,7 +226,7 @@ impl DaiDeviceQuery {
                         &request.with_key(from),
                         now,
                     )
-                    .map_err(|e| dai_refusal(&e))?;
+                    .map_err(dai_refusal)?;
                 Ok::<_, async_graphql::Error>(request.connection(
                     page,
                     |row| ip_device_cursor(&row.site, row.ip),
@@ -256,7 +256,7 @@ impl DaiDeviceQuery {
         let store = crate::graphql::get_store(ctx)?;
         Ok(store
             .dai_device(customer_id, device, now)
-            .map_err(|e| dai_refusal(&e))?
+            .map_err(dai_refusal)?
             .map(|inner| DaiDeviceDetails { inner }))
     }
 
@@ -283,7 +283,7 @@ impl DaiDeviceQuery {
         let store = crate::graphql::get_store(ctx)?;
         let result = store
             .dai_search(customer_id, &text, now)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(DaiSearchResult {
             matches: result.matches.into_iter().map(Into::into).collect(),
             truncated: result.truncated,

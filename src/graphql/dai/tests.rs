@@ -21,7 +21,8 @@ mod sites;
 use std::{collections::BTreeMap, net::IpAddr};
 
 use review_database::{
-    DAI_APPLY_DEFAULT_MAX_COUNT, DaiSettingsUpdate, DaiStoreOutcome, Store, dai_network_digest,
+    DAI_APPLY_DEFAULT_MAX_COUNT, DaiResolveError, DaiSettingsUpdate, DaiStoreOutcome, Store,
+    dai_network_digest,
 };
 use review_protocol::types::{
     DaiDhcpMsg, DaiObservation, DaiObservationBatch, DaiObservationBody,
@@ -29,7 +30,7 @@ use review_protocol::types::{
 };
 use serde_json::Value;
 
-use super::RequestTime;
+use super::{RequestTime, dai_refusal};
 use crate::graphql::{
     Role, TestSchema,
     time_series_generation_test_support::{insert_generator_node, sensor_name},
@@ -498,4 +499,16 @@ pub(super) async fn after(schema: TestSchema, elapsed: i64) -> TestSchema {
         dir,
     )
     .await
+}
+
+#[test]
+fn a_refusal_names_its_cause_and_another_error_keeps_its_context() {
+    let error = dai_refusal(anyhow::Error::new(DaiResolveError::TooManyItems {
+        count: 1001,
+    }));
+    assert!(error.message.contains("1001"), "{}", error.message);
+    assert!(error.extensions.is_none());
+
+    let error = dai_refusal(anyhow::anyhow!("disk full").context("reading the sites"));
+    assert_eq!(error.message, "reading the sites: disk full");
 }

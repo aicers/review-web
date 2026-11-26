@@ -255,6 +255,7 @@ async fn item_errors_fail_only_their_item() {
             rfc3339(t(0))
         ),
         format!(r#"{{ ip: "10.0.0.9", from: "{}" }}"#, rfc3339(t(0))),
+        r#"{ ip: "10.0.0.9", at: "2300-01-01T00:00:00Z" }"#.to_string(),
         at_site(&site, "10.0.0.9", t(0)),
     ];
     let value = data_at(&schema, &resolve(CUSTOMER, &items, false), t(0)).await;
@@ -270,11 +271,13 @@ async fn item_errors_fail_only_their_item() {
             &json!("INVALID_TIME"),
             &json!("INVALID_TIME"),
             &json!("INVALID_TIME"),
+            &json!("INVALID_TIME"),
             &Value::Null,
         ]
     );
     assert!(got[0]["message"].as_str().unwrap().contains("nosuchst"));
     assert!(got[3]["message"].as_str().unwrap().contains("10.0.0.999"));
+    assert!(got[7]["message"].as_str().unwrap().contains("1677 to 2262"));
     // A site-less item of a customer that is not multi-site resolves at its
     // one site in use.
     let mut answered = got[1].clone();

@@ -64,7 +64,7 @@ impl DaiOperatorMutation {
             .unzip();
         let outcomes = store
             .import_dai_devices(customer_id, &rows)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         if outcomes.len() != parse_errors.len() {
             return Err("review-database answered a different number of rows".into());
         }
@@ -103,7 +103,7 @@ impl DaiOperatorMutation {
             .collect::<Result<Vec<_>>>()?;
         let survivor = store
             .merge_dai_devices(customer_id, survivor, &others)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(ID(survivor.to_string()))
     }
 
@@ -137,7 +137,7 @@ impl DaiOperatorMutation {
             .collect();
         let new = store
             .split_dai_device(customer_id, device, &identifiers)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(ID(new.to_string()))
     }
 
@@ -180,7 +180,7 @@ impl DaiOperatorMutation {
             .collect::<Result<Vec<_>>>()?;
         store
             .set_dai_device_states(customer_id, &devices, verdict.map(Into::into), activity)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(true)
     }
 
@@ -208,7 +208,7 @@ impl DaiOperatorMutation {
         let device = parse_device_id(&device_id)?;
         store
             .remove_dai_service(customer_id, device, port, protocol)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(true)
     }
 }
@@ -233,7 +233,7 @@ enum SiteInUse {
 fn site_in_use(store: &Store, customer_id: u32, now: i64) -> Result<SiteInUse> {
     store
         .ensure_default_site(customer_id)
-        .map_err(|e| dai_refusal(&e))?;
+        .map_err(dai_refusal)?;
     let probe = DaiResolveItem {
         site: None,
         ip: Ipv4Addr::UNSPECIFIED.into(),
@@ -241,7 +241,7 @@ fn site_in_use(store: &Store, customer_id: u32, now: i64) -> Result<SiteInUse> {
     };
     let answer = store
         .dai_resolve(customer_id, std::slice::from_ref(&probe), false, now)
-        .map_err(|e| dai_refusal(&e))?
+        .map_err(dai_refusal)?
         .into_iter()
         .next()
         .ok_or("review-database answered no item")?;

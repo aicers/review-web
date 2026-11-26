@@ -35,9 +35,7 @@ impl DaiSettingsQuery {
         customer_ids
             .into_iter()
             .map(|customer_id| {
-                let inner = store
-                    .dai_settings(customer_id)
-                    .map_err(|e| dai_refusal(&e))?;
+                let inner = store.dai_settings(customer_id).map_err(dai_refusal)?;
                 Ok(DaiCustomerSettings { customer_id, inner })
             })
             .collect()
@@ -81,7 +79,7 @@ impl DaiSettingsMutation {
         };
         let inner = store
             .set_dai_settings(customer_id, revision.0, &update)
-            .map_err(|e| dai_refusal(&e))?;
+            .map_err(dai_refusal)?;
         Ok(DaiCustomerSettings { customer_id, inner })
     }
 }

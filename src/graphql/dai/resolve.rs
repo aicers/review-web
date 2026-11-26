@@ -62,7 +62,7 @@ impl DaiResolveQuery {
         let store = crate::graphql::get_store(ctx)?;
         let mut answers = store
             .dai_resolve(customer_id, &valid, with_explanation, now)
-            .map_err(|e| dai_refusal(&e))?
+            .map_err(dai_refusal)?
             .into_iter();
         failures
             .into_iter()
@@ -499,5 +499,35 @@ impl DaiSkippedByCatchup {
     /// The end of the skipped range, exclusive.
     async fn end(&self) -> Timestamp {
         timestamp(self.end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use review_protocol::types::DaiObservationKind as Kind;
+
+    use super::*;
+
+    #[test]
+    fn each_observation_kind_names_its_own_evidence_source() {
+        let pairs = [
+            (Kind::DhcpLease, DaiEvidenceSource::DhcpLease),
+            (Kind::DhcpServer, DaiEvidenceSource::DhcpServer),
+            (Kind::Kerberos, DaiEvidenceSource::Kerberos),
+            (Kind::Ntlm, DaiEvidenceSource::Ntlm),
+            (Kind::Service, DaiEvidenceSource::Service),
+            (Kind::SoftwareString, DaiEvidenceSource::SoftwareString),
+            (Kind::DnsName, DaiEvidenceSource::DnsName),
+            (Kind::IpActivity, DaiEvidenceSource::IpActivity),
+        ];
+        for (kind, source) in pairs {
+            let mapped =
+                DaiEvidenceSource::from(review_database::DaiEvidenceSource::Observation(kind));
+            assert!(mapped == source);
+        }
+        assert!(
+            DaiEvidenceSource::from(review_database::DaiEvidenceSource::OperatorFixedIp)
+                == DaiEvidenceSource::OperatorFixedIp
+        );
     }
 }

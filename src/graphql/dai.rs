@@ -153,8 +153,7 @@ fn request_time(ctx: &Context<'_>) -> Result<i64> {
     }
     #[cfg(not(test))]
     let _ = ctx;
-    i64::try_from(jiff::Timestamp::now().as_nanosecond())
-        .map_err(|_| "the clock is outside the range of the device identification times".into())
+    nanos(jiff::Timestamp::now().into(), "the clock").map_err(Into::into)
 }
 
 /// Returns the `DateTime` of `nanos`, nanoseconds since the UNIX epoch.
@@ -198,23 +197,26 @@ where
 
 /// Maps a refusal of a DAI write or read to the error a resolver returns,
 /// passing every other error through with its context.
-fn dai_refusal(error: &anyhow::Error) -> async_graphql::Error {
-    if let Some(refusal) = error.downcast_ref::<DaiConfigError>() {
-        return match refusal {
-            DaiConfigError::StaleRevision { stored } => stale_revision(*stored),
-            DaiConfigError::PolicyWouldSpanSites { policies } => {
+fn dai_refusal(error: anyhow::Error) -> async_graphql::Error {
+    let error = match error.downcast::<DaiConfigError>() {
+        Ok(DaiConfigError::StaleRevision { stored }) => return stale_revision(stored),
+        Ok(refusal) => {
+            return if let DaiConfigError::PolicyWouldSpanSites { policies } = &refusal {
                 site_change_breaks_policy(refusal.to_string(), policies)
-            }
-            _ => refusal.to_string().into(),
-        };
+            } else {
+                refusal.to_string().into()
+            };
+        }
+        Err(error) => error,
+    };
+    let error = match error.downcast::<DaiDeviceError>() {
+        Ok(refusal) => return refusal.to_string().into(),
+        Err(error) => error,
+    };
+    match error.downcast::<DaiResolveError>() {
+        Ok(refusal) => refusal.to_string().into(),
+        Err(error) => format!("{error:#}").into(),
     }
-    if let Some(refusal) = error.downcast_ref::<DaiDeviceError>() {
-        return refusal.to_string().into();
-    }
-    if let Some(refusal) = error.downcast_ref::<DaiResolveError>() {
-        return refusal.to_string().into();
-    }
-    format!("{error:#}").into()
 }
 
 /// Returns the `SENSORS_SPAN_SITES` refusal of a time series generation
