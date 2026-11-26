@@ -15,6 +15,17 @@
 //!    identification data, its nodes and its Clumit Endpoint rows among it,
 //!    and then tells `REview` that the customer's endpoint data is deleted.
 //!
+//! The detection events it deletes are those whose sensor is one of the
+//! customer's sensors or one of its endpoint IDs, the endpoints the job lists
+//! and those with an endpoint row of the customer. It deletes them before the
+//! endpoint rows. `REview` stores a detection event about an endpoint only
+//! through review-database's `Store::put_endpoint_detection_event` and
+//! `Store::put_endpoint_detection_event_unless_stored`, which refuse an event
+//! of a customer with a deletion job in the same transaction conflict
+//! boundary as the job's creation. An endpoint detection event stored before
+//! the job was created is deleted here, and one stored after it is refused,
+//! so none of the customer's is left once the deletion succeeds.
+//!
 //! Each stage decides from the job and the store, so a deletion resumed after
 //! a restart skips what is done. A deletion that stops leaves no result it
 //! did not dispatch `InProgress`.
@@ -3216,22 +3227,27 @@ fn delete_review_data(
 ) -> anyhow::Result<()> {
     let store = read_store(store_lock)?;
     refuse_installed_modules(&store, &targets.node_ids)?;
+    // A detection event about an endpoint has the endpoint ID as its
+    // sensor. The IDs are read here, before the endpoint rows are deleted
+    // below, so a re-run after that misses only an endpoint the job does
+    // not list, whose detection events are already gone. The checkpoint's
+    // result is held until they are read, so its error names them too.
     #[cfg(test)]
-    tests::checkpoint(&store, tests::Stage::Events, customer_id).with_context(|| {
-        format!(
-            "deleting customer events for {:?}",
-            targets.event_service_fqdns
-        )
-    })?;
+    let injected = tests::checkpoint(&store, tests::Stage::Events, customer_id);
+    let mut event_sensors = targets.event_service_fqdns.clone();
+    event_sensors.extend(
+        customer_endpoint_ids(&store, customer_id)
+            .with_context(|| format!("listing the endpoints of customer {customer_id}"))?
+            .iter()
+            .map(Uuid::to_string),
+    );
+    let events_context = || format!("deleting customer events for {event_sensors:?}");
+    #[cfg(test)]
+    injected.with_context(events_context)?;
     store
         .events()
-        .remove_by_sensors(&targets.event_service_fqdns)
-        .with_context(|| {
-            format!(
-                "deleting customer events for {:?}",
-                targets.event_service_fqdns
-            )
-        })?;
+        .remove_by_sensors(&event_sensors)
+        .with_context(events_context)?;
     // The earlier stages uninstalled the customer's sensors, so the node
     // table no longer names them; their names are passed instead. This runs
     // before the nodes are removed, and again on a retry, which changes
@@ -3350,6 +3366,30 @@ fn delete_review_data(
     Ok(())
 }
 
+/// Returns the endpoint IDs of customer `customer_id` a deletion deletes the
+/// data of, sorted and without duplicates.
+///
+/// They are those the stored job lists and that of every endpoint row of the
+/// customer: the job may list an endpoint whose row is already gone, and an
+/// endpoint row may have been written without the job listing it.
+fn customer_endpoint_ids(store: &Store, customer_id: u32) -> anyhow::Result<Vec<Uuid>> {
+    let mut endpoint_ids = store
+        .customer_data_deletion_map()
+        .get(customer_id)
+        .context("reading the deletion job")?
+        .map_or_else(Vec::new, |job| job.endpoint_ids);
+    endpoint_ids.extend(
+        store
+            .senta_endpoint_map()
+            .of_customer(customer_id)
+            .context("reading the endpoints")?
+            .into_iter()
+            .map(|endpoint| endpoint.endpoint_id),
+    );
+    sort_dedup(&mut endpoint_ids);
+    Ok(endpoint_ids)
+}
+
 /// Deletes the Clumit Endpoint rows of customer `customer_id`.
 ///
 /// Its endpoints are those the stored job lists and any endpoint row of the
@@ -3364,20 +3404,8 @@ fn delete_review_data(
 /// The install rows, the recovery-key documents, the active list and the
 /// Giganto entry rows are not the customer's alone, and are left.
 fn delete_endpoint_rows(store: &Store, customer_id: u32) -> anyhow::Result<()> {
-    let mut endpoint_ids = store
-        .customer_data_deletion_map()
-        .get(customer_id)
-        .context("reading the deletion job")?
-        .map_or_else(Vec::new, |job| job.endpoint_ids);
+    let endpoint_ids = customer_endpoint_ids(store, customer_id)?;
     let endpoints = store.senta_endpoint_map();
-    endpoint_ids.extend(
-        endpoints
-            .of_customer(customer_id)
-            .context("reading the endpoints")?
-            .into_iter()
-            .map(|endpoint| endpoint.endpoint_id),
-    );
-    sort_dedup(&mut endpoint_ids);
     let commands = store.senta_endpoint_command_map();
     for endpoint_id in endpoint_ids {
         let context = |table: &str| format!("deleting the {table} of endpoint {endpoint_id}");
@@ -13647,5 +13675,309 @@ server_name = "{server_name}"
             all_endpoint_rows(1)
         );
         assert_eq!(notified.deleted(), Vec::new());
+    }
+
+    /// An endpoint of customer 7 the job lists and that has a row.
+    const LISTED_WITH_ROW: Uuid = Uuid::from_u128(0x71);
+    /// An endpoint of customer 7 the job lists and whose row is gone.
+    const LISTED_ONLY: Uuid = Uuid::from_u128(0x72);
+    /// An endpoint of customer 7 with a row the job does not list.
+    const ROW_ONLY: Uuid = Uuid::from_u128(0x73);
+    /// An endpoint of customer 8.
+    const OTHER_ENDPOINT: Uuid = Uuid::from_u128(0x81);
+    const OWN_ENDPOINTS: [Uuid; 3] = [LISTED_WITH_ROW, LISTED_ONLY, ROW_ONLY];
+    const OWN_NODE_SENSORS: [&str; 2] = ["piglet.one.example", "reproduce.one.example"];
+    const OTHER_NODE_SENSOR: &str = "piglet.other.example";
+
+    /// Stores customer 7 with the endpoints [`OWN_ENDPOINTS`] name, its
+    /// Review stage job and, with `with_node`, a node on `one.example`, and
+    /// customer 8 with [`OTHER_ENDPOINT`] and a node on `other.example`, each
+    /// with a detection event of every sensor and endpoint. Returns the hosts
+    /// the job records.
+    fn put_endpoint_detection_customers(test_store: &TestStore, with_node: bool) -> Vec<String> {
+        let hosts: &[&str] = if with_node { &["one.example"] } else { &[] };
+        if with_node {
+            put_customer_node(test_store, 7, "one.example", Vec::new());
+        }
+        put_customer_node(test_store, 8, "other.example", Vec::new());
+        {
+            let store = read_store(&test_store.store).unwrap();
+            put_endpoint_install(&store);
+            let node = endpoint_node("ds.example", 1);
+            put_endpoint_customer(&store, 7, &[LISTED_WITH_ROW, ROW_ONLY], &node);
+            put_endpoint_customer(&store, 8, &[OTHER_ENDPOINT], &node);
+            let mut job = CustomerDataDeletionJob::new(
+                7,
+                vec![pending_result(CustomerDataDeletionService::Review, hosts)],
+            );
+            job.endpoint_ids = vec![LISTED_WITH_ROW, LISTED_ONLY];
+            store.customer_data_deletion_map().put(&job).unwrap();
+        }
+        let mut sensors: Vec<String> = OWN_ENDPOINTS
+            .iter()
+            .chain([&OTHER_ENDPOINT])
+            .map(Uuid::to_string)
+            .chain([OTHER_NODE_SENSOR.to_string()])
+            .collect();
+        if with_node {
+            sensors.extend(OWN_NODE_SENSORS.map(ToString::to_string));
+        }
+        for (second, sensor) in (100..).zip(&sensors) {
+            put_detection_event(test_store, Some(sensor.as_str()), second);
+        }
+        hosts.iter().map(ToString::to_string).collect()
+    }
+
+    /// Returns the sensors of the stored detection events, sorted.
+    fn detection_event_sensors(store: &RwLock<Store>) -> Vec<Option<String>> {
+        let mut sensors: Vec<_> = read_store(store)
+            .unwrap()
+            .events()
+            .iter_forward()
+            .map(|entry| entry.unwrap().1.event().sensor.clone())
+            .collect();
+        sensors.sort_unstable();
+        sensors
+    }
+
+    /// Returns the detection event sensors left after customer 7 is deleted.
+    fn sensors_kept() -> Vec<Option<String>> {
+        let mut kept = vec![
+            Some(OTHER_ENDPOINT.to_string()),
+            Some(OTHER_NODE_SENSOR.to_string()),
+        ];
+        kept.sort_unstable();
+        kept
+    }
+
+    /// Runs customer 7's Review stage over the job's `hosts`, and returns
+    /// the Review result's status.
+    async fn run_customer_7_review_stage(
+        test_store: &TestStore,
+        hosts: &[String],
+    ) -> CustomerDataDeletionStatus {
+        let targets = restore_review_targets(&test_store.store, 7, hosts).unwrap();
+        run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::default(),
+            Arc::new(RecordingEndpointManager::with_store(&test_store.store)),
+            7,
+            targets,
+        )
+        .await;
+        review_of(&job(&test_store.store, 7)).status
+    }
+
+    /// What customer data deletion leaves in the store: the detection event
+    /// sensors, the endpoint rows of each customer, the node names and the
+    /// job's Review status and error.
+    type EndpointDeletionState = (
+        Vec<Option<String>>,
+        BTreeMap<&'static str, usize>,
+        BTreeMap<&'static str, usize>,
+        Vec<String>,
+        CustomerDataDeletionStatus,
+        Option<String>,
+    );
+
+    fn endpoint_deletion_state(test_store: &TestStore) -> EndpointDeletionState {
+        let store = read_store(&test_store.store).unwrap();
+        let mut nodes: Vec<String> = store
+            .node_map()
+            .iter(Direction::Forward, None)
+            .map(|node| node.unwrap().name)
+            .collect();
+        nodes.sort_unstable();
+        let review =
+            review_of(&store.customer_data_deletion_map().get(7).unwrap().unwrap()).clone();
+        (
+            detection_event_sensors(&test_store.store),
+            endpoint_rows(&store, 7, &OWN_ENDPOINTS),
+            endpoint_rows(&store, 8, &[OTHER_ENDPOINT]),
+            nodes,
+            review.status,
+            review.error,
+        )
+    }
+
+    #[tokio::test]
+    async fn the_detection_events_of_the_customers_endpoints_are_deleted_before_their_rows() {
+        let test_store = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&test_store, false);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let hook_store = Arc::clone(&test_store.store);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if matches!(stage, Stage::Events | Stage::Endpoints) {
+                    let rows = endpoint_rows(&*read_store(&hook_store)?, 7, &OWN_ENDPOINTS);
+                    let own_events = detection_event_sensors(&hook_store)
+                        .into_iter()
+                        .flatten()
+                        .filter(|sensor| {
+                            OWN_ENDPOINTS
+                                .iter()
+                                .any(|endpoint_id| endpoint_id.to_string() == *sensor)
+                        })
+                        .count();
+                    record
+                        .lock()
+                        .unwrap()
+                        .push((stage, rows.get("endpoint").copied(), own_events));
+                }
+                Ok(())
+            }),
+        );
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        // The endpoint rows are still there when the detection events are
+        // deleted, and the detection events are gone when the rows are.
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [(Stage::Events, Some(2), 3), (Stage::Endpoints, Some(2), 0)]
+        );
+        assert_eq!(detection_event_sensors(&test_store.store), sensors_kept());
+        let store = read_store(&test_store.store).unwrap();
+        assert_eq!(endpoint_rows(&store, 7, &OWN_ENDPOINTS), no_endpoint_rows());
+        assert_eq!(
+            endpoint_rows(&store, 8, &[OTHER_ENDPOINT]),
+            all_endpoint_rows(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_node_and_endpoint_detection_events_of_a_customer_are_deleted_together() {
+        let test_store = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&test_store, true);
+        let at_events = Arc::new(std::sync::Mutex::new(None));
+        let record = Arc::clone(&at_events);
+        let hook_store = Arc::clone(&test_store.store);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::Events {
+                    *record.lock().unwrap() = Some(detection_event_sensors(&hook_store).len());
+                }
+                Ok(())
+            }),
+        );
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(*at_events.lock().unwrap(), Some(7));
+        assert_eq!(detection_event_sensors(&test_store.store), sensors_kept());
+        let (_, own_rows, other_rows, nodes, _, _) = endpoint_deletion_state(&test_store);
+        assert_eq!(own_rows, no_endpoint_rows());
+        assert_eq!(other_rows, all_endpoint_rows(1));
+        assert_eq!(nodes, ["other.example"]);
+    }
+
+    #[tokio::test]
+    async fn a_review_stage_stopped_before_the_endpoint_rows_ends_as_an_uninterrupted_one() {
+        let uninterrupted = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&uninterrupted, true);
+        assert_eq!(
+            run_customer_7_review_stage(&uninterrupted, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let expected = endpoint_deletion_state(&uninterrupted);
+        drop(uninterrupted);
+
+        let test_store = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&test_store, true);
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let fails = Arc::clone(&failed_once);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::Endpoints && !fails.swap(true, Ordering::SeqCst) {
+                    bail!("injected RocksDB boundary error");
+                }
+                Ok(())
+            }),
+        );
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Failed
+        );
+        let (sensors, own_rows, other_rows, _, _, error) = endpoint_deletion_state(&test_store);
+        assert!(failed_once.load(Ordering::SeqCst));
+        assert_eq!(sensors, sensors_kept());
+        assert_eq!(own_rows, all_endpoint_rows(2));
+        assert_eq!(other_rows, all_endpoint_rows(1));
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|error| error.contains("injected RocksDB boundary error")),
+            "{error:?}"
+        );
+
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(endpoint_deletion_state(&test_store), expected);
+    }
+
+    #[tokio::test]
+    async fn a_review_stage_rerun_after_it_completed_changes_nothing() {
+        let test_store = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&test_store, true);
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let done = endpoint_deletion_state(&test_store);
+        assert_eq!(done.0, sensors_kept());
+        assert_eq!(done.1, no_endpoint_rows());
+
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(endpoint_deletion_state(&test_store), done);
+    }
+
+    #[tokio::test]
+    async fn a_failed_detection_event_deletion_names_every_sensor_and_endpoint() {
+        let test_store = TestStore::new();
+        let hosts = put_endpoint_detection_customers(&test_store, true);
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let fails = Arc::clone(&failed_once);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::Events && !fails.swap(true, Ordering::SeqCst) {
+                    bail!("injected RocksDB boundary error");
+                }
+                Ok(())
+            }),
+        );
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Failed
+        );
+        let error = review_of(&job(&test_store.store, 7)).error.clone().unwrap();
+        assert!(error.contains("deleting customer events for"), "{error}");
+        for sensor in OWN_ENDPOINTS
+            .iter()
+            .map(Uuid::to_string)
+            .chain(OWN_NODE_SENSORS.map(ToString::to_string))
+        {
+            assert!(error.contains(&sensor), "{sensor} is not in {error}");
+        }
+        assert!(!error.contains(&OTHER_ENDPOINT.to_string()), "{error}");
+        assert!(error.contains("injected RocksDB boundary error"), "{error}");
+        assert_eq!(detection_event_sensors(&test_store.store).len(), 7);
+
+        assert_eq!(
+            run_customer_7_review_stage(&test_store, &hosts).await,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(detection_event_sensors(&test_store.store), sensors_kept());
     }
 }
