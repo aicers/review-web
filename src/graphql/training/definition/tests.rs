@@ -165,7 +165,7 @@ format = [
   { data_type = "datetime", weight = 0.0, name = "time", format = "%s" },
   { data_type = "ipaddr", weight = 1.5 },
 ]
-time_intervals = [60]
+slot_sizes = [60]
 time_column = 0
 count_columns = [0]
 prefix_columns = [14, 15]
@@ -284,6 +284,45 @@ fn the_former_raw_event_kind_key_is_an_unknown_key() {
 }
 
 #[test]
+fn the_former_csv_time_intervals_key_is_an_unknown_key() {
+    let former = "time_intervals = [60]";
+    for base in [&*VALID, &*CUSTOM] {
+        for text in [
+            base.replacen("slot_sizes = [60]", former, 1),
+            base.replacen(
+                "slot_sizes = [60]",
+                &format!("slot_sizes = [60]\n{former}"),
+                1,
+            ),
+        ] {
+            let (code, field, _) = refused(&text);
+            assert_eq!(
+                (code.as_str(), field.as_str()),
+                ("UNKNOWN_FIELD", "csv.time_intervals"),
+                "{text}"
+            );
+        }
+    }
+    for text in [
+        CUSTOM.replacen("slot_sizes = [60]", former, 1),
+        CUSTOM.replacen(
+            "slot_sizes = [60]",
+            &format!("slot_sizes = [60]\n{former}"),
+            1,
+        ),
+    ] {
+        let (code, field, _) = checked(&text);
+        assert_eq!(
+            (code.as_str(), field.as_str()),
+            ("UNKNOWN_FIELD", "csv.time_intervals"),
+            "{text}"
+        );
+    }
+    let document = TrainingDocument::parse_and_validate(&VALID).unwrap();
+    assert_eq!(document.csv.and_then(|csv| csv.slot_sizes), Some(vec![60]));
+}
+
+#[test]
 fn values_outside_their_type_are_invalid() {
     for (key, line, field) in [
         ("batch_size", "batch_size = -1", "batch_size"),
@@ -316,9 +355,9 @@ fn values_outside_their_type_are_invalid() {
     for (replaced, by, field) in [
         ("10.0.0.5:38371", "10.0.0.5", "data_store.address"),
         (
-            "time_intervals = [60]",
-            "time_intervals = [60, -1]",
-            "csv.time_intervals[1]",
+            "slot_sizes = [60]",
+            "slot_sizes = [60, -1]",
+            "csv.slot_sizes[1]",
         ),
         (
             "reader = { delimiter = 9, quote = 0 }",

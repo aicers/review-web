@@ -1964,27 +1964,8 @@ input EventStandardFilterInput {
 	scoreMax: Float
 }
 
-"""
-Inline exclusion input for `eventListWithTriage`.
-
-All four fields are nullable at the schema level; an object with no
-populated field is rejected by the resolver. An exclusion is validated,
-but removes no event.
-"""
-input EventTriageExclusionInput {
-	ipAddress: HostNetworkGroupInput
-	domain: [String!]
-	hostname: [String!]
-	uri: [String!]
-}
-
 input EventTriageInput {
 	policies: [EventTriagePolicyInput!]
-	"""
-	Inline exclusions. They are validated, but remove no event from the
-	connection or from `totalCount`.
-	"""
-	exclusions: [EventTriageExclusionInput!]
 }
 
 """
@@ -5566,9 +5547,8 @@ type Query {
 	standard filter regardless of whether any triage policy matched.
 	When `triage.policies` is supplied, matching policies attach their
 	scores via `triageScores`; events that score nothing keep
-	`triageScores: null` and remain in the connection. `triage.exclusions`
-	is validated but removes no event, from the connection or from
-	`totalCount`. The cursor pagination contract matches `eventList`.
+	`triageScores: null` and remain in the connection. The cursor
+	pagination contract matches `eventList`.
 	"""
 	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
 	"""
@@ -5641,17 +5621,17 @@ type Query {
 	eventCountsByNetwork(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
 	A dense time series for `[start, end)`, aligned to `start`, with a
-	positive `period` in seconds. Both `filter.start` and `filter.end` must
+	positive `slotSize` in seconds. Both `filter.start` and `filter.end` must
 	be explicitly provided and non-null; omitted bounds no longer default
 	to the Unix epoch or an unbounded end. Timestamps must fit signed i64
 	nanoseconds. Valid ranges with `start >= end` return an empty list.
-	Returns `ceil((end - start) / period)` buckets, including zeros and a
+	Returns `ceil((end - start) / slotSize)` buckets, including zeros and a
 	partial final bucket. Events exactly at `end` are excluded. At most
 	10,000 buckets are allowed; larger requests return an error before
 	event iteration. Provide both bounds for missing-bound errors, or
-	increase `period` or narrow the time range for bucket-limit errors.
+	increase `slotSize` or narrow the time range for bucket-limit errors.
 	"""
-	eventFrequencySeries(filter: EventListFilterInput!, period: Int!): [Int!]!
+	eventFrequencySeries(filter: EventListFilterInput!, slotSize: Int!): [Int!]!
 	"""
 	The networks the customer owns, or null if none were stored for it.
 	"""
@@ -6382,8 +6362,8 @@ input ResponseInput {
 
 enum ResponseKind {
 	MANUAL
-	BLACKLIST
-	WHITELIST
+	WATCHLIST
+	EXCLUSION_LIST
 }
 
 """
@@ -6850,9 +6830,10 @@ type StructuredClusteringTemplate {
 	eps: Float
 	format: String
 	"""
-	The time interval of the template in string represantable by a vector of `i64`.
+	The lengths, in seconds, of the slots `datetime` columns are cut into,
+	each as a string representable by an `i64`.
 	"""
-	timeIntervals: [StringNumber!]
+	slotSizes: [StringNumber!]
 	numbersOfTopN: [Int!]
 }
 
@@ -6862,7 +6843,10 @@ input StructuredClusteringTemplateInput {
 	algorithm: StructuredClusteringAlgorithm
 	eps: Float
 	format: String
-	timeIntervals: [Int!]
+	"""
+	The lengths, in seconds, of the slots `datetime` columns are cut into.
+	"""
+	slotSizes: [Int!]
 	numbersOfTopN: [Int!]
 }
 

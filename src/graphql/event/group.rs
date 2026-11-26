@@ -231,15 +231,15 @@ impl EventGroupQuery {
     }
 
     /// A dense time series for `[start, end)`, aligned to `start`, with a
-    /// positive `period` in seconds. Both `filter.start` and `filter.end` must
+    /// positive `slotSize` in seconds. Both `filter.start` and `filter.end` must
     /// be explicitly provided and non-null; omitted bounds no longer default
     /// to the Unix epoch or an unbounded end. Timestamps must fit signed i64
     /// nanoseconds. Valid ranges with `start >= end` return an empty list.
-    /// Returns `ceil((end - start) / period)` buckets, including zeros and a
+    /// Returns `ceil((end - start) / slotSize)` buckets, including zeros and a
     /// partial final bucket. Events exactly at `end` are excluded. At most
     /// 10,000 buckets are allowed; larger requests return an error before
     /// event iteration. Provide both bounds for missing-bound errors, or
-    /// increase `period` or narrow the time range for bucket-limit errors.
+    /// increase `slotSize` or narrow the time range for bucket-limit errors.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -248,7 +248,7 @@ impl EventGroupQuery {
         &self,
         ctx: &Context<'_>,
         filter: EventListFilterInput,
-        #[graphql(validator(minimum = 1))] period: i64,
+        #[graphql(validator(minimum = 1))] slot_size: i64,
     ) -> Result<Vec<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let event_filter = from_filter_input(ctx, &store, &filter)?;
@@ -262,27 +262,27 @@ impl EventGroupQuery {
             .into();
         let start_nanos = i128::from(timestamp_nanos(start)?);
         let end_nanos = i128::from(timestamp_nanos(end)?);
-        let period_nanos = i128::from(period)
+        let slot_size_nanos = i128::from(slot_size)
             .checked_mul(1_000_000_000)
             .filter(|&value| value > 0)
-            .ok_or("eventFrequencySeries period must be positive seconds")?;
+            .ok_or("eventFrequencySeries slotSize must be positive seconds")?;
         if start_nanos >= end_nanos {
             return Ok(Vec::new());
         }
 
         // Work in nanoseconds rather than shifted event keys: the full signed
-        // i64 timestamp span and even an i64::MAX-second period fit in i128.
+        // i64 timestamp span and even an i64::MAX-second slot size fit in i128.
         let span = end_nanos
             .checked_sub(start_nanos)
             .ok_or("eventFrequencySeries time span overflow")?;
         let bucket_count = span
-            .checked_add(period_nanos - 1)
+            .checked_add(slot_size_nanos - 1)
             .ok_or("eventFrequencySeries bucket count overflow")?
-            / period_nanos;
+            / slot_size_nanos;
         if bucket_count > i128::try_from(MAX_EVENT_FREQUENCY_SERIES_BUCKETS)? {
             return Err(format!(
                 "eventFrequencySeries would produce {bucket_count} buckets; the maximum is \
-                 {MAX_EVENT_FREQUENCY_SERIES_BUCKETS}. Increase period or narrow the time range."
+                 {MAX_EVENT_FREQUENCY_SERIES_BUCKETS}. Increase slotSize or narrow the time range."
             )
             .into());
         }
@@ -300,7 +300,7 @@ impl EventGroupQuery {
                 let offset = event_nanos
                     .checked_sub(start_nanos)
                     .ok_or("eventFrequencySeries bucket offset overflow")?;
-                let index = usize::try_from(offset / period_nanos)?;
+                let index = usize::try_from(offset / slot_size_nanos)?;
                 let frequency = series
                     .get_mut(index)
                     .ok_or("eventFrequencySeries event outside bucket range")?;
@@ -562,7 +562,7 @@ mod tests {
 
         let output = schema
             .execute_as_system_admin(&format!(
-                r#"{{ eventFrequencySeries(filter: {{ end: "{end}" }}, period: 1) }}"#
+                r#"{{ eventFrequencySeries(filter: {{ end: "{end}" }}, slotSize: 1) }}"#
             ))
             .await;
 
@@ -578,14 +578,14 @@ mod tests {
         schema: &TestSchema,
         start: i64,
         end: i64,
-        period: i64,
+        slot_size: i64,
         extra_filter: &str,
     ) -> Vec<usize> {
         let start = jiff::Timestamp::from_nanosecond(i128::from(start)).unwrap();
         let end = jiff::Timestamp::from_nanosecond(i128::from(end)).unwrap();
         let output = schema
             .execute_as_system_admin(&format!(
-                r#"{{ eventFrequencySeries(filter: {{ start: "{start}", end: "{end}", {extra_filter} }}, period: {period}) }}"#
+                r#"{{ eventFrequencySeries(filter: {{ start: "{start}", end: "{end}", {extra_filter} }}, slotSize: {slot_size}) }}"#
             ))
             .await;
         assert!(output.errors.is_empty(), "{:?}", output.errors);
@@ -622,17 +622,17 @@ mod tests {
             for end in [10_000_000_000_001, 10_001_000_000_000] {
                 let end = jiff::Timestamp::from_nanosecond(end).unwrap();
                 let output = schema.execute_as_system_admin(&format!(
-                    r#"{{ eventFrequencySeries(filter: {{ start: "1970-01-01T00:00:00Z", end: "{end}" }}, period: 1) }}"#
+                    r#"{{ eventFrequencySeries(filter: {{ start: "1970-01-01T00:00:00Z", end: "{end}" }}, slotSize: 1) }}"#
                 )).await;
                 assert_eq!(output.errors.len(), 1);
                 assert_eq!(
                     output.errors[0].message,
-                    "eventFrequencySeries would produce 10001 buckets; the maximum is 10000. Increase period or narrow the time range."
+                    "eventFrequencySeries would produce 10001 buckets; the maximum is 10000. Increase slotSize or narrow the time range."
                 );
             }
         }
         let output = schema.execute_as_system_admin(
-            r#"{ eventFrequencySeries(filter: { start: "1970-01-01T00:00:00Z", end: "2026-01-01T00:00:00Z", source: "192.0.2.1" }, period: 1) }"#
+            r#"{ eventFrequencySeries(filter: { start: "1970-01-01T00:00:00Z", end: "2026-01-01T00:00:00Z", source: "192.0.2.1" }, slotSize: 1) }"#
         ).await;
         assert_eq!(output.errors.len(), 1);
         assert!(output.errors[0].message.contains("maximum is 10000"));
@@ -706,7 +706,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_frequency_series_extreme_ranges_and_periods() {
+    async fn event_frequency_series_extreme_ranges_and_slot_sizes() {
         let schema = TestSchema::new().await;
         {
             let store = schema.store();
@@ -733,7 +733,7 @@ mod tests {
             frequency_series(&schema, i64::MIN, i64::MAX, i64::MAX, "").await,
             [5]
         );
-        // The span exceeds i64 nanoseconds; the period's shifted key would
+        // The span exceeds i64 nanoseconds; the slot size's shifted key would
         // overflow i128, but the actual bounded result is valid.
         let series = frequency_series(&schema, i64::MIN, i64::MAX, 2_592_000, "").await;
         let mut expected = vec![0; 7_117];
@@ -753,9 +753,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_frequency_series_refuses_the_former_period_argument() {
+        let schema = TestSchema::new().await;
+        let filter = r#"{ start: "1970-01-01T00:00:00Z", end: "1970-01-01T00:00:02Z" }"#;
+        for arguments in ["period: 1", "slotSize: 1, period: 1"] {
+            let output = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventFrequencySeries(filter: {filter}, {arguments}) }}"
+                ))
+                .await;
+            assert_eq!(output.data, async_graphql::Value::Null, "{arguments}");
+            assert!(
+                output
+                    .errors
+                    .iter()
+                    .any(|error| error.message.contains("Unknown argument \"period\"")),
+                "{arguments}: {:?}",
+                output.errors
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn event_frequency_series_validation_errors() {
         let schema = TestSchema::new().await;
-        for (filter, period, message) in [
+        for (filter, slot_size, message) in [
             ("{}", 1, "requires non-null filter.start"),
             (
                 r#"{ end: "1970-01-01T00:00:00Z" }"#,
@@ -815,10 +837,14 @@ mod tests {
         ] {
             let output = schema
                 .execute_as_system_admin(&format!(
-                    "{{ eventFrequencySeries(filter: {filter}, period: {period}) }}"
+                    "{{ eventFrequencySeries(filter: {filter}, slotSize: {slot_size}) }}"
                 ))
                 .await;
-            assert_eq!(output.errors.len(), 1, "filter: {filter}, period: {period}");
+            assert_eq!(
+                output.errors.len(),
+                1,
+                "filter: {filter}, slotSize: {slot_size}"
+            );
             assert!(
                 output.errors[0].message.contains(message),
                 "{:?}",
@@ -1131,7 +1157,7 @@ mod tests {
                 r#"{{
                     eventFrequencySeries(
                         filter: {{ start: "{start}", end: "{end}", countries: ["US"] }}
-                        period: 60
+                        slotSize: 60
                     )
                 }}"#
             ))

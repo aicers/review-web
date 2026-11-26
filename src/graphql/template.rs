@@ -162,7 +162,8 @@ struct StructuredClusteringTemplateInput {
     algorithm: Option<StructuredClusteringAlgorithm>, // DBSCAN or OPTICS (default)
     eps: Option<f32>,
     format: Option<String>,
-    time_intervals: Option<Vec<i64>>,
+    /// The lengths, in seconds, of the slots `datetime` columns are cut into.
+    slot_sizes: Option<Vec<i64>>,
     numbers_of_top_n: Option<Vec<i32>>,
 }
 
@@ -263,9 +264,10 @@ impl StructuredClusteringTemplate {
         self.inner.format.as_deref()
     }
 
-    /// The time interval of the template in string represantable by a vector of `i64`.
-    async fn time_intervals(&self) -> Option<Vec<StringNumber<i64>>> {
-        self.inner.time_intervals.as_ref().map(|v| {
+    /// The lengths, in seconds, of the slots `datetime` columns are cut into,
+    /// each as a string representable by an `i64`.
+    async fn slot_sizes(&self) -> Option<Vec<StringNumber<i64>>> {
+        self.inner.slot_sizes.as_ref().map(|v| {
             v.iter()
                 .map(|i| StringNumber(*i))
                 .collect::<Vec<StringNumber<i64>>>()
@@ -322,7 +324,7 @@ impl TryFrom<StructuredClusteringTemplateInput> for review_database::Template {
             algorithm: input.algorithm.map(Into::into),
             eps: input.eps,
             format: input.format,
-            time_intervals: input.time_intervals,
+            slot_sizes: input.slot_sizes,
             numbers_of_top_n: input.numbers_of_top_n,
         }))
     }
@@ -488,7 +490,7 @@ mod tests {
                         algorithm: "OPTICS",
                         eps: 0.5,
                         format: "json",
-                        timeIntervals: [1, 2, 3],
+                        slotSizes: [1, 2, 3],
                         numbersOfTopN: [1, 2, 3]
                     })
                 }"#,
@@ -509,7 +511,7 @@ mod tests {
                         node {
                             ... on StructuredClusteringTemplate {
                                 name
-                                timeIntervals
+                                slotSizes
                             }
                         }
                     }
@@ -520,7 +522,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {name: "t1", timeIntervals: ["1", "2", "3"]}}], totalCount: "1"}}"#
+            r#"{templateList: {edges: [{node: {name: "t1", slotSizes: ["1", "2", "3"]}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -532,7 +534,7 @@ mod tests {
                     algorithm: "OPTICS",
                     eps: 0.5,
                     format: "json",
-                    timeIntervals: [1, 2, 3],
+                    slotSizes: [1, 2, 3],
                     numbersOfTopN: [1, 2, 3]
                 },
                 newStructured: {
@@ -541,7 +543,7 @@ mod tests {
                     algorithm: "OPTICS",
                     eps: 0.5,
                     format: "json",
-                    timeIntervals: [1, 2, 4],
+                    slotSizes: [1, 2, 4],
                     numbersOfTopN: [1, 2, 4]
                 })
             }"#,
@@ -557,7 +559,7 @@ mod tests {
                         node {
                             ... on StructuredClusteringTemplate {
                                 algorithm
-                                timeIntervals
+                                slotSizes
                             }
                         }
                     }
@@ -568,7 +570,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {algorithm: OPTICS, timeIntervals: ["1", "2", "4"]}}], totalCount: "1"}}"#
+            r#"{templateList: {edges: [{node: {algorithm: OPTICS, slotSizes: ["1", "2", "4"]}}], totalCount: "1"}}"#
         );
 
         let res = schema

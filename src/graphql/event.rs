@@ -20,8 +20,8 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, ExclusionReason, IndexedTable, MAX_RAW_EVENT_KEYS, RawEventKey, Store,
-    StoredDetectionEvent, TriageExclusion, TriagePolicyInput as DbTriagePolicyInput,
+    self as database, IndexedTable, MAX_RAW_EVENT_KEYS, RawEventKey, Store, StoredDetectionEvent,
+    TriagePolicyInput as DbTriagePolicyInput,
     event::{Direction, EventDb, EventFilter, EventIterator, InternalNetworks, InvalidEvent},
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
@@ -253,9 +253,8 @@ impl EventQuery {
     /// standard filter regardless of whether any triage policy matched.
     /// When `triage.policies` is supplied, matching policies attach their
     /// scores via `triageScores`; events that score nothing keep
-    /// `triageScores: null` and remain in the connection. `triage.exclusions`
-    /// is validated but removes no event, from the connection or from
-    /// `totalCount`. The cursor pagination contract matches `eventList`.
+    /// `triageScores: null` and remain in the connection. The cursor
+    /// pagination contract matches `eventList`.
     // Eight parameters mirror the cursor-pagination shape used by other event
     // resolvers; the additional `triage` argument is what brings the count to
     // eight. Splitting it would obscure the GraphQL signature.
@@ -280,14 +279,6 @@ impl EventQuery {
             .map(convert_event_triage_policies)
             .transpose()?
             .unwrap_or_default();
-        // The exclusions are still validated, but review-database no longer
-        // matches events against them, so they remove nothing.
-        triage
-            .as_ref()
-            .and_then(|t| t.exclusions.as_deref())
-            .map(convert_event_triage_exclusions)
-            .transpose()
-            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))?;
         let filter = EventListFilterInput::from(filter);
         query(
             after,
@@ -497,9 +488,6 @@ struct EventStandardFilterInput {
 #[derive(InputObject)]
 struct EventTriageInput {
     policies: Option<Vec<EventTriagePolicyInput>>,
-    /// Inline exclusions. They are validated, but remove no event from the
-    /// connection or from `totalCount`.
-    exclusions: Option<Vec<EventTriageExclusionInput>>,
 }
 
 /// Inline triage policy input for `eventListWithTriage`.
@@ -512,19 +500,6 @@ struct EventTriagePolicyInput {
     packet_attr: Vec<PacketAttrInput>,
     score: Vec<ScoreConditionInput>,
     response: Vec<ResponseInput>,
-}
-
-/// Inline exclusion input for `eventListWithTriage`.
-///
-/// All four fields are nullable at the schema level; an object with no
-/// populated field is rejected by the resolver. An exclusion is validated,
-/// but removes no event.
-#[derive(InputObject)]
-struct EventTriageExclusionInput {
-    ip_address: Option<HostNetworkGroupInput>,
-    domain: Option<Vec<String>>,
-    hostname: Option<Vec<String>>,
-    uri: Option<Vec<String>>,
 }
 
 struct TriageScore<'a> {
@@ -1001,68 +976,10 @@ fn convert_event_triage_policies(
             id,
             name: id.to_string(),
             creation_time: now,
-            triage_exclusion: Vec::new(),
             packet_attr: policy.packet_attr.iter().map(Into::into).collect(),
             score: policy.score.iter().map(Into::into).collect(),
             response: policy.response.iter().map(Into::into).collect(),
         });
-    }
-    Ok(result)
-}
-
-fn convert_event_triage_exclusions(
-    exclusions: &[EventTriageExclusionInput],
-) -> anyhow::Result<Vec<TriageExclusion>> {
-    let mut result = Vec::new();
-    for (index, exclusion) in exclusions.iter().enumerate() {
-        let mut populated = false;
-        if let Some(group) = &exclusion.ip_address
-            && !(group.hosts.is_empty() && group.networks.is_empty() && group.ranges.is_empty())
-        {
-            populated = true;
-            let host_network_group: HostNetworkGroup = group
-                .try_into()
-                .with_context(|| format!("invalid triage.exclusions[{index}].ipAddress"))?;
-            result.push(
-                TriageExclusion::try_from(ExclusionReason::IpAddress(host_network_group))
-                    .with_context(|| {
-                        format!("failed to build triage.exclusions[{index}].ipAddress")
-                    })?,
-            );
-        }
-        if let Some(domains) = &exclusion.domain
-            && !domains.is_empty()
-        {
-            populated = true;
-            result.push(
-                TriageExclusion::try_from(ExclusionReason::Domain(domains.clone())).with_context(
-                    || format!("failed to build triage.exclusions[{index}].domain"),
-                )?,
-            );
-        }
-        if let Some(hostnames) = &exclusion.hostname
-            && !hostnames.is_empty()
-        {
-            populated = true;
-            result.push(
-                TriageExclusion::try_from(ExclusionReason::Hostname(hostnames.clone()))
-                    .with_context(|| {
-                        format!("failed to build triage.exclusions[{index}].hostname")
-                    })?,
-            );
-        }
-        if let Some(uris) = &exclusion.uri
-            && !uris.is_empty()
-        {
-            populated = true;
-            result.push(
-                TriageExclusion::try_from(ExclusionReason::Uri(uris.clone()))
-                    .with_context(|| format!("failed to build triage.exclusions[{index}].uri"))?,
-            );
-        }
-        if !populated {
-            bail!("triage exclusion must have at least one populated field");
-        }
     }
     Ok(result)
 }

@@ -52,8 +52,8 @@ pub enum AttrCmpKind {
 #[graphql(remote = "database::ResponseKind")]
 pub enum ResponseKind {
     Manual,
-    Blacklist,
-    Whitelist,
+    Watchlist,
+    ExclusionList,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
@@ -311,6 +311,7 @@ mod tests {
             "DomainTriageExclusion",
             "HostnameTriageExclusion",
             "UriTriageExclusion",
+            "EventTriageExclusionInput",
         ];
         for name in types {
             let res = schema

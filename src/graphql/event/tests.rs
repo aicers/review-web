@@ -11,38 +11,14 @@ use crate::graphql::{
 
 #[test]
 fn undecodable_event_records_are_skippable() {
-    use review_database::event::{EventDb, InvalidEvent};
+    use review_database::event::InvalidEvent;
 
-    let dir = tempfile::tempdir().unwrap();
-    let raw = rocksdb::OptimisticTransactionDB::open_default(dir.path()).unwrap();
-    let events = EventDb::new(&raw);
-    let keys: Vec<_> = (0..3)
-        .map(|second| {
-            events
-                .put_event(&event_message_at_timestamp(
-                    Timestamp::from_second(second).unwrap(),
-                    1,
-                    2,
-                    Some(EventCategory::CommandAndControl),
-                    "sensor1",
-                ))
-                .unwrap()
-        })
-        .collect();
-    raw.put(keys[1].to_be_bytes(), [0xff]).unwrap();
-    let mut iter = events.iter_forward();
-    assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[0]));
-    let error = iter.next().unwrap().err().unwrap();
-    assert!(matches!(&error, InvalidEvent::Value(_)));
-    assert!(!super::is_event_read_failure(&error));
-    assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[2]));
-    assert!(iter.next().is_none());
-    drop(iter);
-
-    raw.put([0xff], [0xff]).unwrap();
-    let error = events.iter_forward().find_map(Result::err).unwrap();
-    assert!(matches!(&error, InvalidEvent::Key(_)));
-    assert!(!super::is_event_read_failure(&error));
+    for error in [
+        InvalidEvent::Key(Box::new([0xff])),
+        InvalidEvent::Value(Box::new([0xff])),
+    ] {
+        assert!(!super::is_event_read_failure(&error), "{error:?}");
+    }
 }
 
 fn sst_files(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
@@ -130,7 +106,7 @@ async fn corrupted_event_store_returns_field_errors() {
         (format!("event(id: \"{first_bad}\") {{ __typename }}"), serde_json::Value::Null, vec!["event"]),
         ("eventCountsByDetectionModel(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByDetectionModel"]),
         ("eventCountsByNetwork(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByNetwork"]),
-        (r#"eventFrequencySeries(filter: {start: "1970-01-01T00:00:00Z", end: "1970-01-01T05:33:20Z"}, period: 20000)"#.to_string(), serde_json::Value::Null, vec!["eventFrequencySeries"]),
+        (r#"eventFrequencySeries(filter: {start: "1970-01-01T00:00:00Z", end: "1970-01-01T05:33:20Z"}, slotSize: 20000)"#.to_string(), serde_json::Value::Null, vec!["eventFrequencySeries"]),
     ];
     for (query, data, path) in cases {
         let response = schema
@@ -476,7 +452,7 @@ async fn empty_time_range_does_not_skip_filter_validation() {
                     end: "2026-01-01T00:00:00Z"
                     source: "invalid"
                 }
-                period: 1
+                slotSize: 1
             )
         }"#,
     ];
@@ -604,7 +580,7 @@ async fn unbounded_event_list_paginates_across_the_unix_epoch() {
     backward.reverse();
     assert_eq!(backward, expected);
 
-    let triage = r#"triage: {
+    let triage = r"triage: {
         policies: [{
             id: 7
             packetAttr: []
@@ -616,12 +592,7 @@ async fn unbounded_event_list_paginates_across_the_unix_epoch() {
             }]
             response: [{ minimumScore: 0.0, kind: MANUAL }]
         }]
-        exclusions: [{
-            ipAddress: { hosts: ["0.0.0.4"], networks: [], ranges: [] }
-        }]
-    }"#;
-    // The exclusion would have removed the event from 0.0.0.3 to 0.0.0.4,
-    // but exclusions no longer remove events.
+    }";
     let expected_with_triage = expected.clone();
     let mut after = None;
     let mut with_triage = Vec::new();
@@ -794,7 +765,7 @@ async fn minimum_end_is_an_empty_event_range() {
             r#"{{
                 eventList(filter: {{ end: "{minimum}" }}) {{ edges {{ cursor }} totalCount }}
                 eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
-                eventFrequencySeries(filter: {{ start: "{minimum}", end: "{minimum}" }}, period: 1)
+                eventFrequencySeries(filter: {{ start: "{minimum}", end: "{minimum}" }}, slotSize: 1)
                 beforeMinimum: eventList(
                     filter: {{}}
                     before: "{}"
@@ -896,7 +867,7 @@ async fn negative_end_is_exclusive_across_event_queries() {
                 ) {{ values counts }}
                 eventFrequencySeries(
                     filter: {{ start: "{start}", end: "{end}" }}
-                    period: 1
+                    slotSize: 1
                 )
             }}"#
         ))
@@ -1014,7 +985,7 @@ async fn grouped_event_queries_cross_the_unix_epoch() {
                 ) {{ values counts }}
                 eventFrequencySeries(
                     filter: {{ start: "{start}", end: "{end}" }}
-                    period: 1
+                    slotSize: 1
                 )
             }}"#
         ))
@@ -2028,70 +1999,93 @@ async fn event_list_with_triage_policy_non_match_preserves_event() {
 }
 
 #[tokio::test]
-async fn event_list_with_triage_rejects_oversized_domain_exclusion() {
+async fn event_list_with_triage_scores_watchlist_and_exclusion_list_responses_like_manual() {
     let schema = TestSchema::new().await;
     let store = schema.store();
+    let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
     store
         .events()
-        .put_event(&event_message_at(jiff::Timestamp::now(), 1, 2))
+        .put_event(&event_message_at(ts, 1, 2))
         .unwrap();
-    let domains: Vec<_> = (0..5_000)
-        .map(|index| format!("host{index:06}.sub.example-domain.com"))
-        .collect();
-    let domains = serde_json::to_string(&domains).unwrap();
+    drop(store);
+
+    let policy = |id: u32, minimum_score: f64, kinds: &[&str]| {
+        let response = kinds
+            .iter()
+            .map(|kind| format!("{{ minimumScore: {minimum_score:?}, kind: {kind} }}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{{ id: {id}, packetAttr: [], \
+                score: [{{ threatCategory: COMMAND_AND_CONTROL, \
+                    detectionModel: DNS_COVERT_CHANNEL, score: 0.0, weight: 0.5 }}], \
+                response: [{response}] }}"
+        )
+    };
+    let policies = [
+        policy(1, 0.5, &["MANUAL"]),
+        policy(2, 0.5, &["WATCHLIST"]),
+        policy(3, 0.5, &["EXCLUSION_LIST"]),
+        policy(4, 0.51, &["MANUAL"]),
+        policy(5, 0.51, &["WATCHLIST"]),
+        policy(6, 0.51, &["EXCLUSION_LIST"]),
+        policy(7, 0.51, &["WATCHLIST", "EXCLUSION_LIST"]),
+        policy(8, 0.5, &["WATCHLIST", "EXCLUSION_LIST"]),
+    ]
+    .join(", ");
     let query = format!(
         "{{ eventListWithTriage( \
-            filter: {{}}, \
-            triage: {{ exclusions: [{{ domain: {domains} }}] }} \
-        ) {{ edges {{ cursor }} totalCount }} }}",
+            filter: {{ start:\"{ts}\" }}, \
+            triage: {{ policies: [{policies}] }} \
+        ) {{ \
+            edges {{ node {{... on DetectionEvent {{ triageScores {{ policyId score }} }} }} }} \
+        }} }}",
     );
-
     let res = schema.execute_as_system_admin(&query).await;
-    assert_eq!(res.data, async_graphql::Value::Null);
-    let error = res.errors.first().expect("expected an exclusion error");
-    assert!(
-        error.message.contains("triage.exclusions[0].domain"),
-        "{error:?}"
-    );
-    assert!(error.message.contains("size limit"), "{error:?}");
+    assert!(res.errors.is_empty(), "{:?}", res.errors);
+    let data = res.data.into_json().unwrap();
+    let scores = data["eventListWithTriage"]["edges"][0]["node"]["triageScores"]
+        .as_array()
+        .expect("the event is scored")
+        .iter()
+        .map(|score| {
+            (
+                score["policyId"].as_str().unwrap().to_string(),
+                score["score"].as_f64().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let ids: Vec<_> = scores.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["1", "2", "3", "8"]);
+    for (id, score) in &scores {
+        assert!((score - 0.5).abs() < 1e-9, "{id}: {score}");
+    }
 }
 
 #[tokio::test]
-async fn event_list_with_triage_rejects_unbuildable_ip_address_exclusion() {
+async fn event_list_with_triage_refuses_exclusions() {
     let schema = TestSchema::new().await;
-    let store = schema.store();
-    store
-        .events()
-        .put_event(&event_message_at(jiff::Timestamp::now(), 1, 2))
-        .unwrap();
-    // A buildable exclusion before the invalid one must not hide the failure.
-    let query = r#"{ eventListWithTriage(
-        filter: {},
-        triage: { exclusions: [
-            { domain: ["domain"] },
-            { ipAddress: { hosts: [], networks: [], ranges: [
-                { start: "192.0.2.1", end: "2001:db8::1" }
-            ] } }
-        ] }
-    ) { edges { cursor } totalCount } }"#;
-
-    let res = schema.execute_as_system_admin(query).await;
-    assert_eq!(res.data, async_graphql::Value::Null);
-    let error = res.errors.first().expect("expected an exclusion error");
-    assert!(
-        error.message.contains("triage.exclusions[1].ipAddress"),
-        "{error:?}",
-    );
-    assert!(
-        error
-            .message
-            .contains("building IP triage exclusion filter"),
-        "{error:?}",
-    );
-    assert!(
-        error.message.contains("Invalid ip address format"),
-        "{error:?}"
-    );
+    for triage in [
+        r#"triage: { exclusions: [{ domain: ["domain"] }] }"#,
+        "triage: { exclusions: [] }",
+        "triage: { policies: [], exclusions: null }",
+    ] {
+        let query = format!("{{ eventListWithTriage(filter: {{}}, {triage}) {{ totalCount }} }}");
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(res.data, async_graphql::Value::Null, "{triage}");
+        let error = res.errors.first().expect("expected a validation error");
+        assert!(error.message.contains("exclusions"), "{triage}: {error:?}");
+    }
+    for old in ["BLACKLIST", "WHITELIST"] {
+        let query = format!(
+            "{{ eventListWithTriage(filter: {{}}, triage: {{ policies: [{{ \
+                id: 1, packetAttr: [], score: [], \
+                response: [{{ minimumScore: 0.0, kind: {old} }}] }}] }}) {{ totalCount }} }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(res.data, async_graphql::Value::Null, "{old}");
+        assert!(!res.errors.is_empty(), "{old}");
+    }
 }
 
 #[tokio::test]
@@ -2129,139 +2123,6 @@ async fn event_list_filter_rejects_triage_policies() {
     let res = schema.schema.execute(request).await;
     assert!(!res.errors.is_empty(), "expected a variables error");
     assert_eq!(res.data, async_graphql::Value::Null);
-}
-
-#[tokio::test]
-async fn event_list_with_triage_exclusion_flattens_and_rejects_empty() {
-    let schema = TestSchema::new().await;
-    let store = schema.store();
-    let db = store.events();
-    let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-    db.put_event(&event_message_at(ts, 1, 2)).unwrap();
-
-    // Single multi-field exclusion: ipAddress (no match) + domain (would have
-    // matched). Exclusions are validated but remove no event.
-    let query_combined = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ exclusions: [{{ \
-                ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }}, \
-                domain: [\"domain\"] \
-            }}] }} \
-        ) {{ totalCount }} }}",
-    );
-    let res_combined = schema.execute_as_system_admin(&query_combined).await;
-    assert!(res_combined.errors.is_empty(), "{:?}", res_combined.errors);
-    assert_eq!(
-        res_combined.data.to_string(),
-        r#"{eventListWithTriage: {totalCount: "1"}}"#
-    );
-
-    // Equivalent two-element list.
-    let query_split = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ exclusions: [ \
-                {{ ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }} }}, \
-                {{ domain: [\"domain\"] }} \
-            ] }} \
-        ) {{ totalCount }} }}",
-    );
-    let res_split = schema.execute_as_system_admin(&query_split).await;
-    assert!(res_split.errors.is_empty(), "{:?}", res_split.errors);
-    assert_eq!(
-        res_split.data.to_string(),
-        r#"{eventListWithTriage: {totalCount: "1"}}"#
-    );
-
-    // Empty exclusion is rejected.
-    let query_empty = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ exclusions: [{{}}] }} \
-        ) {{ totalCount }} }}",
-    );
-    let res_empty = schema.execute_as_system_admin(&query_empty).await;
-    assert!(
-        !res_empty.errors.is_empty(),
-        "expected error for empty exclusion"
-    );
-
-    // An ipAddress group with all sub-fields empty is also treated as no
-    // populated field and rejected.
-    let query_empty_group = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ exclusions: [{{ \
-                ipAddress: {{ hosts: [], networks: [], ranges: [] }} \
-            }}] }} \
-        ) {{ totalCount }} }}",
-    );
-    let res_empty_group = schema.execute_as_system_admin(&query_empty_group).await;
-    assert!(
-        !res_empty_group.errors.is_empty(),
-        "expected error for exclusion with empty ipAddress group"
-    );
-}
-
-#[tokio::test]
-async fn event_list_with_triage_exclusions_remove_no_event() {
-    let schema = TestSchema::new().await;
-    let store = schema.store();
-    let db = store.events();
-    let ts = |seconds: i8| utc_micro(2026, 1, 1, 0, 0, seconds, 0);
-    // The default test event has the DNS query "domain", which each of these
-    // exclusions would have matched before exclusions stopped removing
-    // events.
-    for second in 0..4 {
-        let index = u32::try_from(second).unwrap();
-        db.put_event(&event_message_at(ts(second), index + 1, index + 100))
-            .unwrap();
-    }
-    drop(store);
-    let start = ts(0);
-
-    let page = |triage: &str, first: u32| {
-        format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{start}\" }}, \
-                {triage} \
-                first: {first} \
-            ) {{ \
-                edges {{ cursor node {{ time }} }} \
-                pageInfo {{ hasNextPage }} \
-                totalCount \
-            }} }}",
-        )
-    };
-    for first in [1, 100] {
-        let without = schema.execute_as_system_admin(&page("", first)).await;
-        assert!(without.errors.is_empty(), "{:?}", without.errors);
-        for exclusion in [
-            r#"{ domain: ["domain"] }"#,
-            r#"{ hostname: ["domain"] }"#,
-            r#"{ uri: ["/domain"] }"#,
-            r#"{ ipAddress: { hosts: ["0.0.0.1"], networks: [], ranges: [] } }"#,
-        ] {
-            let with = schema
-                .execute_as_system_admin(&page(
-                    &format!("triage: {{ exclusions: [{exclusion}] }},"),
-                    first,
-                ))
-                .await;
-            assert!(with.errors.is_empty(), "{exclusion}: {:?}", with.errors);
-            assert_eq!(with.data, without.data, "{exclusion}");
-        }
-        let data = without.data.into_json().unwrap();
-        assert_eq!(data["eventListWithTriage"]["totalCount"], "4");
-        assert_eq!(
-            data["eventListWithTriage"]["edges"]
-                .as_array()
-                .unwrap()
-                .len(),
-            usize::try_from(first.min(4)).unwrap()
-        );
-    }
 }
 
 mod event_sensor_names {
