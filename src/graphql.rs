@@ -209,6 +209,7 @@ struct SubQueryOneA(
     engine_instance::EngineInstanceQuery,
     event::EventQuery,
     event::EventGroupQuery,
+    senta_endpoint::SentaEndpointQuery,
 );
 
 #[derive(MergedObject, Default)]

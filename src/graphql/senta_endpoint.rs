@@ -13,6 +13,10 @@
 //! `CUSTOMER_DATA_ALREADY_DELETED` for a customer with a deletion job;
 //! `ENDPOINT_TRUST_UNREADABLE`; `REview`'s own refusal code; and
 //! `ENDPOINT_NOT_SUPPORTED`. Any other failure is an error with no code.
+//!
+//! The read queries are in [`query`].
+
+mod query;
 
 use async_graphql::{
     Context, ErrorExtensions, ID, Object, OneofObject, Result, SimpleObject, StringNumber, Value,
@@ -21,6 +25,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use tracing::info;
 use uuid::Uuid;
 
+pub(super) use self::query::SentaEndpointQuery;
 use super::customer_deletion_guard::CUSTOMER_DELETION_IN_PROGRESS;
 use super::{Role, RoleGuard};
 use crate::backend::{
@@ -35,7 +40,8 @@ use crate::info_with_caller;
 const ENDPOINT_TRUST_UNREADABLE: &str = "ENDPOINT_TRUST_UNREADABLE";
 /// The `extensions.code` of a request this `REview` does not support.
 const ENDPOINT_NOT_SUPPORTED: &str = "ENDPOINT_NOT_SUPPORTED";
-/// The length of an SPKI hash in hexadecimal characters.
+/// The length of a SHA-256 hash, such as an SPKI hash or a certificate
+/// fingerprint, in hexadecimal characters.
 const SPKI_HASH_HEX_LEN: usize = 64;
 
 /// The outcome of one document of `putEndpointDocuments`.
@@ -266,6 +272,12 @@ fn parse_uuid(argument: &str, id: &ID) -> Result<Uuid> {
 
 /// Decodes an SPKI hash given as 64 lowercase hexadecimal characters.
 fn parse_spki_hash(text: &str) -> Result<[u8; 32]> {
+    parse_hash("spkiHash", text)
+}
+
+/// Decodes the SHA-256 hash given as `argument`, as 64 lowercase hexadecimal
+/// characters.
+fn parse_hash(argument: &str, text: &str) -> Result<[u8; 32]> {
     fn nibble(c: u8) -> Option<u8> {
         match c {
             b'0'..=b'9' => Some(c - b'0'),
@@ -276,7 +288,7 @@ fn parse_spki_hash(text: &str) -> Result<[u8; 32]> {
 
     let invalid = || {
         async_graphql::Error::new(format!(
-            "spkiHash is not {SPKI_HASH_HEX_LEN} lowercase hexadecimal characters"
+            "{argument} is not {SPKI_HASH_HEX_LEN} lowercase hexadecimal characters"
         ))
     };
     if text.len() != SPKI_HASH_HEX_LEN {
