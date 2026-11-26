@@ -3,13 +3,15 @@
 //! series of time series generation policies, named by their decimal IDs.
 //!
 //! Every source must be an assigned policy of the customer, all sources must
-//! have one shape, and they must all be kept in the one Data Store the
+//! have one shape, a definition or model of a time-series type reads only
+//! policies of that type and version, a custom definition's keys must equal
+//! its sources' values, and they must all be kept in the one Data Store the
 //! definition or the detector reads. The caller holds the engine
 //! configuration lock, as every writer that checks a source does.
 
 use review_database::{
-    CounterpartScope, EndpointRole, GroupByUnit, Measure, RawEventKind, SlotSize, Store,
-    TimeSeriesGenerationPolicy, WindowSize,
+    ClusteringModelTypeRef, CounterpartScope, EndpointRole, GroupByUnit, Measure, RawEventKind,
+    SlotSize, Store, TimeSeriesGenerationPolicy, WindowSize, time_series_type,
 };
 
 use super::generator_data_store;
@@ -80,6 +82,30 @@ pub(in crate::graphql) enum ShapeReference<'a> {
     Model { name: &'a str, shape: Option<Shape> },
 }
 
+/// The keys of a custom timeseries definition that must equal the values of
+/// its source policies, as the definition writes them.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::graphql) struct CustomKeys<'a> {
+    /// The definition's `raw_event_kind`.
+    pub(in crate::graphql) raw_event_kind: &'a str,
+    /// The definition's `group_by`, `source` or `destination`; `None` when
+    /// absent.
+    pub(in crate::graphql) group_by: Option<&'a str>,
+    /// The definition's `slot_size`, in seconds; `None` when absent.
+    pub(in crate::graphql) slot_size: Option<u64>,
+}
+
+/// The key of a refusal of the source rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::graphql) enum SourceField {
+    /// The source at this index, `sources[<j>]`.
+    Source(usize),
+    /// A key of the definition, such as `group_by`.
+    Key(&'static str),
+    /// `data_store.server_name`.
+    DataStore,
+}
+
 /// A refusal of the source rule.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::graphql) struct SourceRefusal {
@@ -87,23 +113,38 @@ pub(in crate::graphql) struct SourceRefusal {
     /// `DATA_STORE_NOT_INSTALLED`.
     pub(in crate::graphql) code: RefusalCode,
     pub(in crate::graphql) message: String,
-    /// The index of the offending source, or `None` when the refusal is of
-    /// `data_store.server_name`.
-    pub(in crate::graphql) source: Option<usize>,
+    /// The offending key.
+    pub(in crate::graphql) field: SourceField,
     pub(in crate::graphql) value: String,
 }
 
 impl SourceRefusal {
     /// Returns the refusal as a GraphQL error whose `field` is `prefix`
-    /// followed by the offending key, `sources[<j>]` or
+    /// followed by the offending key: `sources[<j>]`, a definition key or
     /// `data_store.server_name`.
     #[must_use]
     pub(in crate::graphql) fn into_error(self, prefix: &str) -> async_graphql::Error {
-        let field = match self.source {
-            Some(j) => format!("{prefix}sources[{j}]"),
-            None => format!("{prefix}data_store.server_name"),
+        let field = match self.field {
+            SourceField::Source(j) => format!("{prefix}sources[{j}]"),
+            SourceField::Key(key) => format!("{prefix}{key}"),
+            SourceField::DataStore => format!("{prefix}data_store.server_name"),
         };
         refusal(self.code, self.message, &field, self.value)
+    }
+}
+
+/// Returns the id and version of the time-series type `model_type` names,
+/// or `None` if it is `Custom` or names no time-series type, such as a
+/// clustering model type.
+#[must_use]
+pub(in crate::graphql) fn time_series_type_of(
+    model_type: &ClusteringModelTypeRef,
+) -> Option<(&str, u32)> {
+    match model_type {
+        ClusteringModelTypeRef::Catalog { id, version } if time_series_type(id).is_some() => {
+            Some((id.as_str(), *version))
+        }
+        ClusteringModelTypeRef::Catalog { .. } | ClusteringModelTypeRef::Custom => None,
     }
 }
 
@@ -142,6 +183,11 @@ pub(in crate::graphql) fn trained_shape<'a>(
 /// the Data Store `server_name` for the customer `customer_id`, with the
 /// engine configuration lock held.
 ///
+/// `model_type` is the clustering model type of the definition, or for a
+/// detector the type its model recorded. `custom_keys` are the keys of a
+/// custom definition, and `None` for a definition of a catalog type and for
+/// a detector, which has no such keys.
+///
 /// In this order:
 ///
 /// 1. Every source is the decimal ID of a time series generation policy of
@@ -153,10 +199,19 @@ pub(in crate::graphql) fn trained_shape<'a>(
 ///    `SOURCES_INCOMPATIBLE` at the first source that differs. A model whose
 ///    shape is unknown gives none a source can have, so any source is
 ///    refused with `SOURCES_INCOMPATIBLE` at `sources[0]`.
-/// 3. Every source's assignee has a non-empty `giganto_name` in its applied
+/// 3. When `model_type` names a time-series type, every source policy was
+///    made from that type at that version; otherwise `SOURCES_INCOMPATIBLE`
+///    at the first source that was not, a custom policy, one of another
+///    type and one of another version of the type alike.
+/// 4. With `custom_keys`, its `raw_event_kind`, `group_by` and `slot_size`,
+///    in that order, equal the source policies' raw event kind, grouping
+///    endpoint (absent exactly when the policies are not grouped) and slot
+///    size in seconds; otherwise `SOURCES_INCOMPATIBLE` at the first key
+///    that differs, with the definition's value, empty when absent.
+/// 5. Every source's assignee has a non-empty `giganto_name` in its applied
 ///    configuration; otherwise `DATA_STORE_NOT_INSTALLED` at
 ///    `data_store.server_name`.
-/// 4. `server_name` is every source's stored `data_store` and its
+/// 6. `server_name` is every source's stored `data_store` and its
 ///    assignee's applied `giganto_name`; otherwise `SOURCES_INCOMPATIBLE` at
 ///    `data_store.server_name`.
 ///
@@ -170,6 +225,8 @@ pub(in crate::graphql) fn check_policy_sources(
     customer_id: u32,
     sources: &[String],
     reference: ShapeReference<'_>,
+    model_type: &ClusteringModelTypeRef,
+    custom_keys: Option<CustomKeys<'_>>,
     server_name: &str,
 ) -> anyhow::Result<Option<SourceRefusal>> {
     let map = store.time_series_generation_policy_map();
@@ -178,7 +235,7 @@ pub(in crate::graphql) fn check_policy_sources(
         let not_allowed = |message: String| SourceRefusal {
             code: RefusalCode::SourceNotAllowed,
             message,
-            source: Some(j),
+            field: SourceField::Source(j),
             value: source.clone(),
         };
         let policy = match policy_id(source) {
@@ -202,6 +259,14 @@ pub(in crate::graphql) fn check_policy_sources(
     if let Some(refused) = check_shape(&policies, sources, reference) {
         return Ok(Some(refused));
     }
+    if let Some(refused) = check_type(&policies, sources, model_type) {
+        return Ok(Some(refused));
+    }
+    if let Some(keys) = custom_keys
+        && let Some(refused) = check_custom_keys(&policies, keys)
+    {
+        return Ok(Some(refused));
+    }
 
     let mut generators = Vec::with_capacity(policies.len());
     for policy in &policies {
@@ -215,7 +280,7 @@ pub(in crate::graphql) fn check_policy_sources(
                          applied Data Store",
                         policy.id
                     ),
-                    source: None,
+                    field: SourceField::DataStore,
                     value: server_name.to_string(),
                 }));
             }
@@ -242,7 +307,7 @@ pub(in crate::graphql) fn check_policy_sources(
         return Ok(Some(SourceRefusal {
             code: RefusalCode::SourcesIncompatible,
             message,
-            source: None,
+            field: SourceField::DataStore,
             value: server_name.to_string(),
         }));
     }
@@ -280,7 +345,7 @@ fn check_shape(
                     "none of the time series generation policies model {name:?} was trained on \
                      is stored, so the shape its sources must have is unknown"
                 ),
-                source: Some(0),
+                field: SourceField::Source(0),
                 value: first.clone(),
             });
         }
@@ -296,9 +361,137 @@ fn check_shape(
             "time series generation policy {} differs in {attribute} from {origin}",
             policy.id
         ),
-        source: Some(j),
+        field: SourceField::Source(j),
         value: sources.get(j).cloned().unwrap_or_default(),
     })
+}
+
+/// Returns the refusal of step 3 of [`check_policy_sources`] for the
+/// `policies` the `sources` name, in order; `None` if `model_type` names no
+/// time-series type or every policy was made from it at its version.
+fn check_type(
+    policies: &[TimeSeriesGenerationPolicy],
+    sources: &[String],
+    model_type: &ClusteringModelTypeRef,
+) -> Option<SourceRefusal> {
+    let (id, version) = time_series_type_of(model_type)?;
+    let (j, policy) = policies.iter().enumerate().find(|(_, policy)| {
+        policy
+            .time_series_type
+            .as_ref()
+            .is_none_or(|of| of.id != id || of.version != version)
+    })?;
+    let made_from = match &policy.time_series_type {
+        Some(of) => format!("time-series type {:?} version {}", of.id, of.version),
+        None => "no time-series type".to_string(),
+    };
+    Some(SourceRefusal {
+        code: RefusalCode::SourcesIncompatible,
+        message: format!(
+            "time series generation policy {} was made from {made_from}, not time-series type \
+             {id:?} version {version}",
+            policy.id
+        ),
+        field: SourceField::Source(j),
+        value: sources.get(j).cloned().unwrap_or_default(),
+    })
+}
+
+/// Returns the refusal of step 4 of [`check_policy_sources`] for the
+/// `policies` a custom definition with the keys `keys` reads; `None` if
+/// every key equals their values. The policies have one shape, so the first
+/// one's values are theirs.
+fn check_custom_keys(
+    policies: &[TimeSeriesGenerationPolicy],
+    keys: CustomKeys<'_>,
+) -> Option<SourceRefusal> {
+    let policy = policies.first()?;
+    let raw_event_kind = raw_event_kind_name(policy.raw_event_kind);
+    let group_by = policy.group_by.map(endpoint_role_name);
+    let slot_size = slot_seconds(policy.slot_size);
+    let (key, value, expected) = if Some(keys.raw_event_kind) != raw_event_kind {
+        (
+            "raw_event_kind",
+            keys.raw_event_kind.to_string(),
+            format!("raw event kind {:?}", raw_event_kind.unwrap_or_default()),
+        )
+    } else if keys.group_by != group_by {
+        (
+            "group_by",
+            keys.group_by.unwrap_or_default().to_string(),
+            match group_by {
+                Some(role) => format!("its series grouped by {role:?}"),
+                None => "its series not grouped".to_string(),
+            },
+        )
+    } else if keys.slot_size != Some(slot_size) {
+        (
+            "slot_size",
+            keys.slot_size.map_or_default(|s| s.to_string()),
+            format!("slot size {slot_size}"),
+        )
+    } else {
+        return None;
+    };
+    Some(SourceRefusal {
+        code: RefusalCode::SourcesIncompatible,
+        message: format!(
+            "{key} differs from time series generation policy {}, which has {expected}",
+            policy.id
+        ),
+        field: SourceField::Key(key),
+        value,
+    })
+}
+
+/// Returns the snake-case name of `kind`, as a training definition's
+/// `raw_event_kind` writes it, if it is a network kind, the only kinds a
+/// time series generation policy counts.
+fn raw_event_kind_name(kind: RawEventKind) -> Option<&'static str> {
+    Some(match kind {
+        RawEventKind::Bootp => "bootp",
+        RawEventKind::Conn => "conn",
+        RawEventKind::DceRpc => "dce_rpc",
+        RawEventKind::Dhcp => "dhcp",
+        RawEventKind::Dns => "dns",
+        RawEventKind::Ftp => "ftp",
+        RawEventKind::Http => "http",
+        RawEventKind::Icmp => "icmp",
+        RawEventKind::Kerberos => "kerberos",
+        RawEventKind::Ldap => "ldap",
+        RawEventKind::MalformedDns => "malformed_dns",
+        RawEventKind::Mqtt => "mqtt",
+        RawEventKind::Nfs => "nfs",
+        RawEventKind::Ntlm => "ntlm",
+        RawEventKind::Radius => "radius",
+        RawEventKind::Rdp => "rdp",
+        RawEventKind::Smb => "smb",
+        RawEventKind::Smtp => "smtp",
+        RawEventKind::Ssh => "ssh",
+        RawEventKind::Tls => "tls",
+        _ => return None,
+    })
+}
+
+/// Returns the name of `role`, as a training definition's `group_by` writes
+/// it.
+fn endpoint_role_name(role: EndpointRole) -> &'static str {
+    match role {
+        EndpointRole::Source => "source",
+        EndpointRole::Destination => "destination",
+    }
+}
+
+/// Returns the length of a slot of `size`, in seconds, as a training
+/// definition's `slot_size` writes it.
+fn slot_seconds(size: SlotSize) -> u64 {
+    match size {
+        SlotSize::FiveMinutes => 300,
+        SlotSize::TenMinutes => 600,
+        SlotSize::FifteenMinutes => 900,
+        SlotSize::ThirtyMinutes => 1800,
+        SlotSize::OneHour => 3600,
+    }
 }
 
 /// Returns the ID a source names if it is a decimal ID in canonical form,
@@ -329,4 +522,71 @@ fn applied_giganto_name(
         .iter()
         .find(|agent| agent.key == assignee.agent_key)
         .and_then(generator_data_store))
+}
+
+#[cfg(test)]
+mod tests {
+    use review_database::{EndpointRole, RawEventKind, SlotSize};
+
+    use super::{endpoint_role_name, raw_event_kind_name, slot_seconds};
+
+    #[test]
+    fn every_network_kind_has_its_training_definition_name() {
+        let names = [
+            (RawEventKind::Bootp, "bootp"),
+            (RawEventKind::Conn, "conn"),
+            (RawEventKind::DceRpc, "dce_rpc"),
+            (RawEventKind::Dhcp, "dhcp"),
+            (RawEventKind::Dns, "dns"),
+            (RawEventKind::Ftp, "ftp"),
+            (RawEventKind::Http, "http"),
+            (RawEventKind::Icmp, "icmp"),
+            (RawEventKind::Kerberos, "kerberos"),
+            (RawEventKind::Ldap, "ldap"),
+            (RawEventKind::MalformedDns, "malformed_dns"),
+            (RawEventKind::Mqtt, "mqtt"),
+            (RawEventKind::Nfs, "nfs"),
+            (RawEventKind::Ntlm, "ntlm"),
+            (RawEventKind::Radius, "radius"),
+            (RawEventKind::Rdp, "rdp"),
+            (RawEventKind::Smb, "smb"),
+            (RawEventKind::Smtp, "smtp"),
+            (RawEventKind::Ssh, "ssh"),
+            (RawEventKind::Tls, "tls"),
+        ];
+        for (kind, name) in names {
+            assert_eq!(raw_event_kind_name(kind), Some(name), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_kind_that_is_not_a_network_kind_has_no_name() {
+        for kind in [
+            RawEventKind::ProcessCreate,
+            RawEventKind::DnsQuery,
+            RawEventKind::Netflow5,
+        ] {
+            assert_eq!(raw_event_kind_name(kind), None, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn every_endpoint_role_has_its_group_by_name() {
+        assert_eq!(endpoint_role_name(EndpointRole::Source), "source");
+        assert_eq!(endpoint_role_name(EndpointRole::Destination), "destination");
+    }
+
+    #[test]
+    fn every_slot_size_has_its_length_in_seconds() {
+        let seconds = [
+            (SlotSize::FiveMinutes, 300),
+            (SlotSize::TenMinutes, 600),
+            (SlotSize::FifteenMinutes, 900),
+            (SlotSize::ThirtyMinutes, 1800),
+            (SlotSize::OneHour, 3600),
+        ];
+        for (size, expected) in seconds {
+            assert_eq!(slot_seconds(size), expected, "{size:?}");
+        }
+    }
 }

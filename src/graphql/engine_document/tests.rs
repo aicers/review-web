@@ -1,4 +1,4 @@
-use review_database::{ClusteringModelTypeRef, SlotSize};
+use review_database::{ClusteringModelTypeRef, EndpointRole, SlotSize};
 use serde_json::Value;
 
 use super::*;
@@ -6,7 +6,8 @@ use crate::graphql::{
     model_test_support::{TestModel, http_url, insert_engine_node, insert_label_db},
     time_series_generation_test_support::{
         OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, generator_config,
-        insert_generator_node_with, sensor_name,
+        insert_assigned_policy_of, insert_generator_node_with, insert_internal_network,
+        sensor_name, type_ref,
     },
     training_test_support::HTTP_URL_CSV,
 };
@@ -968,6 +969,406 @@ fn a_multidimension_detector_refuses_a_policy() {
         "",
     ))
     .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Detectors of a time-series type's model
+
+/// A model of `server_daily_tls` version 1.
+const TLS_MODEL: &str = "tls-model";
+/// A model recorded as `server_daily_tls` version 2, a version no policy is
+/// of.
+const TLS_V2_MODEL: &str = "tls-v2-model";
+/// A custom timeseries model trained on a custom policy of the
+/// `server_daily_tls` shape.
+const CUSTOM_TLS_MODEL: &str = "custom-tls-model";
+
+/// A [`Detectors`] fixture with two `server_daily_tls` version 1 policies,
+/// a custom policy of their shape and a `host_daily_tls` policy, all
+/// assigned to the fixture's generator, and the models [`TLS_MODEL`] and
+/// [`TLS_V2_MODEL`] trained on the type's policies and [`CUSTOM_TLS_MODEL`]
+/// trained on the custom one.
+struct TlsDetectors {
+    detectors: Detectors,
+    /// The `server_daily_tls` policies; the second reads two sensors.
+    typed: [String; 2],
+    /// The sensors of `typed`, in order.
+    sensors: [Vec<String>; 2],
+    custom: String,
+    host: String,
+}
+
+impl TlsDetectors {
+    fn new() -> Self {
+        let detectors = Detectors::new();
+        let store = &detectors.policies.store;
+        insert_internal_network(store, POLICY_CUSTOMER);
+        let generator = &detectors.policies.generator;
+        let server = PolicyShape::daily_tls(EndpointRole::Destination);
+        let policy = |name: &str, shape, of: Option<&str>| {
+            insert_assigned_policy_of(
+                store,
+                name,
+                POLICY_CUSTOMER,
+                generator,
+                shape,
+                of.map(|id| type_ref(id, 1)),
+            )
+        };
+        let first = policy("tls-1", server, Some("server_daily_tls"));
+        let second = policy("tls-2", server, Some("server_daily_tls"));
+        // A second sensor, which the generator's node does not have, so the
+        // policy is written past the table's checks.
+        let own = store
+            .time_series_generation_policy_map()
+            .get_by_id(second)
+            .unwrap()
+            .unwrap()
+            .sensors;
+        let sensors = [
+            own.clone(),
+            vec!["extra.example.com".to_string(), own[0].clone()],
+        ];
+        let detectors = Detectors {
+            policies: detectors.policies.with_policy_edited(second, |policy| {
+                policy.sensors.clone_from(&sensors[1]);
+            }),
+            ..detectors
+        };
+        let store = &detectors.policies.store;
+        let generator = &detectors.policies.generator;
+        let policy = |name: &str, shape, of: Option<&str>| {
+            insert_assigned_policy_of(
+                store,
+                name,
+                POLICY_CUSTOMER,
+                generator,
+                shape,
+                of.map(|id| type_ref(id, 1)),
+            )
+        };
+        let custom = policy("tls-custom", server, None);
+        let host = policy(
+            "tls-host",
+            PolicyShape::daily_tls(EndpointRole::Source),
+            Some("host_daily_tls"),
+        );
+        let typed = [first, second].map(|id| id.to_string());
+        for (name, model_type, trained_on) in [
+            (TLS_MODEL, Some(1), &typed[..]),
+            (TLS_V2_MODEL, Some(2), &typed[..]),
+            (CUSTOM_TLS_MODEL, None, &[custom.to_string()][..]),
+        ] {
+            TestModel {
+                instance: detectors.instance.clone(),
+                kind: TIMESERIES_KIND,
+                trained_sources: trained_on.to_vec(),
+                clustering_model_type: model_type.map_or(
+                    ClusteringModelTypeRef::Custom,
+                    |version| ClusteringModelTypeRef::Catalog {
+                        id: "server_daily_tls".to_string(),
+                        version,
+                    },
+                ),
+                ..TestModel::new(name, POLICY_CUSTOMER)
+            }
+            .replace(store);
+        }
+        Self {
+            detectors,
+            typed,
+            sensors,
+            custom: custom.to_string(),
+            host: host.to_string(),
+        }
+    }
+
+    fn document(&self, model: &str, sources: &[String], extra: &str) -> String {
+        self.detectors.document(model, sources, extra)
+    }
+
+    fn check(&self, text: &str) -> Result<()> {
+        self.detectors.check(text)
+    }
+
+    fn refused(&self, text: &str) -> ((String, String, String, Value), String) {
+        self.detectors.refused(text)
+    }
+
+    /// Returns a `source_sensors` line listing `entries`.
+    fn source_sensors(entries: &[(&str, &[String])]) -> String {
+        let entries: Vec<String> = entries
+            .iter()
+            .map(|(id, sensors)| format!("{id:?} = {}", serde_json::to_string(sensors).unwrap()))
+            .collect();
+        format!("source_sensors = {{ {} }}", entries.join(", "))
+    }
+}
+
+#[test]
+fn a_time_series_type_detector_reads_only_policies_of_its_type_and_version() {
+    let f = TlsDetectors::new();
+    f.check(&f.document(TLS_MODEL, &f.typed, "")).unwrap();
+
+    // A custom policy of the trained shape is refused, at its position.
+    let sources = [f.typed[0].clone(), f.custom.clone()];
+    let ((code, field, value, detector_id), message) =
+        f.refused(&f.document(TLS_MODEL, &sources, ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "SOURCES_INCOMPATIBLE",
+            "detectors[0].sources[1]",
+            f.custom.as_str()
+        )
+    );
+    assert_eq!(detector_id, 7);
+    assert_eq!(
+        message,
+        format!(
+            "time series generation policy {} was made from no time-series type, not \
+             time-series type \"server_daily_tls\" version 1",
+            f.custom
+        )
+    );
+
+    // A policy of another type differs in its shape first.
+    let ((code, field, value, _), message) =
+        f.refused(&f.document(TLS_MODEL, std::slice::from_ref(&f.host), ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "SOURCES_INCOMPATIBLE",
+            "detectors[0].sources[0]",
+            f.host.as_str()
+        )
+    );
+    assert!(message.contains("differs in group_by"), "{message}");
+
+    // A model of another version of the type reads none of its policies.
+    let ((code, field, value, _), message) = f.refused(&f.document(TLS_V2_MODEL, &f.typed, ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "SOURCES_INCOMPATIBLE",
+            "detectors[0].sources[0]",
+            f.typed[0].as_str()
+        )
+    );
+    assert_eq!(
+        message,
+        format!(
+            "time series generation policy {} was made from time-series type \
+             \"server_daily_tls\" version 1, not time-series type \"server_daily_tls\" \
+             version 2",
+            f.typed[0]
+        )
+    );
+}
+
+#[test]
+fn a_custom_time_series_detector_keeps_the_shape_check_only() {
+    let f = TlsDetectors::new();
+    f.check(&f.document(CUSTOM_TLS_MODEL, std::slice::from_ref(&f.custom), ""))
+        .unwrap();
+    // A policy of a type of the trained shape is accepted too.
+    f.check(&f.document(
+        CUSTOM_TLS_MODEL,
+        &[f.custom.clone(), f.typed[0].clone()],
+        "",
+    ))
+    .unwrap();
+    let ((code, field, _, _), _) =
+        f.refused(&f.document(CUSTOM_TLS_MODEL, std::slice::from_ref(&f.host), ""));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "detectors[0].sources[0]")
+    );
+}
+
+#[test]
+fn a_time_series_type_detector_takes_only_its_types_detection_models() {
+    let f = TlsDetectors::new();
+    let with_section = |model: &str, section: &str| {
+        format!(
+            "{}\n[detectors.detection_models.{section}]\nenabled = true\n",
+            f.document(model, &f.typed, "")
+        )
+    };
+    f.check(&with_section(TLS_MODEL, "window_outlier")).unwrap();
+    for section in ["far_outlier", "label_db_match"] {
+        let ((code, field, value, detector_id), _) = f.refused(&with_section(TLS_MODEL, section));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            (
+                "FIELD_NOT_ALLOWED",
+                format!("{SECTIONS}.{section}").as_str(),
+                ""
+            ),
+            "{section}"
+        );
+        assert_eq!(detector_id, 7);
+    }
+    // A custom model's detector takes none, `window_outlier` included.
+    let text = format!(
+        "{}\n[detectors.detection_models.window_outlier]\nenabled = true\n",
+        f.document(CUSTOM_TLS_MODEL, std::slice::from_ref(&f.custom), "")
+    );
+    let ((code, field, _, _), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        (
+            "FIELD_NOT_ALLOWED",
+            "detectors[0].detection_models.window_outlier"
+        )
+    );
+}
+
+#[test]
+fn source_sensors_must_be_the_stored_sensors_of_sources() {
+    let f = TlsDetectors::new();
+    let [p1, p2] = &f.typed;
+    let [s1, s2] = &f.sensors;
+    // Whole or partial, a table of the policies' own sensors is accepted.
+    for entries in [
+        vec![(p1.as_str(), s1.as_slice()), (p2.as_str(), s2.as_slice())],
+        vec![(p2.as_str(), s2.as_slice())],
+        vec![],
+    ] {
+        let line = TlsDetectors::source_sensors(&entries);
+        f.check(&f.document(TLS_MODEL, &f.typed, &line))
+            .unwrap_or_else(|e| panic!("{line}: {e:?}"));
+    }
+
+    let reordered: Vec<String> = s2.iter().rev().cloned().collect();
+    let wrong = vec!["other.example.com".to_string()];
+    for (sources, entries, key, message) in [
+        (
+            std::slice::from_ref(p2),
+            vec![(p1.as_str(), s1.as_slice())],
+            p1,
+            format!(
+                "source_sensors lists time series generation policy {p1:?}, which is not a \
+                 source of the detector"
+            ),
+        ),
+        (
+            &f.typed[..],
+            vec![(p2.as_str(), reordered.as_slice())],
+            p2,
+            format!(
+                "source_sensors lists sensors for time series generation policy {p2:?} that \
+                 are not its sensors {s2:?}"
+            ),
+        ),
+        (
+            &f.typed[..],
+            vec![
+                (p1.as_str(), s1.as_slice()),
+                (p2.as_str(), wrong.as_slice()),
+            ],
+            p2,
+            format!(
+                "source_sensors lists sensors for time series generation policy {p2:?} that \
+                 are not its sensors {s2:?}"
+            ),
+        ),
+        (
+            &f.typed[..],
+            vec![("999", s1.as_slice())],
+            &"999".to_string(),
+            "source_sensors lists time series generation policy \"999\", which is not a source \
+             of the detector"
+                .to_string(),
+        ),
+    ] {
+        let line = TlsDetectors::source_sensors(&entries);
+        let ((code, field, value, detector_id), refused_message) =
+            f.refused(&f.document(TLS_MODEL, sources, &line));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            (
+                "SOURCES_INCOMPATIBLE",
+                "detectors[0].source_sensors",
+                key.as_str()
+            ),
+            "{line}"
+        );
+        assert_eq!(detector_id, 7);
+        assert_eq!(refused_message, message);
+    }
+}
+
+#[test]
+fn source_sensors_is_checked_after_the_sources() {
+    let f = TlsDetectors::new();
+    let wrong = vec!["other.example.com".to_string()];
+    let line = TlsDetectors::source_sensors(&[(f.custom.as_str(), wrong.as_slice())]);
+    let ((code, field, _, _), _) =
+        f.refused(&f.document(TLS_MODEL, std::slice::from_ref(&f.custom), &line));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "detectors[0].sources[0]")
+    );
+}
+
+#[test]
+fn source_sensors_is_only_for_a_time_series_type_detector() {
+    let f = TlsDetectors::new();
+    let sensors = f
+        .detectors
+        .policies
+        .store
+        .time_series_generation_policy_map()
+        .get_by_id(f.custom.parse().unwrap())
+        .unwrap()
+        .unwrap()
+        .sensors;
+    let p1 = f.detectors.policies.assigned[0].to_string();
+    let sensor = sensor_name("gen-a.example.com");
+    for (model, sources, line) in [
+        (
+            CUSTOM_TLS_MODEL,
+            f.custom.clone(),
+            TlsDetectors::source_sensors(&[(f.custom.as_str(), sensors.as_slice())]),
+        ),
+        (
+            CUSTOM_TLS_MODEL,
+            f.custom.clone(),
+            TlsDetectors::source_sensors(&[]),
+        ),
+        (
+            TIMESERIES_MODEL,
+            p1.clone(),
+            TlsDetectors::source_sensors(&[]),
+        ),
+        (
+            MULTIDIMENSION_MODEL,
+            sensor.clone(),
+            TlsDetectors::source_sensors(&[(p1.as_str(), std::slice::from_ref(&sensor))]),
+        ),
+        (
+            MULTIDIMENSION_MODEL,
+            sensor.clone(),
+            TlsDetectors::source_sensors(&[]),
+        ),
+    ] {
+        let ((code, field, value, detector_id), message) =
+            f.refused(&f.document(model, std::slice::from_ref(&sources), &line));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            ("FIELD_NOT_ALLOWED", "detectors[0].source_sensors", ""),
+            "{model}: {line}"
+        );
+        assert_eq!(detector_id, 7);
+        assert_eq!(
+            message,
+            format!(
+                "source_sensors is only for a detector of a time-series type's model, which \
+                 model {model:?} is not"
+            )
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

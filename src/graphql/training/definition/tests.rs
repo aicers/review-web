@@ -9,12 +9,13 @@ use super::*;
 use crate::graphql::{
     time_series_generation_test_support::{
         OTHER_POLICY_CUSTOMER, OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape,
-        generator_config, insert_assigned_policy, insert_internal_network, insert_policy,
-        sensor_name, set_generator_config, timeseries_definition,
+        generator_config, insert_assigned_policy, insert_assigned_policy_of,
+        insert_internal_network, insert_policy, sensor_name, set_generator_config,
+        timeseries_definition, type_ref,
     },
     training_test_support::{
-        custom_timeseries_definition, http_url_definition, prefix_definition, window_end,
-        window_start,
+        custom_timeseries_definition, daily_tls_definition, http_url_definition, prefix_definition,
+        server_daily_tls_definition, window_end, window_start,
     },
 };
 
@@ -490,14 +491,9 @@ fn the_record_kinds_follow_the_method() {
         kinds(&PREFIX),
         ("log".to_string(), Some("syslog".to_string()))
     );
-    // The engine records a time-series model's kind under its Giganto name,
-    // while the text keeps its network raw event kind.
-    assert_eq!(
-        kinds(&TIMESERIES),
-        ("periodic_time_series".to_string(), None)
-    );
-    let (document, _) = TrainingDocument::check(&TIMESERIES).unwrap();
-    assert_eq!(document.raw_event_kind, "conn");
+    // A time-series definition's record stores its network raw event kind,
+    // which the engine records on the model too.
+    assert_eq!(kinds(&TIMESERIES), ("conn".to_string(), None));
 }
 
 #[test]
@@ -834,15 +830,17 @@ const B: u32 = OTHER_POLICY_CUSTOMER;
 
 impl PolicyFixture {
     /// Checks `text` as an insert of customer A by a Security Administrator
-    /// does.
+    /// does, against the clustering model type it names.
     fn check(&self, text: &str) -> Result<()> {
         let addrs = ["10.0.0.5".parse::<IpAddr>().unwrap()];
-        TrainingDocument::parse_and_validate(text)?.check_stored(
+        let (document, model_type) = TrainingDocument::check(text)?;
+        document.check_stored(
             &self.store,
             A,
             &addrs,
             &HashSet::new(),
             ShapeReference::FirstSource,
+            &model_type,
             false,
         )
     }
@@ -1082,7 +1080,12 @@ fn other_methods_still_take_only_source_names() {
     let document = TrainingDocument::parse_and_validate(&text).unwrap();
     let (code, field, _) = parts(
         &document
-            .check_sources(&f.store, A, ShapeReference::FirstSource)
+            .check_sources(
+                &f.store,
+                A,
+                ShapeReference::FirstSource,
+                &ClusteringModelTypeRef::Custom,
+            )
             .unwrap_err(),
     );
     assert_eq!(
@@ -1092,6 +1095,402 @@ fn other_methods_still_take_only_source_names() {
     let text = PREFIX.replace("reproduce.a.example.com", &sensor_name("gen-a.example.com"));
     TrainingDocument::parse_and_validate(&text)
         .unwrap()
-        .check_sources(&f.store, A, ShapeReference::FirstSource)
+        .check_sources(
+            &f.store,
+            A,
+            ShapeReference::FirstSource,
+            &ClusteringModelTypeRef::Custom,
+        )
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The time-series keys and the type and custom-key steps of the source rule
+
+/// A complete `server_daily_tls` version 1 definition.
+static SERVER_DAILY_TLS: LazyLock<String> =
+    LazyLock::new(|| server_daily_tls_definition(&["3", "5"], SERVER_NAME, OWN_ADDRESS, ""));
+
+#[test]
+fn the_time_series_keys_round_trip() {
+    let text = with(&TIMESERIES, "group_by", "group_by = \"destination\"");
+    let text = with(&text, "threat_role", "threat_role = \"actor\"");
+    let text = with(&text, "transform", "transform = \"log1p\"");
+    let document = TrainingDocument::parse(&text).unwrap();
+    assert_eq!(document.slot_size, Some(900));
+    assert_eq!(document.group_by, Some(GroupBy::Destination));
+    assert_eq!(document.threat_role, Some(ThreatRole::Actor));
+    assert_eq!(document.min_cluster_size, Some(3));
+    assert_eq!(document.transform, Some(Transform::Log1p));
+    let serialized = document.to_text().unwrap();
+    for line in [
+        "slot_size = 900",
+        "group_by = \"destination\"",
+        "threat_role = \"actor\"",
+        "min_cluster_size = 3",
+        "transform = \"log1p\"",
+    ] {
+        assert!(
+            serialized.lines().any(|l| l == line),
+            "{line}: {serialized}"
+        );
+    }
+    assert_eq!(TrainingDocument::parse(&serialized).unwrap(), document);
+
+    let document = TrainingDocument::parse(&SERVER_DAILY_TLS).unwrap();
+    assert_eq!(
+        (document.group_by, document.threat_role, document.transform),
+        (
+            Some(GroupBy::Destination),
+            Some(ThreatRole::Target),
+            Some(Transform::None)
+        )
+    );
+    assert_eq!(
+        TrainingDocument::parse(&document.to_text().unwrap()).unwrap(),
+        document
+    );
+}
+
+#[test]
+fn a_time_series_key_outside_its_values_does_not_parse() {
+    for (key, line) in [
+        ("transform", "transform = \"sqrt\""),
+        ("group_by", "group_by = \"both\""),
+        ("threat_role", "threat_role = \"victim\""),
+        ("group_by", "group_by = 1"),
+        ("slot_size", "slot_size = \"300\""),
+        ("min_cluster_size", "min_cluster_size = -1"),
+    ] {
+        let text = with(&TIMESERIES, key, line);
+        let error = TrainingDocument::parse(&text).expect_err(line);
+        assert_eq!(parts(&error).0, "INVALID_DOCUMENT", "{line}");
+    }
+}
+
+#[test]
+fn a_time_series_type_definition_takes_the_types_raw_event_kind() {
+    let (document, model_type) = TrainingDocument::check(&SERVER_DAILY_TLS).unwrap();
+    assert_eq!(
+        model_type,
+        ClusteringModelTypeRef::Catalog {
+            id: "server_daily_tls".to_string(),
+            version: 1
+        }
+    );
+    assert_eq!(document.record_kinds(), ("tls".to_string(), None));
+    let text = with(
+        &SERVER_DAILY_TLS,
+        "raw_event_kind",
+        "raw_event_kind = \"timeseries\"",
+    );
+    assert_eq!(
+        checked(&text),
+        triple("EVENT_KIND_NOT_ALLOWED", "raw_event_kind", "timeseries")
+    );
+}
+
+#[test]
+fn a_time_series_type_definition_needs_a_seven_day_window() {
+    let start: jiff::Timestamp = window_start().parse().unwrap();
+    let end = start
+        .checked_add(jiff::SignedDuration::from_hours(6 * 24))
+        .unwrap()
+        .to_string();
+    let text = with(
+        &SERVER_DAILY_TLS,
+        "window_end",
+        &format!("window_end = \"{end}\""),
+    );
+    let (code, field, _) = checked(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("BOUND_VIOLATED", "window_end")
+    );
+}
+
+/// A [`PolicyFixture`] whose customer has an internal network, with two
+/// `server_daily_tls` version 1 policies, a custom policy of their shape, a
+/// `host_daily_tls` policy and a policy written as `server_daily_tls`
+/// version 2, a version the catalog does not have, all assigned to the
+/// fixture's generator.
+struct TypedPolicies {
+    f: PolicyFixture,
+    typed: [u32; 2],
+    custom: u32,
+    host: u32,
+    other_version: u32,
+}
+
+impl TypedPolicies {
+    fn new() -> Self {
+        let f = PolicyFixture::new();
+        insert_internal_network(&f.store, A);
+        let server = PolicyShape::daily_tls(EndpointRole::Destination);
+        let policy = |name: &str, shape, of: Option<&str>| {
+            insert_assigned_policy_of(
+                &f.store,
+                name,
+                A,
+                &f.generator,
+                shape,
+                of.map(|id| type_ref(id, 1)),
+            )
+        };
+        let typed = ["tls-1", "tls-2"].map(|name| policy(name, server, Some("server_daily_tls")));
+        let custom = policy("tls-custom", server, None);
+        let host = policy(
+            "tls-host",
+            PolicyShape::daily_tls(EndpointRole::Source),
+            Some("host_daily_tls"),
+        );
+        let other_version = policy("tls-v2", server, Some("server_daily_tls"));
+        let f = f.with_policy_edited(other_version, |policy| {
+            policy.time_series_type = Some(type_ref("server_daily_tls", 2));
+        });
+        Self {
+            f,
+            typed,
+            custom,
+            host,
+            other_version,
+        }
+    }
+
+    /// Returns a `server_daily_tls` definition reading `sources` from the
+    /// fixture's first Data Store.
+    fn definition(&self, sources: &[u32]) -> String {
+        let sources: Vec<String> = sources.iter().map(ToString::to_string).collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        server_daily_tls_definition(&sources, &self.f.server_name, OWN_ADDRESS, "")
+    }
+}
+
+#[test]
+fn a_time_series_type_definition_reads_only_policies_of_its_type_and_version() {
+    let t = TypedPolicies::new();
+    t.f.check(&t.definition(&t.typed)).unwrap();
+    let not_of = |made_from: &str, id: u32| {
+        format!(
+            "time series generation policy {id} was made from {made_from}, not time-series type \
+             \"server_daily_tls\" version 1"
+        )
+    };
+    for (sources, j, message) in [
+        (
+            vec![t.typed[0], t.custom],
+            1,
+            not_of("no time-series type", t.custom),
+        ),
+        (
+            vec![t.custom, t.typed[0]],
+            0,
+            not_of("no time-series type", t.custom),
+        ),
+        (
+            vec![t.typed[0], t.other_version],
+            1,
+            not_of(
+                "time-series type \"server_daily_tls\" version 2",
+                t.other_version,
+            ),
+        ),
+        // Alone, a policy of another type is of one shape with itself.
+        (
+            vec![t.host],
+            0,
+            not_of("time-series type \"host_daily_tls\" version 1", t.host),
+        ),
+    ] {
+        let ((code, field, value), refused_message) = t.f.refused(&t.definition(&sources));
+        let source = sources[j];
+        assert_eq!(
+            (code.as_str(), field.as_str(), value),
+            (
+                "SOURCES_INCOMPATIBLE",
+                format!("sources[{j}]").as_str(),
+                source.to_string()
+            ),
+            "{sources:?}"
+        );
+        assert_eq!(refused_message, message);
+    }
+    // A custom definition of the shape reads custom and typed policies alike.
+    let custom = with(
+        &without(
+            &t.definition(&[t.custom, t.typed[0], t.other_version]),
+            "threat_role",
+        ),
+        "type",
+        "type = \"custom\"",
+    );
+    let custom = without(&custom, "type_version");
+    t.f.check(&custom).unwrap();
+}
+
+#[test]
+fn the_source_rule_refuses_the_shape_then_the_type_then_the_data_store() {
+    let t = TypedPolicies::new();
+    // A policy of another shape and of no type is refused for its shape.
+    let ((code, field, _), message) = t.f.refused(&t.definition(&[t.typed[0], t.host]));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "sources[1]")
+    );
+    assert!(message.contains("differs in group_by"), "{message}");
+
+    // A custom policy kept in another Data Store is refused for its type.
+    let elsewhere = insert_assigned_policy_of(
+        &t.f.store,
+        "tls-elsewhere",
+        A,
+        &t.f.other_generator,
+        PolicyShape::daily_tls(EndpointRole::Destination),
+        None,
+    );
+    let ((code, field, _), _) = t.f.refused(&t.definition(&[t.typed[0], elsewhere]));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "sources[1]")
+    );
+
+    // A typed policy kept in another Data Store is refused for that.
+    let typed_elsewhere = insert_assigned_policy_of(
+        &t.f.store,
+        "tls-typed-elsewhere",
+        A,
+        &t.f.other_generator,
+        PolicyShape::daily_tls(EndpointRole::Destination),
+        Some(type_ref("server_daily_tls", 1)),
+    );
+    let ((code, field, _), _) = t.f.refused(&t.definition(&[t.typed[0], typed_elsewhere]));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "data_store.server_name")
+    );
+    set_generator_config(&t.f.store, &t.f.generator, None);
+    let ((code, field, _), _) = t.f.refused(&t.definition(&t.typed));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("DATA_STORE_NOT_INSTALLED", "data_store.server_name")
+    );
+}
+
+#[test]
+fn a_custom_definitions_keys_must_be_its_sources_values() {
+    let f = PolicyFixture::new();
+    insert_internal_network(&f.store, A);
+    let [ungrouped, _] = f.assigned;
+    let grouped = f.assigned_policy(
+        "grouped",
+        &f.generator,
+        PolicyShape::grouped(EndpointRole::Destination),
+    );
+    let definition = |source: u32, extra: &str| {
+        timeseries_definition(&[source], &f.server_name, OWN_ADDRESS, extra)
+    };
+    f.check(&definition(ungrouped, "")).unwrap();
+    f.check(&definition(grouped, "group_by = \"destination\""))
+        .unwrap();
+
+    for (text, (field, value), message) in [
+        (
+            definition(ungrouped, "raw_event_kind = \"dns\""),
+            ("raw_event_kind", "dns"),
+            format!(
+                "raw_event_kind differs from time series generation policy {ungrouped}, which \
+                 has raw event kind \"conn\""
+            ),
+        ),
+        (
+            definition(grouped, "group_by = \"source\""),
+            ("group_by", "source"),
+            format!(
+                "group_by differs from time series generation policy {grouped}, which has its \
+                 series grouped by \"destination\""
+            ),
+        ),
+        (
+            definition(grouped, ""),
+            ("group_by", ""),
+            format!(
+                "group_by differs from time series generation policy {grouped}, which has its \
+                 series grouped by \"destination\""
+            ),
+        ),
+        (
+            definition(ungrouped, "group_by = \"destination\""),
+            ("group_by", "destination"),
+            format!(
+                "group_by differs from time series generation policy {ungrouped}, which has its \
+                 series not grouped"
+            ),
+        ),
+        (
+            definition(ungrouped, "slot_size = 300"),
+            ("slot_size", "300"),
+            format!(
+                "slot_size differs from time series generation policy {ungrouped}, which has \
+                 slot size 900"
+            ),
+        ),
+        // With more than one key differing, the first in order is refused.
+        (
+            definition(
+                grouped,
+                "raw_event_kind = \"dns\"\ngroup_by = \"source\"\nslot_size = 300",
+            ),
+            ("raw_event_kind", "dns"),
+            format!(
+                "raw_event_kind differs from time series generation policy {grouped}, which \
+                 has raw event kind \"conn\""
+            ),
+        ),
+        (
+            definition(ungrouped, "group_by = \"source\"\nslot_size = 300"),
+            ("group_by", "source"),
+            format!(
+                "group_by differs from time series generation policy {ungrouped}, which has its \
+                 series not grouped"
+            ),
+        ),
+    ] {
+        let ((code, refused_field, refused_value), refused_message) = f.refused(&text);
+        assert_eq!(
+            (
+                code.as_str(),
+                refused_field.as_str(),
+                refused_value.as_str()
+            ),
+            ("SOURCES_INCOMPATIBLE", field, value),
+            "{text}"
+        );
+        assert_eq!(refused_message, message);
+    }
+
+    // The keys are checked after the shape, and before the Data Store.
+    set_generator_config(&f.store, &f.generator, None);
+    let (refused, _) = f.refused(&definition(ungrouped, "slot_size = 300"));
+    assert_eq!(refused, triple("SOURCES_INCOMPATIBLE", "slot_size", "300"));
+    let (refused, _) = f.refused(&definition(ungrouped, ""));
+    assert_eq!(refused.0, "DATA_STORE_NOT_INSTALLED");
+}
+
+#[test]
+fn a_type_definitions_time_series_keys_are_fixed_by_its_type() {
+    let t = TypedPolicies::new();
+    // The type fixes its keys, so the catalog check refuses another value
+    // before the sources are read.
+    let text = daily_tls_definition(
+        ("server_daily_tls", "destination", "target"),
+        &[&t.typed[0].to_string()],
+        &t.f.server_name,
+        OWN_ADDRESS,
+        "slot_size = 900",
+    );
+    let (code, field, _) = checked(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("FIELD_FIXED", "slot_size")
+    );
 }

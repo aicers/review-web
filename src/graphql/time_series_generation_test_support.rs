@@ -13,7 +13,7 @@ use review_database::{
     Agent, AgentKind, AgentStatus, CounterpartScope, EndpointRole, GroupByUnit, HostNetworkGroup,
     Lifecycle, Measure, ModelInstance, ModelMethod, NewTimeSeriesGenerationPolicy,
     NewTrainingDefinition, Node, NodeProfile, NodeUpdate, OwnedNetwork, RawEventKind, SlotSize,
-    Store, WindowSize, event::NetworkType,
+    Store, TimeSeriesGenerationPolicy, TimeSeriesTypeRef, WindowSize, event::NetworkType,
 };
 use review_protocol::types::ResourceUsage;
 use tempfile::TempDir;
@@ -155,6 +155,27 @@ impl PolicyShape {
             ..Self::default()
         }
     }
+
+    /// The shape of the daily TLS time-series types, `server_daily_tls` with
+    /// [`EndpointRole::Destination`] and `host_daily_tls` with
+    /// [`EndpointRole::Source`]: a 5-minute count of TLS events grouped by
+    /// `group_by`, which needs an internal network of the policy's customer.
+    pub(super) fn daily_tls(group_by: EndpointRole) -> Self {
+        Self {
+            raw_event_kind: RawEventKind::Tls,
+            group_by: Some(group_by),
+            slot_size: SlotSize::FiveMinutes,
+            ..Self::default()
+        }
+    }
+}
+
+/// Returns a reference to the time-series type `id` at `version`.
+pub(super) fn type_ref(id: &str, version: u32) -> TimeSeriesTypeRef {
+    TimeSeriesTypeRef {
+        id: id.to_string(),
+        version,
+    }
 }
 
 /// Stores `10.0.0.0/8` as the only network of `customer_id`, an `Intranet`
@@ -201,6 +222,20 @@ pub(super) fn insert_shaped_policy(
     sensors: &[&str],
     shape: PolicyShape,
 ) -> u32 {
+    insert_policy_of(store, name, customer_id, sensors, shape, None)
+}
+
+/// Stores a draft policy `name` of `customer_id` reading `sensors` with
+/// `shape`, made from the time-series type `time_series_type` or custom with
+/// `None`, and returns its ID. A type's policy must have the type's shape.
+pub(super) fn insert_policy_of(
+    store: &Store,
+    name: &str,
+    customer_id: u32,
+    sensors: &[&str],
+    shape: PolicyShape,
+    time_series_type: Option<TimeSeriesTypeRef>,
+) -> u32 {
     store
         .time_series_generation_policy_map()
         .insert(NewTimeSeriesGenerationPolicy {
@@ -216,7 +251,7 @@ pub(super) fn insert_shaped_policy(
             src_ip: None,
             dst_ip: None,
             sensors: sensors.iter().map(ToString::to_string).collect(),
-            time_series_type: None,
+            time_series_type,
             customer_id,
         })
         .expect("insert policy")
@@ -231,13 +266,34 @@ pub(super) fn insert_assigned_policy(
     generator: &ModelInstance,
     shape: PolicyShape,
 ) -> u32 {
+    insert_assigned_policy_of(store, name, customer_id, generator, shape, None)
+}
+
+/// Stores a policy `name` of `customer_id` with `shape`, made from
+/// `time_series_type` or custom with `None`, reading the sensor of the node
+/// of `generator` and assigned to it, and returns its ID.
+pub(super) fn insert_assigned_policy_of(
+    store: &Store,
+    name: &str,
+    customer_id: u32,
+    generator: &ModelInstance,
+    shape: PolicyShape,
+    time_series_type: Option<TimeSeriesTypeRef>,
+) -> u32 {
     let (node, _, _) = store
         .node_map()
         .get_by_id(generator.node_id)
         .expect("read generator node")
         .expect("generator node exists");
     let hostname = node.profile.expect("generator node is applied").hostname;
-    let id = insert_shaped_policy(store, name, customer_id, &[&sensor_name(&hostname)], shape);
+    let id = insert_policy_of(
+        store,
+        name,
+        customer_id,
+        &[&sensor_name(&hostname)],
+        shape,
+        time_series_type,
+    );
     store
         .time_series_generation_policy_map()
         .assign(id, Some(generator), true)
@@ -517,6 +573,50 @@ impl PolicyFixture {
     /// store again, so that reading that record fails while every other
     /// record reads as before.
     pub(super) fn with_undecodable_row(self, column_family: &str, key: &str) -> Self {
+        self.with_row(column_family, key, &[0xff])
+    }
+
+    /// Closes the store, rewrites the stored policy `id` as `edit` changes
+    /// it, bypassing every check of the policy table, and opens the store
+    /// again. It stores what the table's writes refuse, such as a policy of
+    /// a type version the catalog no longer has.
+    pub(super) fn with_policy_edited(
+        self,
+        id: u32,
+        edit: impl FnOnce(&mut TimeSeriesGenerationPolicy),
+    ) -> Self {
+        use bincode::Options;
+
+        // The policy table's name in review-database, and its encoding.
+        const POLICY_TABLE: &str = "time series generation policy";
+        let mut policy = self
+            .store
+            .time_series_generation_policy_map()
+            .get_by_id(id)
+            .expect("read the policy")
+            .expect("the policy exists");
+        edit(&mut policy);
+        let value = bincode::DefaultOptions::new()
+            .serialize(&policy)
+            .expect("a policy serializes");
+        let name = policy.name.clone();
+        let edited = self.with_row(POLICY_TABLE, &name, &value);
+        assert_eq!(
+            edited
+                .store
+                .time_series_generation_policy_map()
+                .get_by_id(id)
+                .expect("read the edited policy")
+                .as_ref(),
+            Some(&policy),
+            "the edited policy reads back"
+        );
+        edited
+    }
+
+    /// Closes the store, overwrites the row `key` of the table
+    /// `column_family` with `value`, and opens the store again.
+    fn with_row(self, column_family: &str, key: &str, value: &[u8]) -> Self {
         const STATES_DIRECTORY: &str = "states.db";
 
         let Self {
@@ -540,7 +640,7 @@ impl PolicyFixture {
             )
             .expect("open the closed store");
             let handle = raw.cf_handle(column_family).expect("the table exists");
-            raw.put_cf(handle, key.as_bytes(), [0xff])
+            raw.put_cf(handle, key.as_bytes(), value)
                 .expect("overwrite the row");
         }
         let store = Store::new(db.path(), backup.path(), None).expect("open the store again");

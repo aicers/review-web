@@ -6287,7 +6287,7 @@ mod tests {
                 customer_id,
                 instance: instance.clone(),
                 method: review_database::ModelMethod::Timeseries,
-                raw_event_kind: "timeseries".to_string(),
+                raw_event_kind: "conn".to_string(),
                 log_kind: None,
                 sources: vec![policy.to_string()],
                 indicator: None,

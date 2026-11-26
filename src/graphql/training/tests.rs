@@ -2,9 +2,9 @@
 //! lifecycle mutations.
 
 use review_database::{
-    ClusteringModelTypeRef, EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite,
-    ModelInstance, NodeUpdate, RunState, SlotSize, Store, TrainingDefinitionUpdate,
-    types::ModelScores,
+    ClusteringModelTypeRef, EndpointRole, EngineDetectorRef, EngineDocumentRefs,
+    EngineDocumentWrite, ModelInstance, NodeUpdate, RunState, SlotSize, Store,
+    TrainingDefinitionUpdate, types::ModelScores,
 };
 use serde_json::{Value, json};
 
@@ -18,9 +18,13 @@ use crate::graphql::{
     },
     time_series_generation_test_support::{
         PolicyShape, SENSOR_KEY, generator_config, insert_assigned_policy,
-        insert_generator_node_with, insert_policy, sensor_name, timeseries_definition,
+        insert_assigned_policy_of, insert_generator_node_with, insert_internal_network,
+        insert_policy, sensor_name, timeseries_definition, type_ref,
     },
-    training_test_support::{http_url_definition, prefix_definition, window_end, window_start},
+    training_test_support::{
+        http_url_definition, prefix_definition, server_daily_tls_definition, window_end,
+        window_start,
+    },
 };
 
 const A: u32 = 1;
@@ -597,9 +601,9 @@ async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_deliver
     assert_eq!(data(res), json!({ "insertTrainingDefinition": "series" }));
     let stored = stored(&f.store(), "series").expect("stored");
     assert_eq!(stored.method, review_database::ModelMethod::Timeseries);
-    // The record names the kind as the engine records a time-series model's,
-    // while the text keeps `timeseries`.
-    assert_eq!(stored.raw_event_kind, "periodic_time_series");
+    // The record stores the definition's network raw event kind, as the
+    // engine records it on the model.
+    assert_eq!(stored.raw_event_kind, "conn");
     assert_eq!(stored.log_kind, None);
     assert_eq!(stored.clustering_model_type, ClusteringModelTypeRef::Custom);
     assert_eq!(stored.definition, text);
@@ -713,7 +717,12 @@ async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
             ),
         )
     };
-    let text = |sources: &[u32]| timeseries_definition(sources, &f.server_name, OWN_ADDRESS, "");
+    // A custom definition's slot_size is that of the policies it reads.
+    let text = |sources: &[u32]| {
+        let slot_size = if sources.contains(&hourly) { 3600 } else { 900 };
+        let extra = format!("slot_size = {slot_size}");
+        timeseries_definition(sources, &f.server_name, OWN_ADDRESS, &extra)
+    };
     let differs = |source: u32| {
         (
             "SOURCES_INCOMPATIBLE".to_string(),
@@ -732,7 +741,7 @@ async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
         run_id,
         &f.engine_a,
         "series",
-        (TIMESERIES_KIND, "periodic_time_series"),
+        (TIMESERIES_KIND, "conn"),
     );
     let model = model_by_name(&f.store(), "series").unwrap().unwrap();
     assert_eq!(model.kind, TIMESERIES_KIND);
@@ -795,7 +804,7 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 kind: TIMESERIES_KIND.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                raw_event_kind: "periodic_time_series".to_string(),
+                raw_event_kind: "conn".to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
@@ -3216,7 +3225,7 @@ async fn a_prefix_log_kind_is_fixed_once_its_first_model_exists() {
 }
 
 #[tokio::test]
-async fn a_custom_timeseries_run_completes_with_a_periodic_time_series_upload() {
+async fn a_custom_timeseries_run_completes_with_an_upload_of_its_raw_event_kind() {
     let f = fixture().await;
     let generator = insert_generator_node_with(
         &f.store(),
@@ -3229,7 +3238,7 @@ async fn a_custom_timeseries_run_completes_with_a_periodic_time_series_upload() 
     let text = timeseries_definition(&[policy], &f.server_name, OWN_ADDRESS, "");
     f.define(&f.engine_a, "series", &text).await;
     let definition = stored(&f.store(), "series").unwrap();
-    assert_eq!(definition.raw_event_kind, "periodic_time_series");
+    assert_eq!(definition.raw_event_kind, "conn");
     assert_eq!(definition.log_kind, None);
     assert_eq!(definition.definition, text);
 
@@ -3240,7 +3249,7 @@ async fn a_custom_timeseries_run_completes_with_a_periodic_time_series_upload() 
             &f.engine_a,
             review_database::Model {
                 clustering_model_type: ClusteringModelTypeRef::Custom,
-                ..upload("series", (TIMESERIES_KIND, "periodic_time_series"))
+                ..upload("series", (TIMESERIES_KIND, "conn"))
             },
         )
         .expect("complete the run");
@@ -3252,9 +3261,9 @@ async fn a_custom_timeseries_run_completes_with_a_periodic_time_series_upload() 
         data(res),
         json!({ "trainingDefinition": {
             "state": "READY",
-            "rawEventKind": "periodic_time_series",
+            "rawEventKind": "conn",
             "model": {
-                "rawEventKind": "periodic_time_series",
+                "rawEventKind": "conn",
                 "clusteringModelType": { "id": "custom", "version": null },
             },
         } })
@@ -3312,4 +3321,335 @@ async fn a_model_shows_its_clustering_model_type_and_training_read() {
             },
         } } })
     );
+}
+
+// ---------------------------------------------------------------------------
+// Time-series types
+
+/// Returns `server_daily_tls` at `version`.
+fn server_daily_tls(version: u32) -> ClusteringModelTypeRef {
+    ClusteringModelTypeRef::Catalog {
+        id: "server_daily_tls".to_string(),
+        version,
+    }
+}
+
+/// The policies of customer A of the time-series type tests, assigned to a
+/// generator writing to the fixture's Data Store `STORE_HOST`.
+struct TlsPolicies {
+    /// `server_daily_tls` version 1 policies.
+    typed: [String; 2],
+    /// A custom policy of the `server_daily_tls` shape.
+    custom: String,
+    /// A `host_daily_tls` version 1 policy.
+    host: String,
+}
+
+fn tls_policies(f: &Fixture) -> TlsPolicies {
+    let store = f.store();
+    insert_internal_network(&store, A);
+    let generator = insert_generator_node_with(
+        &store,
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let server = PolicyShape::daily_tls(EndpointRole::Destination);
+    let policy = |name: &str, shape, of: Option<&str>| {
+        insert_assigned_policy_of(
+            &store,
+            name,
+            A,
+            &generator,
+            shape,
+            of.map(|id| type_ref(id, 1)),
+        )
+        .to_string()
+    };
+    TlsPolicies {
+        typed: ["tls-1", "tls-2"].map(|name| policy(name, server, Some("server_daily_tls"))),
+        custom: policy("tls-custom", server, None),
+        host: policy(
+            "tls-host",
+            PolicyShape::daily_tls(EndpointRole::Source),
+            Some("host_daily_tls"),
+        ),
+    }
+}
+
+/// Returns the `SOURCES_INCOMPATIBLE` refusal of the source at `j`.
+fn incompatible(j: usize, source: &str) -> (String, String, String) {
+    (
+        "SOURCES_INCOMPATIBLE".to_string(),
+        format!("sources[{j}]"),
+        source.to_string(),
+    )
+}
+
+#[tokio::test]
+async fn a_server_daily_tls_definition_reads_only_its_types_policies_through_every_writer() {
+    let f = fixture().await;
+    let p = tls_policies(&f);
+    let text =
+        |sources: &[&str]| server_daily_tls_definition(sources, &f.server_name, OWN_ADDRESS, "");
+    let [t1, t2] = &p.typed;
+
+    // insertTrainingDefinition
+    for (sources, j) in [
+        (vec![t1.as_str(), p.custom.as_str()], 1),
+        (vec![p.host.as_str()], 0),
+    ] {
+        let res = f
+            .sec(&insert(&f.engine_a, "tls", &text(&sources)), &[A])
+            .await;
+        assert_eq!(refused(&res), incompatible(j, sources[j]), "{sources:?}");
+    }
+    assert!(stored(&f.store(), "tls").is_none());
+    let res = f.sec(&insert(&f.engine_a, "tls", &text(&[t1])), &[A]).await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "tls" }));
+    let definition = stored(&f.store(), "tls").unwrap();
+    // The record stores the type's network raw event kind.
+    assert_eq!(definition.raw_event_kind, "tls");
+    assert_eq!(definition.clustering_model_type, server_daily_tls(1));
+
+    // updateTrainingDefinition
+    for (sources, j) in [
+        (vec![t1.as_str(), p.custom.as_str()], 1),
+        (vec![p.custom.as_str()], 0),
+        (vec![p.host.as_str()], 0),
+    ] {
+        let res = f.sec(&update("tls", &text(&sources)), &[A]).await;
+        assert_eq!(refused(&res), incompatible(j, sources[j]), "{sources:?}");
+    }
+    let res = f.sec(&update("tls", &text(&[t1, t2])), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+
+    // The engine's upload of the model, of the record's raw event kind, is
+    // accepted.
+    let run_id = f.train("tls").await;
+    f.store()
+        .complete_run(
+            run_id,
+            &f.engine_a,
+            review_database::Model {
+                clustering_model_type: server_daily_tls(1),
+                cluster_count_at_training: Some(4),
+                ..upload("tls", (TIMESERIES_KIND, "tls"))
+            },
+        )
+        .expect("complete the run");
+    assert_eq!(f.run_state(run_id), Some(RunState::Succeeded));
+
+    // cloneModel
+    let copy = |sources: &[&str]| {
+        clone(
+            "tls",
+            "copy",
+            &f.engine_a2,
+            (&f.server_name, OWN_ADDRESS),
+            sources,
+            "",
+        )
+    };
+    let res = f.sec(&copy(&[t2, &p.custom]), &[A]).await;
+    assert_eq!(refused(&res), incompatible(1, &p.custom));
+    assert!(stored(&f.store(), "copy").is_none());
+    let res = f.sec(&copy(&[t2]), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+    let copied = stored(&f.store(), "copy").unwrap();
+    assert_eq!(copied.raw_event_kind, "tls");
+    assert_eq!(copied.clustering_model_type, server_daily_tls(1));
+}
+
+#[tokio::test]
+async fn a_server_daily_tls_definition_of_another_kind_or_a_short_window_is_refused() {
+    let f = fixture().await;
+    let p = tls_policies(&f);
+    let text = server_daily_tls_definition(&[&p.typed[0]], &f.server_name, OWN_ADDRESS, "");
+    let res = f
+        .sec(
+            &insert(
+                &f.engine_a,
+                "tls",
+                &text.replace(
+                    "raw_event_kind = \"tls\"",
+                    "raw_event_kind = \"timeseries\"",
+                ),
+            ),
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "EVENT_KIND_NOT_ALLOWED".to_string(),
+            "raw_event_kind".to_string(),
+            "timeseries".to_string()
+        )
+    );
+    let start: jiff::Timestamp = window_start().parse().unwrap();
+    let six_days = start
+        .checked_add(jiff::SignedDuration::from_hours(6 * 24))
+        .unwrap()
+        .to_string();
+    let res = f
+        .sec(
+            &insert(
+                &f.engine_a,
+                "tls",
+                &with_window(&text, window_start(), &six_days),
+            ),
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "BOUND_VIOLATED".to_string(),
+            "window_end".to_string(),
+            six_days
+        )
+    );
+    assert!(stored(&f.store(), "tls").is_none());
+}
+
+#[tokio::test]
+async fn a_custom_timeseries_definition_keeps_its_keys_to_its_sources_through_every_writer() {
+    let f = fixture().await;
+    let p = tls_policies(&f);
+    let custom = |sources: &[&str], extra: &str| {
+        server_daily_tls_definition(sources, &f.server_name, OWN_ADDRESS, extra)
+            .replace(
+                "type = \"server_daily_tls\"\ntype_version = 1\n",
+                "type = \"custom\"\n",
+            )
+            .replace("threat_role = \"target\"\n", "")
+    };
+    for (extra, field, value) in [
+        ("raw_event_kind = \"conn\"", "raw_event_kind", "conn"),
+        ("group_by = \"source\"", "group_by", "source"),
+        ("slot_size = 600", "slot_size", "600"),
+    ] {
+        let res = f
+            .sec(
+                &insert(&f.engine_a, "series", &custom(&[&p.custom], extra)),
+                &[A],
+            )
+            .await;
+        assert_eq!(
+            refused(&res),
+            (
+                "SOURCES_INCOMPATIBLE".to_string(),
+                field.to_string(),
+                value.to_string()
+            ),
+            "{extra}"
+        );
+    }
+    let without_group_by = custom(&[&p.custom], "").replace("group_by = \"destination\"\n", "");
+    let res = f
+        .sec(&insert(&f.engine_a, "series", &without_group_by), &[A])
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCES_INCOMPATIBLE".to_string(),
+            "group_by".to_string(),
+            String::new()
+        )
+    );
+    // Matching keys pass, over custom and typed policies alike.
+    f.define(
+        &f.engine_a,
+        "series",
+        &custom(&[&p.custom, &p.typed[0]], ""),
+    )
+    .await;
+    assert_eq!(stored(&f.store(), "series").unwrap().raw_event_kind, "tls");
+
+    let res = f
+        .sec(
+            &update("series", &custom(&[&p.custom], "slot_size = 600")),
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCES_INCOMPATIBLE".to_string(),
+            "slot_size".to_string(),
+            "600".to_string()
+        )
+    );
+    let res = f.sec(&update("series", &without_group_by), &[A]).await;
+    assert_eq!(code(&res), "SOURCES_INCOMPATIBLE");
+
+    // A clone of a custom model keeps the shape check only, so a typed
+    // policy of the trained shape is accepted.
+    let run_id = f.train("series").await;
+    complete_as(
+        &f.store(),
+        run_id,
+        &f.engine_a,
+        "series",
+        (TIMESERIES_KIND, "tls"),
+    );
+    let res = f
+        .sec(
+            &clone(
+                "series",
+                "copy",
+                &f.engine_a2,
+                (&f.server_name, OWN_ADDRESS),
+                &[&p.typed[1]],
+                "",
+            ),
+            &[A],
+        )
+        .await;
+    assert!(res.errors.is_empty(), "{res:?}");
+}
+
+#[tokio::test]
+async fn a_model_shows_its_cluster_count_at_training() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let policy =
+        insert_assigned_policy(&f.store(), "series", A, &generator, PolicyShape::default());
+    let text = timeseries_definition(&[policy], &f.server_name, OWN_ADDRESS, "");
+    f.define(&f.engine_a, "series", &text).await;
+    let run_id = f.train("series").await;
+    f.store()
+        .complete_run(
+            run_id,
+            &f.engine_a,
+            review_database::Model {
+                clustering_model_type: ClusteringModelTypeRef::Custom,
+                cluster_count_at_training: Some(4),
+                ..upload("series", (TIMESERIES_KIND, "conn"))
+            },
+        )
+        .expect("complete the run");
+    let multi = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "multi", &multi).await;
+    f.train_to_completion("multi", &f.engine_a).await;
+
+    for (name, count) in [("series", json!("4")), ("multi", Value::Null)] {
+        let res = f
+            .sys(&format!(
+                "{{ trainingDefinition(name: {}) {{ model {{ clusterCountAtTraining }} }} }}",
+                gql(name)
+            ))
+            .await;
+        assert_eq!(
+            data(res),
+            json!({ "trainingDefinition": { "model": { "clusterCountAtTraining": count } } }),
+            "{name}"
+        );
+    }
 }

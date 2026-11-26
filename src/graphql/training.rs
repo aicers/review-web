@@ -175,11 +175,22 @@ impl TrainingMutation {
     /// reads in `log_kind`, which is neither empty nor the name of another raw
     /// event kind, such as `http`, or is refused with `EVENT_KIND_NOT_ALLOWED`.
     /// A `timeseries` definition takes a network raw event kind, such as
-    /// `conn`, and as sources the IDs of time series generation policies of
-    /// the customer that are assigned, of one raw event kind, measure,
-    /// grouping endpoint, grouping unit, counterpart scope, slot size, window
-    /// size and UTC offset, and kept in the Data Store `[data_store]` names,
-    /// which their generators still write to.
+    /// `conn`, which its record stores as it does a `multidimension`
+    /// definition's, and as sources the IDs of time series generation
+    /// policies of the customer that are assigned, of one raw event kind,
+    /// measure, grouping endpoint, grouping unit, counterpart scope, slot
+    /// size, window size and UTC offset, and kept in the Data Store
+    /// `[data_store]` names, which their generators still write to. A
+    /// definition of a time-series type, such as `server_daily_tls`, reads
+    /// only policies made from that type at its version; a custom policy, a
+    /// policy of another type and one of another version of the type are
+    /// refused with `SOURCES_INCOMPATIBLE` at the first such source. A custom
+    /// `timeseries` definition's `raw_event_kind`, `group_by` (absent exactly
+    /// when the policies are not grouped) and `slot_size`, in seconds, must
+    /// be its sources' values; the first that is not is refused with
+    /// `SOURCES_INCOMPATIBLE` at that key, with the definition's value. The
+    /// sources are checked in this order: the customer's assigned policies,
+    /// the shape, the type, a custom definition's keys, then the Data Store.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the instance's customer is unfinished, also while it is stopped.
@@ -220,6 +231,7 @@ impl TrainingMutation {
             &addrs,
             &HashSet::new(),
             ShapeReference::FirstSource,
+            &clustering_model_type,
             system_admin,
         )?;
         document.check_retention(&store, jiff::Timestamp::now())?;
@@ -260,7 +272,9 @@ impl TrainingMutation {
     /// Once its timeseries model exists, a timeseries definition's sources
     /// must have the shape of the policies the model was trained on, which
     /// the model's detectors read; otherwise they are refused with
-    /// `SOURCES_INCOMPATIBLE`.
+    /// `SOURCES_INCOMPATIBLE`. They must also be of the definition's
+    /// time-series type, and a custom definition's keys their values, as
+    /// `insertTrainingDefinition` checks them.
     ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the definition's customer is unfinished, also while it is stopped.
@@ -297,6 +311,7 @@ impl TrainingMutation {
             &addrs,
             &kept,
             shape,
+            &clustering_model_type,
             system_admin,
         )?;
         document.check_retention(&store, jiff::Timestamp::now())?;
@@ -351,7 +366,8 @@ impl TrainingMutation {
     /// sources, an installed Data Store and the Data Store's retention; and
     /// the definition text the run starts with is relayed to the instance. A
     /// retrain of a timeseries model keeps the shape of the policies it was
-    /// trained on, as `updateTrainingDefinition` does.
+    /// trained on, and a timeseries definition's sources are checked against
+    /// its type and keys, as `updateTrainingDefinition` does.
     ///
     /// Refusals carry `extensions.code`: `NOT_FOUND`; the codes of the
     /// clustering model type check, as `insertTrainingDefinition` lists
@@ -381,7 +397,7 @@ impl TrainingMutation {
             let Some(hostname) = applied_hostname(&store, instance.node_id)? else {
                 return Err(no_hostname(instance));
             };
-            check_type(&stored.definition)?;
+            let model_type = check_type(&stored.definition)?;
             let document = TrainingDocument::parse(&stored.definition).map_err(|_| {
                 refusal(
                     RefusalCode::InvalidDocument,
@@ -390,7 +406,12 @@ impl TrainingMutation {
                     &name,
                 )
             })?;
-            document.check_sources(&store, stored.customer_id, retrain_shape(&store, &name)?)?;
+            document.check_sources(
+                &store,
+                stored.customer_id,
+                retrain_shape(&store, &name)?,
+                &model_type,
+            )?;
             document.check_data_store(
                 &store,
                 &[],
@@ -509,6 +530,11 @@ impl TrainingMutation {
     /// so a timeseries target's sources must have the shape of the policies
     /// the source was trained on, and while none of those is stored, the
     /// shape is unknown and any source is refused with
+    /// `SOURCES_INCOMPATIBLE`. A source model trained as a time-series type,
+    /// such as `server_daily_tls`, gives its target that type, so the
+    /// target's sources must be policies made from it at that version, and
+    /// a custom target's keys must be its sources' values, as
+    /// `insertTrainingDefinition` checks them; otherwise
     /// `SOURCES_INCOMPATIBLE`.
     ///
     /// The caller must belong to the source's customer and the target
@@ -616,6 +642,7 @@ impl TrainingMutation {
                 &addrs,
                 &trained_pair,
                 trained_shape(&store, &source, &model.trained_sources)?,
+                &model.clustering_model_type,
                 system_admin,
             )?;
             let (raw_event_kind, log_kind) = document.record_kinds();
@@ -1389,8 +1416,8 @@ impl TrainingDefinition {
 
     /// The Giganto kind name of the raw events the definition trains on,
     /// such as `http`. A prefix definition's is `log`, the log being named by
-    /// the definition's `log_kind`; a timeseries definition's is
-    /// `periodic_time_series`.
+    /// the definition's `log_kind`; a timeseries definition's is the network
+    /// kind its policies count, such as `tls`.
     async fn raw_event_kind(&self) -> &str {
         &self.inner.raw_event_kind
     }
