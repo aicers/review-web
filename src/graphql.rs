@@ -162,6 +162,7 @@ pub(super) fn schema<O>(
     manager_node_hostname: Option<String>,
     tls_reload_handle: Arc<Notify>,
     maintenance_gate: MaintenanceGate,
+    active_query_send_gate: crate::active_query::ActiveQuerySendGate,
     customer_data_deletion_manager: Arc<CustomerDataDeletionTaskManager>,
 ) -> Schema
 where
@@ -174,6 +175,7 @@ where
         Subscription::default(),
     )
     .data(store)
+    .data(active_query_send_gate)
     .data(agent_manager)
     .data(package_deployer)
     .data(host_onboarder)
@@ -1691,6 +1693,7 @@ struct TestSchema {
     network_lists_lock: Arc<network_list::NetworkListsLock>,
     engine_config_lock: Arc<engine_config::EngineConfigLock>,
     dai_writes_lock: Arc<dai::DaiWritesLock>,
+    active_query_send_gate: crate::active_query::ActiveQuerySendGate,
     time_series_generation_policies_lock:
         Arc<time_series_generation::TimeSeriesGenerationPoliciesLock>,
 }
@@ -1817,6 +1820,7 @@ impl TestSchema {
         let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
         let engine_config_lock = Arc::new(engine_config::EngineConfigLock::default());
         let dai_writes_lock = Arc::new(dai::DaiWritesLock::default());
+        let active_query_send_gate = crate::active_query::ActiveQuerySendGate::default();
         let customer_data_deletion_manager = Arc::new(CustomerDataDeletionTaskManager::default());
         let time_series_generation_policies_lock =
             Arc::clone(customer_data_deletion_manager.time_series_generation_policies_lock());
@@ -1834,6 +1838,7 @@ impl TestSchema {
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
         .data(dai_writes_lock.clone())
+        .data(active_query_send_gate.clone())
         .data(time_series_generation_policies_lock.clone())
         .data(customer_data_deletion_manager)
         .data(node::ManagerNodeHostname(manager_node_hostname))
@@ -1852,6 +1857,7 @@ impl TestSchema {
             network_lists_lock,
             engine_config_lock,
             dai_writes_lock,
+            active_query_send_gate,
             time_series_generation_policies_lock,
         }
     }

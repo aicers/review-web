@@ -299,6 +299,11 @@ struct DaiResolveExplanation<'a> {
 
 #[Object(name = "DaiExplanation")]
 impl DaiResolveExplanation<'_> {
+    /// The display-only answers valid at the item's time, in kind order.
+    async fn active_answers(&self) -> Vec<super::active_query::DaiActiveAnswer<'_>> {
+        self.inner.active_answers.iter().map(Into::into).collect()
+    }
+
     /// The bindings that decided the answer, in start order.
     async fn bindings(&self) -> Vec<DaiResolveBinding<'_>> {
         self.inner

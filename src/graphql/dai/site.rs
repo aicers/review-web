@@ -164,7 +164,8 @@ impl DaiSiteMutation {
         customer_id: ID,
         token: String,
     ) -> Result<String> {
-        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
+        let (customer_id, _lock, _send, store) =
+            super::writable_customer_gated(ctx, &customer_id).await?;
         store
             .remove_dai_site(customer_id, &token)
             .map_err(dai_refusal)?;

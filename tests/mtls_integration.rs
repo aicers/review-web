@@ -657,6 +657,7 @@ mod mtls_integration {
             trust_generation_max_bytes: TRUST_GENERATION_MAX_BYTES,
             endpoint_manager: Arc::new(StubEndpointManager),
             maintenance_gate: maintenance_gate.clone(),
+            active_query_send_gate: review_web::active_query::ActiveQuerySendGate::default(),
         };
 
         let shutdown = review_web::serve(

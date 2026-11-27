@@ -179,6 +179,10 @@ impl DbManagementMutation {
     async fn restore_from_latest_backup(&self, ctx: &Context<'_>) -> Result<bool> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_caller!(ctx, "Database is being restored from the latest backup");
+        let _send = ctx
+            .data::<crate::active_query::ActiveQuerySendGate>()?
+            .write()
+            .await;
         backup::restore(store, None)?;
         Ok(true)
     }
@@ -196,6 +200,10 @@ impl DbManagementMutation {
         let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_caller!(ctx, "Database is being restored from backup {}", id);
+        let _send = ctx
+            .data::<crate::active_query::ActiveQuerySendGate>()?
+            .write()
+            .await;
         backup::restore(store, Some(id))?;
         info_with_caller!(ctx, "Database successfully restored from backup {}", id);
         Ok(true)
