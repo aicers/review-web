@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::backend::{SignatureRule as BackendRule, SignatureRulePage};
 use crate::graphql::TestSchema;
-use crate::signature_test_support::impl_signature_test_manager;
+use crate::tests::signature_test_support::impl_signature_test_manager;
 
 #[derive(Default)]
 struct Manager {
@@ -75,6 +75,37 @@ async fn data(schema: &TestSchema, query: &str) -> Value {
     let response = schema.execute_as_system_admin(query).await;
     assert!(response.errors.is_empty(), "{query}: {:?}", response.errors);
     response.data.into_json().unwrap()
+}
+
+#[tokio::test]
+async fn default_manager_refuses_listings_but_preserves_mutations() {
+    let schema = TestSchema::new().await;
+    let response = schema.execute_as_system_admin(RULES).await;
+    assert_eq!(response.errors.len(), 1);
+    assert_eq!(response.errors[0].message, "Not supported");
+
+    assert_eq!(
+        data(
+            &schema,
+            "mutation {setSignatureSourceEnabled(source:ET_OPEN,enabled:true)}"
+        )
+        .await,
+        json!({"setSignatureSourceEnabled":true})
+    );
+    assert!(
+        schema
+            .store()
+            .signature_source(Source::EtOpen)
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
+fn unrelated_store_errors_keep_their_message_without_signature_codes() {
+    let error = store_error(anyhow::anyhow!("disk full").context("writing signature versions"));
+    assert_eq!(error.message, "writing signature versions");
+    assert!(error.extensions.is_none());
 }
 
 fn ingest(store: &Store, number: u8) -> u64 {
@@ -347,6 +378,57 @@ async fn source_history_keeps_newest_first_and_version_queries_preserve_states()
         );
     }
     assert_eq!(manager.pushes.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn source_references_to_missing_versions_are_errors() {
+    for missing in ["applied", "staged", "kept"] {
+        let dir = tempfile::tempdir().unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        let missing_id = {
+            let store = Store::new(dir.path(), backup.path(), None).unwrap();
+            let kept = stage(&store, 1);
+            store.apply_signature_version(kept).unwrap();
+            let applied = stage(&store, 2);
+            store.apply_signature_version(applied).unwrap();
+            let staged = stage(&store, 3);
+            match missing {
+                "applied" => applied,
+                "staged" => staged,
+                "kept" => kept,
+                _ => unreachable!(),
+            }
+        };
+        {
+            // Simulate an inconsistent store without changing the source row.
+            let path = dir.path().join("states.db");
+            let options = rocksdb::Options::default();
+            let families = rocksdb::DB::list_cf(&options, &path).unwrap();
+            let db = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open_cf(
+                &options, &path, families,
+            )
+            .unwrap();
+            let versions = db.cf_handle("signature source versions").unwrap();
+            db.delete_cf(versions, missing_id.to_be_bytes()).unwrap();
+        }
+        let manager = Arc::new(Manager::default());
+        let schema = TestSchema::new_in(manager.clone(), dir).await;
+        let response = schema.execute_as_system_admin(SOURCES).await;
+        assert_eq!(response.errors.len(), 1, "{missing}");
+        assert_eq!(
+            response.errors[0].message, "a signature source names a missing version",
+            "{missing}"
+        );
+        assert_eq!(
+            data(
+                &schema,
+                &format!("{{signatureSourceVersion(id:\"{missing_id}\"){{id}}}}")
+            )
+            .await,
+            json!({"signatureSourceVersion":null})
+        );
+        assert!(manager.pushes.lock().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]

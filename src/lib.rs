@@ -4,8 +4,6 @@ pub mod customer_data_deletion;
 pub mod graphql;
 pub mod ingress;
 pub mod maintenance;
-#[cfg(test)]
-mod signature_test_support;
 
 use std::sync::RwLock;
 use std::{
@@ -785,6 +783,8 @@ pub(crate) use warn_with_caller;
 
 #[cfg(test)]
 mod tests {
+    pub(crate) mod signature_test_support;
+
     use std::{io::Write, sync::Mutex, time::Duration};
 
     use async_graphql::{ErrorExtensionValues, ServerError};

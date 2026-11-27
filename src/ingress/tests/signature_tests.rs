@@ -1,7 +1,7 @@
 use super::*;
 use crate::backend::{SharedAgentManager, SignatureIngestError, SignatureSourceUpload};
 use crate::ingress::{SIGNATURE_SOURCE_UPLOAD_PATH, SignatureRefusalCode, SignatureSourceLimit};
-use crate::signature_test_support::impl_signature_test_manager;
+use crate::tests::signature_test_support::impl_signature_test_manager;
 
 const VALID: &str = "source=et_open&origin=upload";
 const VERSION_ID: u64 = (1 << 53) + 1;
@@ -93,6 +93,60 @@ async fn published_path_success_and_decoded_provenance() {
             fetched_url: Some("https://example.com/archive".into())
         }]
     );
+}
+
+#[tokio::test]
+async fn logging_filters_do_not_change_upload_responses() {
+    use axum::middleware::{Next, from_fn};
+    use tracing::instrument::WithSubscriber;
+
+    for (error, status, expected) in [
+        (
+            None,
+            StatusCode::ACCEPTED,
+            serde_json::json!({"versionId": VERSION_ID.to_string()}),
+        ),
+        (
+            Some(SignatureIngestError::Unreadable {
+                reason: MARKER.to_owned(),
+            }),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": crate::ingress::ERR_SIGNATURE_UNREADABLE,
+                "code": "UNREADABLE",
+                "reason": MARKER,
+            }),
+        ),
+    ] {
+        let manager = Arc::new(Manager {
+            error: Mutex::new(error),
+            record_bytes: true,
+            ..Manager::default()
+        });
+        let sent = send_authenticated(
+            &Caller::Role(Role::SystemAdministrator),
+            &format!("{SIGNATURE_SOURCE_UPLOAD_PATH}?{VALID}"),
+            Body::from("archive"),
+            |router| {
+                let shared: SharedAgentManager = manager.clone();
+                router
+                    .layer(Extension(shared))
+                    .layer(Extension(SignatureSourceLimit(CAP)))
+                    .layer(from_fn(|request: Request<Body>, next: Next| async move {
+                        next.run(request)
+                            .with_subscriber(tracing::subscriber::NoSubscriber::default())
+                            .await
+                    }))
+            },
+        )
+        .await;
+        assert_eq!(sent.status, status);
+        assert_eq!(serde_json::from_str::<Value>(&sent.raw).unwrap(), expected);
+        assert!(sent.logs.is_empty(), "{}", sent.logs);
+        let seen = manager.observed.lock().unwrap();
+        assert_eq!(seen.uploads.len(), 1);
+        assert_eq!(seen.bytes, b"archive");
+    }
 }
 
 #[tokio::test]
