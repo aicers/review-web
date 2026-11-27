@@ -1,7 +1,7 @@
 //! HTTP ingress for content that cannot travel over GraphQL.
 //!
-//! Signed packages and trust-set generations reach `REView` as streamed
-//! request bodies rather than as base64 in mutations. Everything here forwards
+//! Signed packages, signature sources and trust-set generations reach `REView`
+//! as streamed request bodies rather than as base64 in mutations. Everything here forwards
 //! bytes as they arrive: nothing on these paths collects a body into a buffer,
 //! and each byte cap is enforced chunk by chunk while the body is still being
 //! read.
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::Extension,
+    extract::{Extension, Query, rejection::QueryRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
@@ -45,7 +45,8 @@ use crate::{
     Error,
     backend::{
         AcceptedPackage, CORE_PACKAGE_IDS, IngressStream, IngressStreamError, MODULE_PACKAGE_IDS,
-        PackageIngestError, PackageStoreReceiver, TrustActivation, TrustIngestError, TrustManager,
+        PackageIngestError, PackageStoreReceiver, SharedAgentManager, SignatureIngestError,
+        SignatureSourceUpload, TrustActivation, TrustIngestError, TrustManager,
     },
 };
 
@@ -62,6 +63,22 @@ use crate::{
 /// across two repositories, and a caller that names this constant is carried
 /// through that change by the compiler rather than by a literal it repeated.
 pub const PACKAGE_UPLOAD_PATH: &str = "/api/package/upload";
+
+/// The published path for streamed signature-source archive uploads.
+///
+/// Embedding applications and the BFF use this contract; renaming it requires
+/// a coordinated change, as with [`PACKAGE_UPLOAD_PATH`].
+pub const SIGNATURE_SOURCE_UPLOAD_PATH: &str = "/api/signature-source/upload";
+
+const MAX_SIGNATURE_FETCH_LABEL_BYTES: usize = 256;
+const MAX_SIGNATURE_FETCHED_URL_BYTES: usize = 2_048;
+
+const ERR_SIGNATURE_ROLE: &str = "uploading a signature source is not permitted for this role";
+const ERR_SIGNATURE_PARAMETER: &str = "the signature source parameters are invalid";
+const ERR_SIGNATURE_UNREADABLE: &str = "the signature source archive is unreadable";
+const ERR_SIGNATURE_PRESENT: &str = "the signature source version is already present";
+const ERR_SIGNATURE_OLDER: &str = "the signature source version is older than the applied version";
+const ERR_SIGNATURE_UNAVAILABLE: &str = "the signature source receiver is unavailable";
 
 /// The one path a signed trust-set generation is submitted to.
 ///
@@ -276,6 +293,7 @@ impl From<AcceptedPackage> for AcceptedBuild {
 pub(crate) fn router() -> Router {
     Router::new()
         .route(PACKAGE_UPLOAD_PATH, post(upload_package))
+        .route(SIGNATURE_SOURCE_UPLOAD_PATH, post(upload_signature_source))
         .route(TRUST_GENERATION_PATH, post(submit_trust_generation))
 }
 
@@ -641,8 +659,219 @@ async fn submit_trust_generation(
     Ok(accept_trust_generation(&manager, limit, &actor, body).await?)
 }
 
+/// The inclusive cap for a streamed signature-source archive.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SignatureSourceLimit(pub(crate) u64);
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "code", rename_all = "SCREAMING_SNAKE_CASE")]
+enum SignatureRefusalCode {
+    RoleNotPermitted,
+    InvalidParameter,
+    Unreadable {
+        reason: String,
+    },
+    AlreadyPresent {
+        #[serde(rename = "existingVersionId")]
+        existing_version_id: String,
+    },
+    OlderThanApplied {
+        #[serde(rename = "appliedVersionId")]
+        applied_version_id: String,
+    },
+    TooLarge,
+    Transport,
+    Unavailable,
+}
+
+impl RefusalCode for SignatureRefusalCode {
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::RoleNotPermitted => StatusCode::FORBIDDEN,
+            Self::InvalidParameter | Self::Unreadable { .. } | Self::Transport => {
+                StatusCode::BAD_REQUEST
+            }
+            Self::AlreadyPresent { .. } | Self::OlderThanApplied { .. } => StatusCode::CONFLICT,
+            Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+}
+
+impl SignatureRefusalCode {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::RoleNotPermitted => "ROLE_NOT_PERMITTED",
+            Self::InvalidParameter => "INVALID_PARAMETER",
+            Self::Unreadable { .. } => "UNREADABLE",
+            Self::AlreadyPresent { .. } => "ALREADY_PRESENT",
+            Self::OlderThanApplied { .. } => "OLDER_THAN_APPLIED",
+            Self::TooLarge => "TOO_LARGE",
+            Self::Transport => "TRANSPORT",
+            Self::Unavailable => "UNAVAILABLE",
+        }
+    }
+}
+
+fn signature_refusal(
+    actor: &str,
+    code: SignatureRefusalCode,
+    error: &'static str,
+) -> Refusal<SignatureRefusalCode> {
+    warn!(
+        actor,
+        route = SIGNATURE_SOURCE_UPLOAD_PATH,
+        code = code.name(),
+        "a signature source upload was refused"
+    );
+    Refusal::new(code, error)
+}
+
+fn map_signature_ingest_error(
+    error: SignatureIngestError,
+    actor: &str,
+) -> Refusal<SignatureRefusalCode> {
+    let (code, text) = match error {
+        SignatureIngestError::Unreadable { reason } => (
+            SignatureRefusalCode::Unreadable { reason },
+            ERR_SIGNATURE_UNREADABLE,
+        ),
+        SignatureIngestError::AlreadyPresent {
+            existing_version_id,
+        } => (
+            SignatureRefusalCode::AlreadyPresent {
+                existing_version_id: existing_version_id.to_string(),
+            },
+            ERR_SIGNATURE_PRESENT,
+        ),
+        SignatureIngestError::OlderThanApplied { applied_version_id } => (
+            SignatureRefusalCode::OlderThanApplied {
+                applied_version_id: applied_version_id.to_string(),
+            },
+            ERR_SIGNATURE_OLDER,
+        ),
+        SignatureIngestError::TooLarge => (SignatureRefusalCode::TooLarge, ERR_TOO_LARGE),
+        SignatureIngestError::Transport => (SignatureRefusalCode::Transport, ERR_TRANSPORT),
+        SignatureIngestError::Unavailable => {
+            (SignatureRefusalCode::Unavailable, ERR_SIGNATURE_UNAVAILABLE)
+        }
+    };
+    signature_refusal(actor, code, text)
+}
+
+fn signature_parameters(
+    parameters: Result<Query<Vec<(String, String)>>, QueryRejection>,
+) -> Option<SignatureSourceUpload> {
+    use review_database::SignatureOrigin;
+    use review_protocol::types::SignatureSource;
+
+    let Query(parameters) = parameters.ok()?;
+    let mut source = None;
+    let mut origin = None;
+    let mut fetch_label = None;
+    let mut fetched_url = None;
+    for (name, value) in parameters {
+        if value.is_empty() {
+            return None;
+        }
+        match name.as_str() {
+            "source" if source.is_none() => {
+                source = Some(match value.as_str() {
+                    "et_open" => SignatureSource::EtOpen,
+                    "sigma_hq" => SignatureSource::SigmaHq,
+                    "sigma_hq_emerging" => SignatureSource::SigmaHqEmerging,
+                    _ => return None,
+                });
+            }
+            "origin" if origin.is_none() => {
+                origin = Some(match value.as_str() {
+                    "fetch" => SignatureOrigin::Fetch,
+                    "upload" => SignatureOrigin::Upload,
+                    _ => return None,
+                });
+            }
+            "source_version"
+                if fetch_label.is_none() && value.len() <= MAX_SIGNATURE_FETCH_LABEL_BYTES =>
+            {
+                fetch_label = Some(value);
+            }
+            "fetched_url"
+                if fetched_url.is_none() && value.len() <= MAX_SIGNATURE_FETCHED_URL_BYTES =>
+            {
+                fetched_url = Some(value);
+            }
+            _ => return None,
+        }
+    }
+    let origin = origin?;
+    match origin {
+        SignatureOrigin::Fetch if fetched_url.is_none() => return None,
+        SignatureOrigin::Upload if fetched_url.is_some() || fetch_label.is_some() => return None,
+        SignatureOrigin::Fetch | SignatureOrigin::Upload => {}
+    }
+    Some(SignatureSourceUpload {
+        source: source?,
+        origin,
+        fetch_label,
+        fetched_url,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptedSignatureSource {
+    version_id: String,
+}
+
+async fn upload_signature_source(
+    Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
+    Extension(manager): Extension<SharedAgentManager>,
+    Extension(SignatureSourceLimit(limit)): Extension<SignatureSourceLimit>,
+    peer: Option<Extension<Arc<TlsPeerInfo>>>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    parameters: Result<Query<Vec<(String, String)>>, QueryRejection>,
+    body: Body,
+) -> Result<(StatusCode, Json<AcceptedSignatureSource>), IngressError<SignatureRefusalCode>> {
+    let actor =
+        authenticate(authenticator.as_ref(), peer, auth).map_err(IngressError::Unauthenticated)?;
+    if actor.role != Role::SystemAdministrator {
+        return Err(signature_refusal(
+            &actor.name,
+            SignatureRefusalCode::RoleNotPermitted,
+            ERR_SIGNATURE_ROLE,
+        )
+        .into());
+    }
+    let upload = signature_parameters(parameters).ok_or_else(|| {
+        signature_refusal(
+            &actor.name,
+            SignatureRefusalCode::InvalidParameter,
+            ERR_SIGNATURE_PARAMETER,
+        )
+    })?;
+    let source = upload.source;
+    let version_id = manager
+        .ingest_signature_source(upload, capped_stream(body.into_data_stream(), limit))
+        .await
+        .map_err(|error| map_signature_ingest_error(error, &actor.name))?;
+    info!(
+        actor = actor.name,
+        route = SIGNATURE_SOURCE_UPLOAD_PATH,
+        ?source,
+        version_id,
+        "a signature source upload was accepted"
+    );
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSignatureSource {
+            version_id: version_id.to_string(),
+        }),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    mod signature_tests;
     use std::{
         io::{self, Write},
         sync::{

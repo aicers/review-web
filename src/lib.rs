@@ -46,9 +46,9 @@ use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 use crate::backend::{
     AgentManager, CertManager, EndpointManager, HostOnboarder, PackageStoreReceiver,
-    SharedPackageDeployer, TrustManager,
+    SharedAgentManager, SharedPackageDeployer, TrustManager,
 };
-use crate::ingress::{PackageUploadLimit, TrustGenerationLimit};
+use crate::ingress::{PackageUploadLimit, SignatureSourceLimit, TrustGenerationLimit};
 
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
 const ERR_MTLS_MISSING_CERT: &str = "mTLS client certificate is missing";
@@ -124,6 +124,10 @@ const DERIVED_TRUST_GENERATION_BYTES: u64 = 100 * 180 + 10_000 * 120;
 const _: () =
     assert!(DEFAULT_TRUST_GENERATION_MAX_BYTES - DERIVED_TRUST_GENERATION_BYTES == 879_152);
 
+/// The default signature-source upload cap: RFC 0022's starting value,
+/// sized to the fetcher's 64 MiB fetch cap.
+pub const DEFAULT_SIGNATURE_SOURCE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
@@ -163,6 +167,12 @@ pub struct ServerConfig {
     /// exactly this many bytes is accepted and one byte more is refused
     /// mid-stream with `413`.
     pub package_upload_max_bytes: u64,
+    /// The effective maximum signature-source request-body size in bytes.
+    ///
+    /// The shipped default is [`DEFAULT_SIGNATURE_SOURCE_MAX_BYTES`]. Exactly
+    /// this many bytes is accepted; one byte more is refused mid-stream with
+    /// `413`.
+    pub signature_source_max_bytes: u64,
     /// Verifies and activates a trust generation streamed to the trust-plane
     /// ingress route.
     pub trust_manager: Arc<dyn TrustManager>,
@@ -224,9 +234,10 @@ where
     use axum_server::Handle;
     use tracing::info;
 
+    let agent_manager: SharedAgentManager = Arc::new(agent_manager);
     let schema = graphql::schema(
         store.clone(),
-        agent_manager,
+        Arc::clone(&agent_manager),
         package_deployer,
         host_onboarder,
         ip_locator,
@@ -247,6 +258,10 @@ where
             let router = router
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()))
+                .layer(Extension(Arc::clone(&agent_manager)))
+                .layer(Extension(SignatureSourceLimit(
+                    config.signature_source_max_bytes,
+                )))
                 .layer(Extension(config.package_store.clone()))
                 .layer(Extension(PackageUploadLimit(
                     config.package_upload_max_bytes,
@@ -768,6 +783,8 @@ pub(crate) use warn_with_caller;
 
 #[cfg(test)]
 mod tests {
+    pub(crate) mod signature_test_support;
+
     use std::{io::Write, sync::Mutex, time::Duration};
 
     use async_graphql::{ErrorExtensionValues, ServerError};

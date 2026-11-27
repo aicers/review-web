@@ -54,6 +54,9 @@ pub(super) enum DetectionModel {
     LabelDbMatch,
     FarOutlier,
     WindowOutlier,
+    EtSignature,
+    EtPolicySignature,
+    SigmaSignature,
 }
 
 /// The kind of the raw event a detection event is about.

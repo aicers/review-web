@@ -2866,7 +2866,7 @@ mod tests {
             Arc::new(WithdrawalStub::default().with_withdrawn("hog", "1.1.0", "yyyyyy"));
         let schema = crate::graphql::schema(
             Arc::new(RwLock::new(store)),
-            MockAgentManager {},
+            Arc::new(MockAgentManager {}),
             Arc::new(
                 MockPackageDeployer::with_builds(builds.clone())
                     .with_withdrawals(withdrawals.clone()),

@@ -35,12 +35,22 @@ pub(super) enum Detail<'a> {
     LabelDbMatch(LabelDbMatchDetail<'a>),
     FarOutlier(FarOutlierDetail<'a>),
     WindowOutlier(WindowOutlierDetail<'a>),
+    EtSignature(EtSignatureDetail<'a>),
+    EtPolicySignature(EtPolicySignatureDetail<'a>),
+    SigmaSignature(SigmaSignatureDetail<'a>),
 }
 
 impl<'a> From<&'a protocol::Detail> for Detail<'a> {
     fn from(detail: &'a protocol::Detail) -> Self {
         // No wildcard arm: a detail added to review-protocol must be mapped.
         match detail {
+            protocol::Detail::EtSignature(detail) => Self::EtSignature(EtSignatureDetail(detail)),
+            protocol::Detail::EtPolicySignature(detail) => {
+                Self::EtPolicySignature(EtPolicySignatureDetail(detail))
+            }
+            protocol::Detail::SigmaSignature(detail) => {
+                Self::SigmaSignature(SigmaSignatureDetail(detail))
+            }
             protocol::Detail::WatchlistMatch(detail) => {
                 Self::WatchlistMatch(WatchlistMatchDetail(detail))
             }
@@ -587,3 +597,61 @@ impl SlotDeviation<'_> {
         self.0.centroid_value
     }
 }
+
+// The union needs distinct object names for the three models even though the
+// protocol shares their payload. Borrow the event just like the other details.
+macro_rules! signature_detail {
+    ($name:ident) => {
+        pub(super) struct $name<'a>(&'a protocol::SignatureMatchDetail);
+
+        #[Object]
+        impl $name<'_> {
+            async fn source(&self) -> crate::graphql::signature::SignatureSource {
+                self.0.source.into()
+            }
+            async fn source_version(&self) -> &str {
+                &self.0.source_version
+            }
+            async fn converter_version(&self) -> &str {
+                &self.0.converter_version
+            }
+            async fn rule_id(&self) -> &str {
+                &self.0.rule_id
+            }
+            async fn rule_revision(&self) -> Option<&str> {
+                self.0.rule_revision.as_deref()
+            }
+            async fn rule_title(&self) -> &str {
+                &self.0.rule_title
+            }
+            async fn classification(&self) -> Option<&str> {
+                self.0.classification.as_deref()
+            }
+            async fn techniques(&self) -> &[String] {
+                &self.0.techniques
+            }
+            async fn severity(&self) -> &str {
+                &self.0.severity
+            }
+            async fn author(&self) -> Option<&str> {
+                self.0.author.as_deref()
+            }
+            async fn matched_fields(&self) -> &[String] {
+                &self.0.matched_fields
+            }
+            async fn home_net_fallback(&self) -> bool {
+                self.0.home_net_fallback
+            }
+            async fn event_channel(&self) -> Option<&str> {
+                self.0.event_channel.as_deref()
+            }
+            async fn event_id(&self) -> Option<StringNumber<u32>> {
+                self.0.event_id.map(StringNumber)
+            }
+        }
+    };
+}
+
+signature_detail!(EtSignatureDetail);
+signature_detail!(EtPolicySignatureDetail);
+signature_detail!(SigmaSignatureDetail);

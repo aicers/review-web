@@ -313,6 +313,30 @@ pub(super) struct HttpBody<'a>(&'a raw_event::Http);
 
 #[Object]
 impl HttpBody<'_> {
+    async fn request_header_names(&self) -> &[String] {
+        &self.0.request_header_names
+    }
+
+    async fn accept(&self) -> &str {
+        &self.0.accept
+    }
+
+    async fn connection(&self) -> &str {
+        &self.0.connection
+    }
+
+    async fn accept_encoding(&self) -> &str {
+        &self.0.accept_encoding
+    }
+
+    async fn accept_language(&self) -> &str {
+        &self.0.accept_language
+    }
+
+    async fn pragma(&self) -> &str {
+        &self.0.pragma
+    }
+
     async fn orig_addr(&self) -> String {
         self.0.orig_addr.to_string()
     }

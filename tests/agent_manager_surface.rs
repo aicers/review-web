@@ -66,6 +66,58 @@ fn sent_to(pairs: &[NetworkListItemsTargetAgentLookupKeysPair]) -> Vec<String> {
 
 #[async_trait]
 impl AgentManager for OutsideAgentManager {
+    async fn send_signature_rules(
+        &self,
+        agent_lookup_keys: &[String],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        Ok(agent_lookup_keys.to_vec())
+    }
+
+    async fn ingest_signature_source(
+        &self,
+        upload: review_web::backend::SignatureSourceUpload,
+        _body: review_web::backend::IngressStream,
+    ) -> Result<u64, review_web::backend::SignatureIngestError> {
+        assert_eq!(
+            upload.source,
+            review_protocol::types::SignatureSource::EtOpen
+        );
+        assert_eq!(upload.origin, review_database::SignatureOrigin::Fetch);
+        assert_eq!(upload.fetch_label.as_deref(), Some("release"));
+        assert_eq!(upload.fetched_url.as_deref(), Some("url"));
+        Ok(WIDE_ID)
+    }
+
+    async fn signature_rules(
+        &self,
+        filter: &review_web::backend::SignatureRuleFilter,
+        offset: usize,
+        limit: usize,
+    ) -> Result<review_web::backend::SignatureRulePage, anyhow::Error> {
+        assert_eq!(
+            filter.sources,
+            [review_protocol::types::SignatureSource::EtOpen]
+        );
+        assert_eq!(
+            filter.models,
+            [review_protocol::types::DetectionModel::EtSignature]
+        );
+        assert_eq!(filter.rule_id.as_deref(), Some("rule"));
+        assert_eq!(filter.text.as_deref(), Some("title"));
+        assert_eq!((offset, limit), (0, 100));
+        Ok(review_web::backend::SignatureRulePage {
+            rules: vec![review_web::backend::SignatureRule {
+                source: filter.sources[0],
+                detection_model: filter.models[0],
+                rule_id: "rule".into(),
+                title: "title".into(),
+                classification: Some("class".into()),
+                severity: "high".into(),
+            }],
+            total_count: 1,
+        })
+    }
+
     async fn request_customer_data_deletion(
         &self,
         _targets: &[CustomerDataDeletionTarget],
@@ -298,4 +350,79 @@ fn time_series_generation_policies_are_listed_and_read_outside_the_crate() {
     };
     assert_eq!(policy.clone(), policy);
     assert_eq!(policy.sensors.len(), 1);
+}
+
+#[tokio::test]
+async fn an_outside_manager_implements_the_signature_surface() {
+    use review_protocol::types::{DetectionModel, SignatureSource};
+    use review_web::backend::{
+        IngressStream, SignatureIngestError, SignatureRuleFilter, SignatureSourceUpload,
+    };
+    let manager = OutsideAgentManager::default();
+    let body: IngressStream = Box::pin(futures::stream::empty());
+    assert_eq!(
+        manager
+            .ingest_signature_source(
+                SignatureSourceUpload {
+                    source: SignatureSource::EtOpen,
+                    origin: review_database::SignatureOrigin::Fetch,
+                    fetch_label: Some("release".into()),
+                    fetched_url: Some("url".into())
+                },
+                body
+            )
+            .await
+            .unwrap(),
+        WIDE_ID
+    );
+    let filter = SignatureRuleFilter {
+        sources: vec![SignatureSource::EtOpen],
+        models: vec![DetectionModel::EtSignature],
+        rule_id: Some("rule".into()),
+        text: Some("title".into()),
+    };
+    let page = manager.signature_rules(&filter, 0, 100).await.unwrap();
+    assert_eq!(page.total_count, 1);
+    let rule = page.rules.first().unwrap();
+    assert_eq!(rule.source, SignatureSource::EtOpen);
+    assert_eq!(rule.detection_model, DetectionModel::EtSignature);
+    assert_eq!(rule.rule_id, "rule");
+    assert_eq!(rule.title, "title");
+    assert_eq!(rule.classification.as_deref(), Some("class"));
+    assert_eq!(rule.severity, "high");
+    assert_eq!(
+        manager
+            .send_signature_rules(&["engine".into()])
+            .await
+            .unwrap(),
+        ["engine"]
+    );
+    let errors = [
+        SignatureIngestError::Unreadable {
+            reason: "reason".into(),
+        },
+        SignatureIngestError::AlreadyPresent {
+            existing_version_id: WIDE_ID,
+        },
+        SignatureIngestError::OlderThanApplied {
+            applied_version_id: WIDE_ID,
+        },
+        SignatureIngestError::TooLarge,
+        SignatureIngestError::Transport,
+        SignatureIngestError::Unavailable,
+    ];
+    for error in errors {
+        match error {
+            SignatureIngestError::Unreadable { reason } => assert_eq!(reason, "reason"),
+            SignatureIngestError::AlreadyPresent {
+                existing_version_id,
+            } => assert_eq!(existing_version_id, WIDE_ID),
+            SignatureIngestError::OlderThanApplied { applied_version_id } => {
+                assert_eq!(applied_version_id, WIDE_ID);
+            }
+            SignatureIngestError::TooLarge
+            | SignatureIngestError::Transport
+            | SignatureIngestError::Unavailable => {}
+        }
+    }
 }
