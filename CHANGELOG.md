@@ -4,6 +4,16 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.69.0](https://github.com/aicers/review-web/compare/0.68.0...0.69.0) - 2026-11-27
+
+### Added
+
+- [**breaking**] expose DAI active queries and gate packet sends ([#1320](https://github.com/aicers/review-web/pull/1320))
+
+### Fixed
+
+- list the default site exactly once in daiActiveQuerySites ([#1322](https://github.com/aicers/review-web/pull/1322))
+
 ## [0.68.0](https://github.com/aicers/review-web/compare/0.67.0...0.68.0) - 2026-11-27
 
 ### Added
