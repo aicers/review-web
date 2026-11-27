@@ -491,12 +491,14 @@ async fn a_saved_draft_links_its_models_and_apply_links_them_as_applied() {
     let expected = EngineDocumentRefs {
         detectors: vec![
             EngineDetectorRef {
+                endpoint_scope: None,
                 id: 1,
                 model: "model-a".to_string(),
                 sources: vec![f.sensor_a.clone(), f.logs_a.clone()],
                 indicator: Some("ind-a".to_string()),
             },
             EngineDetectorRef {
+                endpoint_scope: None,
                 id: 2,
                 model: "prefix-a".to_string(),
                 sources: vec![f.sensor_a.clone()],
@@ -2570,4 +2572,114 @@ async fn an_applied_time_series_detector_carries_the_sensors_of_its_policies() {
             "the Unsupervised Engine agent {ENGINE_KEY} on engine-a.example.com"
         )]
     );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Keep the write/apply lifecycle and atomicity assertions together.
+async fn host_write_apply_keeps_applied_pending_scopes_and_refuses_invalid_writes_atomically() {
+    use review_protocol::types::EndpointScope;
+
+    use crate::graphql::training_test_support::{host_definition, write_group_policy};
+    const GROUP: &str = "00000000-0000-0000-0000-000000000001";
+    let f = fixture().await;
+    TestModel {
+        instance: f.engine_a.clone(),
+        raw_event_kind: "process_create",
+        trained_definition: host_definition(
+            "windows",
+            true,
+            "\"all\"",
+            &f.server_name,
+            OWN_ADDRESS,
+        ),
+        ..TestModel::new("host-a", A)
+    }
+    .replace(&f.store());
+    write_group_policy(&f.store(), A, GROUP, "malformed", 1);
+    let host_doc = |scope: &str| {
+        f.doc("host-a", &[], "")
+            .replace("sources = []", &format!("endpoint_scope = {scope}"))
+            .replace("enabled = true", "enabled = false")
+    };
+    let all = host_doc("\"all\"");
+    data(f.save(&f.engine_a, Some(&all)).await);
+    assert_eq!(f.refs(&f.engine_a).0.detectors, vec![]);
+    assert_eq!(
+        f.refs(&f.engine_a).1.detectors[0].endpoint_scope,
+        Some(EndpointScope::All)
+    );
+    data(f.apply(f.engine_a.node_id).await);
+    let groups = host_doc(&format!("{{ groups = [\"{GROUP}\"] }}"));
+    // A network detector retains its source list beside the host detector.
+    let network = detector(
+        2,
+        "model-a",
+        &[&f.sensor_a],
+        (&f.server_name, OWN_ADDRESS),
+        "",
+    );
+    data(
+        f.save(&f.engine_a, Some(&format!("{groups}\n{network}")))
+            .await,
+    );
+    let (applied, pending) = f.refs(&f.engine_a);
+    assert_eq!(
+        applied.detectors[0].endpoint_scope,
+        Some(EndpointScope::All)
+    );
+    assert_eq!(
+        pending.detectors[0].endpoint_scope,
+        Some(EndpointScope::Groups(vec![GROUP.into()]))
+    );
+    assert_eq!(pending.detectors[0].sources, Vec::<String>::new());
+    assert_eq!(pending.detectors[1].sources, vec![f.sensor_a.clone()]);
+    assert_eq!(pending.detectors[1].endpoint_scope, None);
+    let before_node = f.node(f.engine_a.node_id);
+    for (text, code, field, value) in [
+        (
+            host_doc("{ groups = [] }"),
+            "INVALID_DOCUMENT",
+            "detectors[0].endpoint_scope",
+            "{ groups = [] }",
+        ),
+        (
+            host_doc("{ groups = [\"00000000-0000-0000-0000-000000000099\"] }"),
+            "SOURCE_NOT_ALLOWED",
+            "detectors[0].endpoint_scope.groups[0]",
+            "00000000-0000-0000-0000-000000000099",
+        ),
+        (
+            all.replace("endpoint_scope = \"all\"", "sources = []"),
+            "FIELD_NOT_ALLOWED",
+            "detectors[0].sources",
+            "[]",
+        ),
+    ] {
+        let res = f.save(&f.engine_a, Some(&text)).await;
+        let (_, extensions) = single_error(&res);
+        assert_eq!(extensions["code"], code);
+        assert_eq!(extensions["field"], field);
+        assert_eq!(extensions["value"], value);
+        assert_eq!(extensions["detectorId"], 1);
+        assert_eq!(f.refs(&f.engine_a), (applied.clone(), pending.clone()));
+        assert_eq!(f.node(f.engine_a.node_id), before_node);
+    }
+    f.store()
+        .senta_endpoint_current_document_map()
+        .delete(A, "senta-policy", &format!("group:{GROUP}"))
+        .unwrap();
+    let res = f.apply(f.engine_a.node_id).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCE_NOT_ALLOWED".into(),
+            "detectors[0].endpoint_scope.groups[0]".into(),
+            GROUP.into(),
+            Value::from(1)
+        )
+    );
+    assert_eq!(f.refs(&f.engine_a), (applied, pending.clone()));
+    write_group_policy(&f.store(), A, GROUP, "still unreadable", 2);
+    data(f.apply(f.engine_a.node_id).await);
+    assert_eq!(f.refs(&f.engine_a).0, pending);
 }

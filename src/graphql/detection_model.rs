@@ -989,7 +989,7 @@ mod tests {
                 ),
                 (
                     serde_json::json!("FAR_OUTLIER"),
-                    serde_json::json!(["HTTP"])
+                    serde_json::json!(["HTTP", "PROCESS_CREATE"])
                 ),
                 (
                     serde_json::json!("WINDOW_OUTLIER"),

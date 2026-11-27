@@ -157,6 +157,28 @@ impl ClusteringModelType {
         self.0.approach.into()
     }
 
+    /// The source identifier's kind and raw-event column name.
+    async fn source_column(&self) -> SourceColumn {
+        match self.0.source_column {
+            database::SourceColumn::Ip(name) => SourceColumn {
+                kind: SourceColumnKind::Ip,
+                name,
+            },
+            database::SourceColumn::Endpoint(name) => SourceColumn {
+                kind: SourceColumnKind::Endpoint,
+                name,
+            },
+        }
+    }
+
+    /// The recipe's fixed OS family, or null for a recipe without one.
+    async fn os_family(&self) -> Option<&'static str> {
+        match self.0.fixed_value("os_family") {
+            Some(database::DefinitionValue::String(os)) => Some(os),
+            _ => None,
+        }
+    }
+
     /// The top-level definition keys the type fixes, with their values, in
     /// catalog order. `csv` is one entry, its value an inline table.
     async fn fixed_values(&self) -> Vec<TrainingValue> {
@@ -313,6 +335,8 @@ pub(super) enum TrainingValueType {
     Integer,
     /// A float; an integer of the same value is also taken.
     Float,
+    /// An all-endpoint scope or a nonempty list of group ids.
+    EndpointScope,
     /// A list of strings.
     StringList,
     /// A list of integers.
@@ -351,6 +375,10 @@ impl From<&database::DefinitionKey> for TrainingDefinitionKey {
 pub(super) enum TrainingKeyStatus {
     /// The key must be present.
     Required,
+    /// Required only for a host-kind multidimension definition.
+    RequiredForHostKind,
+    /// Required only for a non-host multidimension definition.
+    RequiredForNonHostKind,
     /// The key may be absent, with the meaning the row's description states.
     AbsentMeans,
     /// The method does not use the key; a present key is refused.
@@ -365,6 +393,8 @@ impl From<database::DefinitionKeyStatus> for TrainingKeyStatus {
         // No wildcard arm: a status added to review-database must be mapped.
         match status {
             database::DefinitionKeyStatus::Required => Self::Required,
+            database::DefinitionKeyStatus::RequiredForHostKind => Self::RequiredForHostKind,
+            database::DefinitionKeyStatus::RequiredForNonHostKind => Self::RequiredForNonHostKind,
             database::DefinitionKeyStatus::AbsentMeans => Self::AbsentMeans,
             database::DefinitionKeyStatus::Rejected => Self::Rejected,
             database::DefinitionKeyStatus::RequiredForCatalogType => Self::CatalogTypeOnly,
@@ -464,7 +494,7 @@ fn timestamp(nanoseconds: i64) -> Result<Timestamp> {
 
 /// Returns `value` as the text of a TOML value; a table is an inline table
 /// whose keys keep the order of the catalog.
-fn value_text(value: &database::DefinitionValue) -> String {
+pub(super) fn value_text(value: &database::DefinitionValue) -> String {
     let mut text = String::new();
     write_value(&mut text, value);
     text
@@ -534,6 +564,20 @@ fn write_key(text: &mut String, key: &str) {
     } else {
         text.push_str(&toml::Value::from(key).to_string());
     }
+}
+
+/// The source identifier retained by a catalog recipe.
+#[derive(SimpleObject)]
+struct SourceColumn {
+    kind: SourceColumnKind,
+    name: &'static str,
+}
+
+/// The kind of source identifier a recipe retains.
+#[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
+enum SourceColumnKind {
+    Ip,
+    Endpoint,
 }
 
 #[cfg(test)]

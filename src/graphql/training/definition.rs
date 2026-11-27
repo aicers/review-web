@@ -116,7 +116,12 @@ pub(crate) struct TrainingDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) log_kind: Option<String>,
     pub(crate) method: Method,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) endpoint_scope: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) os_family: Option<String>,
     /// RFC 3339 with an offset, kept as text so a re-serialization keeps it.
     pub(crate) window_start: String,
     /// RFC 3339 with an offset, kept as text so a re-serialization keeps it.
@@ -439,6 +444,9 @@ impl TrainingDocument {
     }
 
     fn check_source_list(&self) -> Result<()> {
+        if self.endpoint_scope.is_some() {
+            return Ok(());
+        }
         if self.sources.is_empty() {
             return Err(refusal(
                 RefusalCode::InvalidDocument,
@@ -554,9 +562,11 @@ impl TrainingDocument {
     /// clustering model type: when it is a time-series type, every source
     /// policy must be of that type and version, and when it is `Custom`, the
     /// definition's `raw_event_kind`, `group_by` and `slot_size` must equal
-    /// the source policies' values. Any other definition's sources must be
-    /// source names of the customer, and `shape` and `model_type` are not
-    /// read.
+    /// the source policies' values. A host definition's selected groups must
+    /// have current policy rows belonging to the customer; their collection
+    /// modes and endpoint membership do not affect selection. Other
+    /// definitions require source names of the customer. Neither host nor
+    /// source-name validation reads `shape` or `model_type`.
     ///
     /// # Errors
     ///
@@ -569,6 +579,13 @@ impl TrainingDocument {
         shape: ShapeReference<'_>,
         model_type: &ClusteringModelTypeRef,
     ) -> Result<()> {
+        if let Some(scope) = self.endpoint_scope.as_ref() {
+            return crate::graphql::host_scope::check_groups(
+                store,
+                customer_id,
+                &crate::graphql::host_scope::parse_scope(scope)?,
+            );
+        }
         if self.method == Method::Timeseries {
             let custom_keys = (*model_type == ClusteringModelTypeRef::Custom).then(|| CustomKeys {
                 raw_event_kind: &self.raw_event_kind,

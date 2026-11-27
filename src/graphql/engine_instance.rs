@@ -68,7 +68,19 @@ impl EngineInstanceQuery {
                 ),
                 None => (Vec::new(), false),
             };
-            detectors.push(DetectorStatus::new(
+            let round_filter_report = match applied {
+                Some(detector) => store
+                    .round_filter_report(&target.instance, detector_id, &detector.model)
+                    .map_err(|e| format!("cannot read round filter report for node {}, agent {:?}, detector {detector_id}, model {:?}: {e:#}", target.instance.node_id, target.instance.agent_key, detector.model))?
+                    .filter(|report| {
+                        status.finished_at.is_some_and(|time| {
+                            time.as_nanosecond() == i128::from(report.finished_at)
+                        })
+                    })
+                    .map(Into::into),
+                None => None,
+            };
+            let mut current = DetectorStatus::new(
                 detector_id,
                 status,
                 AppliedSources {
@@ -76,7 +88,9 @@ impl EngineInstanceQuery {
                     sources,
                     timeseries,
                 },
-            ));
+            );
+            current.round_filter_report = round_filter_report;
+            detectors.push(current);
         }
         Ok(EngineInstance {
             node_id: ID(target.instance.node_id.to_string()),
@@ -289,6 +303,8 @@ struct EngineInstance {
 #[derive(SimpleObject)]
 #[graphql(complex)]
 struct DetectorStatus {
+    /// The report for this same applied model and current round, or null.
+    round_filter_report: Option<super::filter_report::RoundFilterReport>,
     /// The detector's id in the engine document.
     detector_id: ID,
     /// The detector's state, which says why it does not run if it does not.
@@ -323,6 +339,7 @@ struct AppliedSources {
 impl DetectorStatus {
     fn new(detector_id: i32, status: database::DetectorStatus, applied: AppliedSources) -> Self {
         Self {
+            round_filter_report: None,
             detector_id: ID(detector_id.to_string()),
             state: status.state.into(),
             finished_at: status.finished_at.map(Into::into),

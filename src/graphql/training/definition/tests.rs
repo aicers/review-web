@@ -1554,3 +1554,101 @@ fn a_type_definitions_time_series_keys_are_fixed_by_its_type() {
         ("FIELD_FIXED", "slot_size")
     );
 }
+
+#[test]
+fn host_definition_contract_preserves_structured_refusals() {
+    use crate::graphql::training_test_support::host_definition;
+    let change = |text: &str, key: &str, value: Option<toml::Value>| {
+        let mut table: toml::Table = text.parse().unwrap();
+        if let Some(value) = value {
+            table.insert(key.into(), value);
+        } else {
+            table.remove(key);
+        }
+        toml::to_string(&table).unwrap()
+    };
+    for os in ["windows", "linux"] {
+        for custom in [false, true] {
+            for scope in [
+                "\"all\"",
+                "{ groups = [\"00000000-0000-0000-0000-000000000001\"] }",
+            ] {
+                let text = host_definition(os, custom, scope, SERVER_NAME, OWN_ADDRESS);
+                let (document, _) = TrainingDocument::check(&text).unwrap();
+                assert_eq!(document.sources, Vec::<String>::new());
+                assert_eq!(document.os_family.as_deref(), Some(os));
+                TrainingDocument::check(&document.to_text().unwrap()).unwrap();
+                for key in ["endpoint_scope", "os_family"] {
+                    assert_eq!(
+                        checked(&change(&text, key, None)),
+                        triple("FIELD_NOT_ALLOWED", key, "")
+                    );
+                }
+                for value in [
+                    toml::Value::Array(vec![]),
+                    toml::Value::String("sensor".into()),
+                ] {
+                    let expected = crate::graphql::host_scope::value_text(&value);
+                    assert_eq!(
+                        checked(&change(&text, "sources", Some(value))),
+                        triple("FIELD_NOT_ALLOWED", "sources", &expected)
+                    );
+                }
+                for value in [
+                    "\"some\"",
+                    "[]",
+                    "42",
+                    "{ groups = [] }",
+                    "{ groups = [\"a\", \"a\"] }",
+                    "{ groups = [1] }",
+                    "{ groups = \"a\" }",
+                    "{ groups = [\"\"] }",
+                    "{ groups = [\"a\"], extra = true }",
+                ] {
+                    let value: toml::Table = format!("v = {value}").parse().unwrap();
+                    let value = value.get("v").unwrap();
+                    let expected = crate::graphql::host_scope::value_text(value);
+                    assert_eq!(
+                        checked(&change(&text, "endpoint_scope", Some(value.clone()))),
+                        triple("INVALID_DOCUMENT", "endpoint_scope", &expected)
+                    );
+                }
+                let wrong_os = if os == "windows" { "linux" } else { "windows" };
+                let wrong = change(&text, "os_family", Some(wrong_os.into()));
+                if custom {
+                    TrainingDocument::check(&wrong).unwrap();
+                    assert_eq!(
+                        checked(&change(&text, "os_family", Some("macos".into()))),
+                        triple("INVALID_DOCUMENT", "os_family", "macos")
+                    );
+                } else {
+                    assert_eq!(
+                        checked(&wrong),
+                        triple("FIELD_FIXED", "os_family", wrong_os)
+                    );
+                }
+                let code = "INVALID_DOCUMENT";
+                assert_eq!(
+                    checked(&change(&text, "os_family", Some(42.into()))),
+                    triple(code, "os_family", "42")
+                );
+            }
+        }
+    }
+    for text in [&*VALID, &*CUSTOM, &*PREFIX, &*TIMESERIES] {
+        for (key, value) in [
+            ("endpoint_scope", toml::Value::from("all")),
+            ("os_family", "linux".into()),
+        ] {
+            let expected = crate::graphql::host_scope::value_text(&value);
+            assert_eq!(
+                checked(&change(text, key, Some(value))),
+                triple("FIELD_NOT_ALLOWED", key, &expected)
+            );
+        }
+        assert_eq!(
+            checked(&change(text, "sources", None)),
+            triple("FIELD_NOT_ALLOWED", "sources", "")
+        );
+    }
+}
