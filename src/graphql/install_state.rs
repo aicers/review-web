@@ -2878,6 +2878,7 @@ mod tests {
             None,
             Arc::new(Notify::new()),
             crate::maintenance::MaintenanceGate::new(),
+            crate::active_query::ActiveQuerySendGate::default(),
             Arc::new(crate::customer_data_deletion::CustomerDataDeletionTaskManager::default()),
         );
 

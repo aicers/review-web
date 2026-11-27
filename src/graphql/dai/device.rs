@@ -485,6 +485,13 @@ struct DaiIpDevice {
 
 #[Object]
 impl DaiIpDevice {
+    /// The store's active query state, including answers while queries are off.
+    async fn active_query(&self) -> super::active_query::DaiIpActiveQuery<'_> {
+        super::active_query::DaiIpActiveQuery {
+            inner: &self.inner.active_query,
+        }
+    }
+
     async fn site(&self) -> &str {
         &self.inner.site
     }
@@ -1015,6 +1022,8 @@ enum DaiSearchMatchKind {
     OldDeviceId,
     /// A substring of a device name.
     Name,
+    /// A name returned by an active query for an IP device.
+    ActiveQueryName,
 }
 
 /// The result of a search.

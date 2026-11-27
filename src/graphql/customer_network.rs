@@ -90,6 +90,10 @@ impl CustomerNetworkMutation {
         };
         let internal = set.internal_group();
         let (push, generators) = {
+            let _send = ctx
+                .data::<crate::active_query::ActiveQuerySendGate>()?
+                .write()
+                .await;
             let store = crate::graphql::get_store(ctx)?;
             let outcome =
                 store
@@ -135,6 +139,10 @@ impl CustomerNetworkMutation {
         let customer_id = parse_customer_id(&customer_id)?;
 
         let (push, generators) = {
+            let _send = ctx
+                .data::<crate::active_query::ActiveQuerySendGate>()?
+                .write()
+                .await;
             let store = crate::graphql::get_store(ctx)?;
             if !store.customer_networks_map().remove(customer_id)? {
                 return Ok(false);

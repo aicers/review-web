@@ -250,6 +250,13 @@ struct DaiSiteCollectionEntry<'a> {
 
 #[Object(name = "DaiSiteCollection")]
 impl DaiSiteCollectionEntry<'_> {
+    /// The site's active query configuration, progress and counts.
+    async fn active_query(&self) -> super::active_query::DaiSiteActiveQuery<'_> {
+        super::active_query::DaiSiteActiveQuery {
+            inner: &self.inner.active_query,
+        }
+    }
+
     /// The site token.
     async fn site(&self) -> &str {
         &self.inner.site

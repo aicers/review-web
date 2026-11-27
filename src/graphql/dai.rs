@@ -9,12 +9,14 @@
 //! `DateTime` scalar, nanoseconds since the UNIX epoch in review-database;
 //! "now" is the time of the request.
 //!
-//! Reads are allowed to the four roles, writes to the two administrator
-//! roles. Every field takes a customer id and checks the caller's membership
+//! Reads are allowed to the four roles. Writes require an administrator role;
+//! active query site settings require System Administrator. Every field takes
+//! a customer id and checks the caller's membership
 //! of it before anything else, and every write is refused with
 //! `CUSTOMER_DELETION_IN_PROGRESS` while that customer's data deletion is
 //! unfinished.
 
+mod active_query;
 mod collection;
 mod device;
 mod operator;
@@ -48,10 +50,13 @@ pub(super) const SENSORS_SPAN_SITES: &str = "SENSORS_SPAN_SITES";
 /// The `extensions.code` of a site change refused because it would make an
 /// existing time series generation policy span two sites.
 const SITE_CHANGE_BREAKS_POLICY: &str = "SITE_CHANGE_BREAKS_POLICY";
+/// The refusal code for overlapping active query ranges.
+const ACTIVE_QUERY_RANGES_OVERLAP: &str = "ACTIVE_QUERY_RANGES_OVERLAP";
 
 /// The device identification queries.
 #[derive(MergedObject, Default)]
 pub(super) struct DaiQuery(
+    active_query::DaiActiveQueryQuery,
     settings::DaiSettingsQuery,
     site::DaiSiteQuery,
     resolve::DaiResolveQuery,
@@ -62,6 +67,7 @@ pub(super) struct DaiQuery(
 /// The device identification mutations.
 #[derive(MergedObject, Default)]
 pub(super) struct DaiMutation(
+    active_query::DaiActiveQueryMutation,
     settings::DaiSettingsMutation,
     site::DaiSiteMutation,
     operator::DaiOperatorMutation,
@@ -212,6 +218,37 @@ async fn writable_customer<'a>(
     ctx: &'a Context<'a>,
     customer_id: &ID,
 ) -> Result<(u32, DaiWritesGuard<'a>, RwLockReadGuard<'a, Store>)> {
+    let (customer_id, guard) = lock_customer(ctx, customer_id).await?;
+    let store = crate::graphql::get_store(ctx)?;
+    customer_deletion_guard::check_customers(&store, [customer_id])?;
+    Ok((customer_id, guard, store))
+}
+
+/// Takes the DAI writes lock, then the send gate, before reading the store.
+async fn writable_customer_gated<'a>(
+    ctx: &'a Context<'a>,
+    customer_id: &ID,
+) -> Result<(
+    u32,
+    DaiWritesGuard<'a>,
+    tokio::sync::OwnedRwLockWriteGuard<()>,
+    RwLockReadGuard<'a, Store>,
+)> {
+    let (customer_id, guard) = lock_customer(ctx, customer_id).await?;
+    let send_guard = ctx
+        .data::<crate::active_query::ActiveQuerySendGate>()?
+        .write()
+        .await;
+    let store = crate::graphql::get_store(ctx)?;
+    customer_deletion_guard::check_customers(&store, [customer_id])?;
+    Ok((customer_id, guard, send_guard, store))
+}
+
+/// Checks membership and takes the DAI writes lock without a store guard.
+async fn lock_customer<'a>(
+    ctx: &'a Context<'a>,
+    customer_id: &ID,
+) -> Result<(u32, DaiWritesGuard<'a>)> {
     let customer_id = accessible_customer(ctx, customer_id)?;
     let lock = ctx.data::<Arc<DaiWritesLock>>()?;
     #[cfg(test)]
@@ -221,9 +258,7 @@ async fn writable_customer<'a>(
         #[cfg(test)]
         _user: user,
     };
-    let store = crate::graphql::get_store(ctx)?;
-    customer_deletion_guard::check_customers(&store, [customer_id])?;
-    Ok((customer_id, guard, store))
+    Ok((customer_id, guard))
 }
 
 /// The time of the request a test sets, in nanoseconds since the UNIX
@@ -290,6 +325,27 @@ where
 /// Maps a refusal of a DAI write or read to the error a resolver returns,
 /// passing every other error through with its context.
 fn dai_refusal(error: anyhow::Error) -> async_graphql::Error {
+    let error = match error.downcast::<review_database::DaiActiveQueryError>() {
+        Ok(review_database::DaiActiveQueryError::StaleRevision { stored }) => {
+            return stale_revision(stored);
+        }
+        Ok(review_database::DaiActiveQueryError::RangesOverlap { ranges }) => {
+            return async_graphql::Error::new("active query ranges overlap").extend_with(
+                |_, extensions| {
+                    extensions.set("code", ACTIVE_QUERY_RANGES_OVERLAP);
+                    extensions.set(
+                        "ranges",
+                        ranges
+                            .into_iter()
+                            .map(|range| range.to_string())
+                            .collect::<Vec<_>>(),
+                    );
+                },
+            );
+        }
+        Ok(refusal) => return refusal.to_string().into(),
+        Err(error) => error,
+    };
     let error = match error.downcast::<DaiConfigError>() {
         Ok(DaiConfigError::StaleRevision { stored }) => return stale_revision(stored),
         Ok(refusal) => {

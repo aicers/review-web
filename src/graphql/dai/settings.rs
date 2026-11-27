@@ -3,7 +3,7 @@
 use async_graphql::{Context, InputObject, Object, Result, StringNumber, types::ID};
 use review_database::{DaiSettings, DaiSettingsUpdate};
 
-use super::{accessible_customer, dai_refusal, timestamp, writable_customer};
+use super::{accessible_customer, dai_refusal, timestamp};
 use crate::graphql::{Role, RoleGuard, timestamp::Timestamp};
 
 #[derive(Default)]
@@ -69,7 +69,8 @@ impl DaiSettingsMutation {
         revision: StringNumber<u64>,
         input: DaiCustomerSettingsInput,
     ) -> Result<DaiCustomerSettings> {
-        let (customer_id, _lock, store) = writable_customer(ctx, &customer_id).await?;
+        let (customer_id, _lock, _send, store) =
+            super::writable_customer_gated(ctx, &customer_id).await?;
         let update = DaiSettingsUpdate {
             device_account_identification: input.device_account_identification,
             inactivity_multiplier: input.inactivity_multiplier,

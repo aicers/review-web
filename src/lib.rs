@@ -1,3 +1,4 @@
+pub mod active_query;
 pub mod auth;
 pub mod backend;
 pub mod customer_data_deletion;
@@ -190,6 +191,8 @@ pub struct ServerConfig {
     /// It is placed on the GraphQL schema, so a resolver reaches it through
     /// the request context.
     pub endpoint_manager: Arc<dyn EndpointManager>,
+    /// The send gate shared with the application that calls `serve`.
+    pub active_query_send_gate: active_query::ActiveQuerySendGate,
     /// The gate the embedding application closes during a pending `Rollback`
     /// update.
     ///
@@ -246,6 +249,7 @@ where
         config.manager_node_hostname,
         config.tls_reload_handle.clone(),
         config.maintenance_gate.clone(),
+        config.active_query_send_gate.clone(),
         customer_data_deletion_manager,
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());

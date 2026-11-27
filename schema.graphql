@@ -1215,6 +1215,129 @@ enum CustomerDataDeletionStatus {
 	FAILED
 }
 
+type DaiActiveAnswer {
+	kind: DaiActiveQueryKind!
+	firstSeen: DateTime!
+	lastSeen: DateTime!
+	value: DaiActiveAnswerValue!
+}
+
+"""
+A display-only active answer or a sent query without a name.
+"""
+union DaiActiveAnswerValue = DaiActiveQueryPtr | DaiActiveQueryNbns | DaiActiveQueryMdns | DaiActiveQuerySsdpResponses | DaiActiveQueryNoName | DaiActiveQueryNoResponse
+
+"""
+The four active query kinds in stored order.
+"""
+enum DaiActiveQueryKind {
+	PTR
+	NBNS
+	MDNS
+	SSDP
+}
+
+type DaiActiveQueryKindCounts {
+	kind: DaiActiveQueryKind!
+	sentToday: StringNumber!
+	answeredToday: StringNumber!
+	sentLast30Days: StringNumber!
+	answeredLast30Days: StringNumber!
+}
+
+type DaiActiveQueryMdns {
+	hostName: String
+	serviceTypes: [String!]!
+}
+
+type DaiActiveQueryNbns {
+	computerName: String
+	workgroupOrDomain: String
+	mac: String
+}
+
+type DaiActiveQueryNoName {
+	kind: DaiActiveQueryKind!
+}
+
+type DaiActiveQueryNoResponse {
+	kind: DaiActiveQueryKind!
+}
+
+type DaiActiveQueryPtr {
+	names: [String!]!
+}
+
+"""
+The variant of a query result, without its value.
+"""
+enum DaiActiveQueryResult {
+	VALUE
+	NO_NAME
+	NO_RESPONSE
+	NOT_SENT
+}
+
+type DaiActiveQuerySettings {
+	customerId: ID!
+	enabled: Boolean!
+	excludedRanges: [String!]!
+	revision: StringNumber!
+}
+
+"""
+The settable active query settings of a customer.
+"""
+input DaiActiveQuerySettingsInput {
+	enabled: Boolean!
+	excludedRanges: [String!]!
+}
+
+type DaiActiveQuerySite {
+	token: String
+	queryRanges: [String!]!
+	dnsServers: [String!]!
+	rate: Int!
+	revision: StringNumber!
+}
+
+"""
+The settable active query settings of a site.
+"""
+input DaiActiveQuerySiteInput {
+	queryRanges: [String!]!
+	dnsServers: [String!]!
+	rate: Int!
+}
+
+"""
+Whether active queries are enabled at a site.
+"""
+enum DaiActiveQuerySiteState {
+	CUSTOMER_OFF
+	NO_QUERY_RANGES
+	ON
+}
+
+type DaiActiveQuerySsdp {
+	st: String
+	usn: String
+	server: String
+}
+
+type DaiActiveQuerySsdpResponses {
+	responses: [DaiActiveQuerySsdp!]!
+}
+
+"""
+Why an IP is not currently being queried.
+"""
+enum DaiActiveQueryStatus {
+	QUERIES_OFF
+	NOT_QUERY_TARGET
+	NOT_QUERIED_YET
+}
+
 """
 Whether a device is seen.
 """
@@ -1770,6 +1893,10 @@ enum DaiEvidenceSource {
 
 type DaiExplanation {
 	"""
+	The display-only answers valid at the item's time, in kind order.
+	"""
+	activeAnswers: [DaiActiveAnswer!]!
+	"""
 	The bindings that decided the answer, in start order.
 	"""
 	bindings: [DaiDecidingBinding!]!
@@ -1980,7 +2107,23 @@ input DaiImportRowInput {
 	note: String
 }
 
+type DaiIpActiveKind {
+	kind: DaiActiveQueryKind!
+	answer: DaiActiveAnswer
+	lastResult: DaiActiveQueryResult
+}
+
+type DaiIpActiveQuery {
+	status: DaiActiveQueryStatus
+	lastQuery: DateTime
+	kinds: [DaiIpActiveKind!]!
+}
+
 type DaiIpDevice {
+	"""
+	The store's active query state, including answers while queries are off.
+	"""
+	activeQuery: DaiIpActiveQuery!
 	site: String!
 	ip: String!
 	firstSeen: DateTime!
@@ -2363,6 +2506,10 @@ enum DaiSearchMatchKind {
 	A substring of a device name.
 	"""
 	NAME
+	"""
+	A name returned by an active query for an IP device.
+	"""
+	ACTIVE_QUERY_NAME
 }
 
 type DaiSearchResult {
@@ -2457,7 +2604,20 @@ type DaiSite {
 	sensors: [String!]!
 }
 
+type DaiSiteActiveQuery {
+	state: DaiActiveQuerySiteState!
+	noDnsServers: Boolean!
+	lastQuery: DateTime
+	kinds: [DaiActiveQueryKindCounts!]!
+	waitingIps: Int!
+	waitingIpsOverLimit: Boolean!
+}
+
 type DaiSiteCollection {
+	"""
+	The site's active query configuration, progress and counts.
+	"""
+	activeQuery: DaiSiteActiveQuery!
 	"""
 	The site token.
 	"""
@@ -5945,6 +6105,19 @@ type Mutation {
 	"""
 	updateSystemLogCollector(host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateSystemLogCollectorResult!
 	"""
+	Replaces the customer's active query settings at the given revision.
+	Refused during customer deletion. Waits for packets checked against
+	earlier settings before storing and responding.
+	"""
+	updateDaiActiveQuerySettings(customerId: ID!, revision: StringNumber!, input: DaiActiveQuerySettingsInput!): DaiActiveQuerySettings!
+	"""
+	Replaces a site's active query settings at the given revision.
+	A null token ensures the default site before writing; an empty token
+	is passed unchanged. Refused during customer deletion. Waits for
+	packets checked against earlier settings before storing and responding.
+	"""
+	updateDaiActiveQuerySite(customerId: ID!, token: String, revision: StringNumber!, input: DaiActiveQuerySiteInput!): DaiActiveQuerySite!
+	"""
 	Replaces every settable device identification setting of the customer
 	with `input`, given the stored settings `revision`, and returns the
 	stored settings with the new revision.
@@ -7977,6 +8150,21 @@ type Query {
 	Returns an error if review could not list the collectors.
 	"""
 	systemLogCollectorList: [SystemLogCollector!]!
+	"""
+	The active query settings of each customer, in the requested order.
+	One inaccessible customer refuses the whole call.
+	"""
+	daiActiveQuerySettings(customerIds: [ID!]!): [DaiActiveQuerySettings!]!
+	"""
+	Every site's active query settings, in token order. An unstored
+	default site is listed first with a null token, without writing it.
+	"""
+	daiActiveQuerySites(customerId: ID!): [DaiActiveQuerySite!]!
+	"""
+	The IP's whole active answer history, including no-name and
+	no-response rows and removed sites, in the store's order.
+	"""
+	daiActiveAnswers(customerId: ID!, site: String!, ip: String!): [DaiActiveAnswer!]!
 	"""
 	The device identification settings of each customer of
 	`customerIds`, one entry per id, in order.
