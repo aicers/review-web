@@ -1998,6 +1998,41 @@ fn sections(text: &str) -> toml::Table {
     toml::from_str(text).expect("valid sections")
 }
 
+#[tokio::test]
+async fn applying_a_semi_supervised_document_completes_the_signature_sections() {
+    for mutation in MUTATIONS {
+        let f = fixture().await;
+        let instance =
+            insert_engine_instance(&f.store(), A, "signature-engine.example.com", "001.hog");
+        let old = f.agent(&instance);
+        let mut new = old.clone();
+        new.kind = AgentKind::SemiSupervised;
+        new.draft = Some(config(""));
+        f.store().agents_map().update(&old, &new).unwrap();
+        let node = f.node(instance.node_id);
+        let query = if mutation == "applyNode" {
+            apply(&node)
+        } else {
+            apply_draft(&node)
+        };
+        ok(f.sec(&query, &[A]).await);
+        let agent = f.agent(&instance);
+        let document: toml::Table = agent.config.unwrap().as_ref().parse().unwrap();
+        for (name, enabled) in [
+            ("et_signature", true),
+            ("et_policy_signature", false),
+            ("sigma_signature", true),
+        ] {
+            assert_eq!(
+                document["detection_models"][name]["enabled"].as_bool(),
+                Some(enabled),
+                "{mutation}: {name}"
+            );
+        }
+        assert_eq!(agent.draft, Some(config("")), "{mutation}");
+    }
+}
+
 impl Fixture {
     /// Applies the stored draft of `engine_a` through `mutation` as a
     /// Security Administrator of customer A.

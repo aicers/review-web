@@ -53,6 +53,7 @@ mod rfc3339;
 #[cfg(test)]
 mod run_test_support;
 mod senta_endpoint;
+mod signature;
 mod slicing;
 mod statistics;
 mod status;
@@ -125,12 +126,14 @@ pub(crate) use self::time_series_generation::TimeSeriesGenerationPoliciesLock;
 pub use self::time_series_generation::{
     SlotSize, TimeSeriesGenerationPolicy, WindowSize, time_series_generation_policies_for_generator,
 };
-use crate::backend::{AgentManager, CertManager, HostOnboarder, SharedEndpointManager};
+#[cfg(test)]
+use crate::backend::AgentManager;
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
     OperationId, PackageDeployer, RunningRoxydBuild,
 };
+use crate::backend::{CertManager, HostOnboarder, SharedEndpointManager};
 pub(crate) use crate::backend::{SharedAgentManager, SharedPackageDeployer};
 use crate::customer_data_deletion::CustomerDataDeletionTaskManager;
 use crate::maintenance::{MaintenanceExtension, MaintenanceGate};
@@ -148,9 +151,9 @@ type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 // `serve`; grouping them into a struct would only restate `serve`'s own
 // parameters and `ServerConfig`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn schema<B, O>(
+pub(super) fn schema<O>(
     store: Arc<RwLock<Store>>,
-    agent_manager: B,
+    agent_manager: SharedAgentManager,
     package_deployer: SharedPackageDeployer,
     host_onboarder: O,
     ip_locator: Option<Arc<ip2location::DB>>,
@@ -162,10 +165,8 @@ pub(super) fn schema<B, O>(
     customer_data_deletion_manager: Arc<CustomerDataDeletionTaskManager>,
 ) -> Schema
 where
-    B: AgentManager + 'static,
     O: HostOnboarder + 'static,
 {
-    let agent_manager: SharedAgentManager = Arc::new(agent_manager);
     let host_onboarder: BoxedHostOnboarder = Box::new(host_onboarder);
     let mut builder = Schema::build(
         Query::default(),
@@ -250,6 +251,7 @@ struct SubQueryTwoA(
 
 #[derive(MergedObject, Default)]
 struct SubQueryTwoB(
+    signature::SignatureQuery,
     core_component::CoreComponentQuery,
     operation_attempt::OperationAttemptQuery,
     triage::TriageResponseQuery,
@@ -309,6 +311,7 @@ struct SubMutationTwoA(
 
 #[derive(MergedObject, Default)]
 struct SubMutationTwoB(
+    signature::SignatureMutation,
     label_db::LabelDbMutation,
     node::DeployMutation,
     triage::TriageResponseMutation,

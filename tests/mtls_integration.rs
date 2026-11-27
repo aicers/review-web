@@ -34,7 +34,7 @@ mod mtls_integration {
             PackageIngestError, PackageStoreReceiver, RunningRoxydBuild, ServableBuild,
             TrustActivation, TrustIngestError, TrustManager,
         },
-        ingress::PACKAGE_UPLOAD_PATH,
+        ingress::{PACKAGE_UPLOAD_PATH, SIGNATURE_SOURCE_UPLOAD_PATH},
         maintenance::{MAINTENANCE_ERROR_CODE, MaintenanceGate},
     };
     use serde::Serialize;
@@ -640,6 +640,7 @@ mod mtls_integration {
         let maintenance_gate = MaintenanceGate::new();
 
         let config = ServerConfig {
+            signature_source_max_bytes: review_web::DEFAULT_SIGNATURE_SOURCE_MAX_BYTES,
             addr: SocketAddr::new(addr_ip, port),
             cert_manager: Arc::new(StaticCertManager {
                 cert_path: server_cert_path,
@@ -1446,6 +1447,32 @@ mod mtls_integration {
         let parsed: serde_json::Value = serde_json::from_str(msg.to_text()?)?;
         assert_eq!(parsed["type"], "connection_error");
 
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_signature_source_upload_reaches_the_shared_agent_manager() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let url = format!(
+            "{}?source=et_open&origin=upload",
+            server
+                .upload_url
+                .replace(PACKAGE_UPLOAD_PATH, SIGNATURE_SOURCE_UPLOAD_PATH)
+        );
+        // Like package uploads, source uploads remain available in maintenance.
+        server.maintenance_gate.close().await;
+        let response =
+            send_package_upload(&client, &url, Some(&token), b"archive".to_vec()).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        let body: serde_json::Value = serde_json::from_slice(&response.bytes().await?)?;
+        assert_eq!(body["code"], "UNAVAILABLE");
+        let response = send_package_upload(&client, &url, None, b"archive".to_vec()).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())

@@ -937,7 +937,7 @@ mod tests {
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let entries = data["detectionModelProperties"].as_array().unwrap();
-        assert_eq!(entries.len(), 21);
+        assert_eq!(entries.len(), 24);
         let enabled = serde_json::json!({
             "name": "enabled",
             "valueType": "BOOLEAN",
@@ -951,9 +951,13 @@ mod tests {
             if entry["detectionModel"] == "LABEL_DB_MATCH" {
                 continue;
             }
+            let mut expected_enabled = enabled.clone();
+            if entry["detectionModel"] == "ET_POLICY_SIGNATURE" {
+                expected_enabled["defaultValue"] = serde_json::json!("false");
+            }
             assert_eq!(
                 entry["operatorValues"],
-                serde_json::json!([enabled]),
+                serde_json::json!([expected_enabled]),
                 "{entry}"
             );
         }
@@ -990,6 +994,18 @@ mod tests {
                 (
                     serde_json::json!("WINDOW_OUTLIER"),
                     serde_json::json!(["TLS"])
+                ),
+                (
+                    serde_json::json!("ET_SIGNATURE"),
+                    serde_json::json!(["HTTP", "DNS", "TLS", "SSH", "CONN"])
+                ),
+                (
+                    serde_json::json!("ET_POLICY_SIGNATURE"),
+                    serde_json::json!(["HTTP", "DNS", "TLS", "SSH", "CONN"])
+                ),
+                (
+                    serde_json::json!("SIGMA_SIGNATURE"),
+                    serde_json::json!(["HTTP", "DNS", "TLS", "CONN"])
                 ),
             ]
         );

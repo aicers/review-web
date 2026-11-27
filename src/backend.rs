@@ -32,8 +32,114 @@ use crate::graphql::customer::{
 };
 pub use crate::graphql::{ParsedCertificate, TimeSeriesGenerationPolicy};
 
+/// The source archive and its provenance supplied by an uploader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignatureSourceUpload {
+    pub source: review_protocol::types::SignatureSource,
+    pub origin: review_database::SignatureOrigin,
+    pub fetch_label: Option<String>,
+    pub fetched_url: Option<String>,
+}
+
+/// A failure to ingest a signature source archive.
+#[derive(Debug, thiserror::Error)]
+pub enum SignatureIngestError {
+    #[error("the source archive is unreadable: {reason}")]
+    Unreadable { reason: String },
+    #[error("the source version is already present")]
+    AlreadyPresent { existing_version_id: u64 },
+    #[error("the source version is older than the applied version")]
+    OlderThanApplied { applied_version_id: u64 },
+    #[error("the source archive exceeded the configured maximum size")]
+    TooLarge,
+    #[error("reading the source archive failed")]
+    Transport,
+    #[error("the source archive receiver is unavailable")]
+    Unavailable,
+}
+
+/// Filters on the rules of applied source versions.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SignatureRuleFilter {
+    pub sources: Vec<review_protocol::types::SignatureSource>,
+    pub models: Vec<review_protocol::types::DetectionModel>,
+    pub rule_id: Option<String>,
+    pub text: Option<String>,
+}
+
+/// A rule from an applied signature source version.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignatureRule {
+    pub source: review_protocol::types::SignatureSource,
+    pub detection_model: review_protocol::types::DetectionModel,
+    pub rule_id: String,
+    pub title: String,
+    pub classification: Option<String>,
+    pub severity: String,
+}
+
+/// A page of signature rules and its match count before paging.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignatureRulePage {
+    pub rules: Vec<SignatureRule>,
+    pub total_count: usize,
+}
+
 #[async_trait]
 pub trait AgentManager: Send + Sync {
+    /// Sends the current signature rule sets to the given engine lookup keys.
+    ///
+    /// An empty slice targets every connected Semi-supervised Engine. Returns
+    /// the lookup keys that received the rule sets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sending fails or is unsupported.
+    async fn send_signature_rules(
+        &self,
+        _agent_lookup_keys: &[String],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Accepts a source archive and returns its stored version id.
+    ///
+    /// Returns once the version is stored as converting; conversion continues
+    /// in the background. Like [`PackageStoreReceiver::accept_package`], the
+    /// receiver must store nothing on the stream's single error item. Map
+    /// [`IngressStreamError::TooLarge`] to [`SignatureIngestError::TooLarge`]
+    /// and [`IngressStreamError::Transport`] to [`SignatureIngestError::Transport`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the ingestion failure, or `Unavailable` by default.
+    async fn ingest_signature_source(
+        &self,
+        _upload: SignatureSourceUpload,
+        _body: IngressStream,
+    ) -> Result<u64, SignatureIngestError> {
+        Err(SignatureIngestError::Unavailable)
+    }
+
+    /// Returns rules of applied source versions, including disabled sources.
+    ///
+    /// Orders matches by source number then rule id before paging. Empty
+    /// source or model lists mean all; rule ids match exactly, and text
+    /// matches title or classification as a case-insensitive substring.
+    /// `total_count` counts all matches before paging.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when listing fails or is unsupported.
+    async fn signature_rules(
+        &self,
+        _filter: &SignatureRuleFilter,
+        _offset: usize,
+        _limit: usize,
+    ) -> Result<SignatureRulePage, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
     async fn request_customer_data_deletion(
         &self,
         targets: &[CustomerDataDeletionTarget],

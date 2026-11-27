@@ -2875,6 +2875,9 @@ mod detection_event {
             "LabelDbMatch",
             "FarOutlier",
             "WindowOutlier",
+            "EtSignature",
+            "EtPolicySignature",
+            "SigmaSignature",
         ]
         .iter()
         .map(|model| format!("{model}Detail"))
@@ -3688,6 +3691,78 @@ mod detection_event {
                 empty("DNS_COVERT_CHANNEL", "DnsCovertChannelDetail"),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn signature_details_preserve_every_field_and_have_distinct_types() {
+        use review_protocol::types::{SignatureMatchDetail, SignatureSource};
+        let detail = SignatureMatchDetail {
+            source: SignatureSource::SigmaHq,
+            source_version: "release".into(),
+            converter_version: "converter".into(),
+            rule_id: "rule".into(),
+            rule_revision: Some("3".into()),
+            rule_title: "Title".into(),
+            classification: Some("class".into()),
+            techniques: vec!["T1059.001".into()],
+            severity: "high".into(),
+            author: Some("Author".into()),
+            matched_fields: vec!["CommandLine".into()],
+            home_net_fallback: true,
+            event_channel: Some("Security".into()),
+            event_id: Some(u32::MAX),
+        };
+        let schema = TestSchema::new().await;
+        for (second, detail) in [
+            Detail::EtSignature(detail.clone()),
+            Detail::EtPolicySignature(detail.clone()),
+            Detail::SigmaSignature(detail),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            schema
+                .store()
+                .events()
+                .put_event(&raw_event(
+                    at(i64::try_from(second).unwrap()),
+                    "sensor1",
+                    RawEventKind::Conn,
+                    RawEventBody::Conn(conn_body(addr("10.0.0.1"), addr("10.0.0.2"))),
+                    detail,
+                ))
+                .unwrap();
+        }
+        let fields = "source sourceVersion converterVersion ruleId ruleRevision ruleTitle classification techniques severity author matchedFields homeNetFallback eventChannel eventId";
+        let query = format!(
+            "detectionModel detail {{__typename ... on EtSignatureDetail {{{fields}}} ... on EtPolicySignatureDetail {{{fields}}} ... on SigmaSignatureDetail {{{fields}}}}}"
+        );
+        let expected: Vec<_> = [("ET_SIGNATURE","EtSignatureDetail"),("ET_POLICY_SIGNATURE","EtPolicySignatureDetail"),("SIGMA_SIGNATURE","SigmaSignatureDetail")].into_iter().map(|(model,name)| json!({"detectionModel":model,"detail":{"__typename":name,"source":"SIGMA_HQ","sourceVersion":"release","converterVersion":"converter","ruleId":"rule","ruleRevision":"3","ruleTitle":"Title","classification":"class","techniques":["T1059.001"],"severity":"high","author":"Author","matchedFields":["CommandLine"],"homeNetFallback":true,"eventChannel":"Security","eventId":u32::MAX.to_string()}})).collect();
+        assert_eq!(nodes(&schema, &query).await, expected);
+    }
+
+    #[tokio::test]
+    async fn http_request_headers_preserve_stored_values() {
+        let schema = TestSchema::new().await;
+        let mut body: raw_event::Http = zero_body();
+        body.request_header_names = vec!["Accept".into(), "X-Custom".into(), "Accept".into()];
+        body.accept = "text/html".into();
+        body.connection = "keep-alive".into();
+        body.accept_encoding = "gzip".into();
+        body.accept_language = "en-US".into();
+        body.pragma = "no-cache".into();
+        schema
+            .store()
+            .events()
+            .put_event(&raw_event(
+                at(0),
+                "sensor1",
+                RawEventKind::Http,
+                RawEventBody::Http(body),
+                Detail::NonBrowser,
+            ))
+            .unwrap();
+        assert_eq!(nodes(&schema,"target {... on RawEventTarget {body {... on HttpBody {requestHeaderNames accept connection acceptEncoding acceptLanguage pragma}}}}").await,vec![json!({"target":{"body":{"requestHeaderNames":["Accept","X-Custom","Accept"],"accept":"text/html","connection":"keep-alive","acceptEncoding":"gzip","acceptLanguage":"en-US","pragma":"no-cache"}}})]);
     }
 
     /// Returns a raw event body of type `T` with every field at its zero

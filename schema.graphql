@@ -2666,7 +2666,7 @@ enum DeployDisposition {
 """
 What a detection model found, as its own detail.
 """
-union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail | LabelDbMatchDetail | FarOutlierDetail | WindowOutlierDetail
+union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail | LabelDbMatchDetail | FarOutlierDetail | WindowOutlierDetail | EtSignatureDetail | EtPolicySignatureDetail | SigmaSignatureDetail
 
 type DetectionEvent {
 	"""
@@ -2874,6 +2874,9 @@ enum DetectionModel {
 	LABEL_DB_MATCH
 	FAR_OUTLIER
 	WINDOW_OUTLIER
+	ET_SIGNATURE
+	ET_POLICY_SIGNATURE
+	SIGMA_SIGNATURE
 }
 
 type DetectionModelEventCounter {
@@ -3250,6 +3253,40 @@ type EngineVersion {
 	The installed commit, if recorded.
 	"""
 	commit: String
+}
+
+type EtPolicySignatureDetail {
+	source: SignatureSource!
+	sourceVersion: String!
+	converterVersion: String!
+	ruleId: String!
+	ruleRevision: String
+	ruleTitle: String!
+	classification: String
+	techniques: [String!]!
+	severity: String!
+	author: String
+	matchedFields: [String!]!
+	homeNetFallback: Boolean!
+	eventChannel: String
+	eventId: StringNumber
+}
+
+type EtSignatureDetail {
+	source: SignatureSource!
+	sourceVersion: String!
+	converterVersion: String!
+	ruleId: String!
+	ruleRevision: String
+	ruleTitle: String!
+	classification: String
+	techniques: [String!]!
+	severity: String!
+	author: String
+	matchedFields: [String!]!
+	homeNetFallback: Boolean!
+	eventChannel: String
+	eventId: StringNumber
 }
 
 input EventListFilterInput {
@@ -3997,6 +4034,12 @@ type HostSubject {
 }
 
 type HttpBody {
+	requestHeaderNames: [String!]!
+	accept: String!
+	connection: String!
+	acceptEncoding: String!
+	acceptLanguage: String!
+	pragma: String!
 	origAddr: String!
 	origPort: Int!
 	respAddr: String!
@@ -4342,6 +4385,15 @@ type LineSegment {
 	`[1.1, 1.2]` has a positive slope while the integer trend is `["1", "1"]`.
 	"""
 	regTrend: Regression!
+}
+
+type LoadedSignatureSet {
+	source: SignatureSource!
+	sourceVersion: String!
+	converterVersion: String!
+	rules: StringNumber!
+	failedCompile: StringNumber!
+	loadError: String
 }
 
 """
@@ -5699,6 +5751,10 @@ type Mutation {
 	stopped.
 	"""
 	assignModel(name: String!, nodeId: ID!, agentKey: String!): String!
+	applySignatureSourceVersion(id: ID!): ID!
+	discardSignatureSourceVersion(id: ID!): ID!
+	setSignatureSourceEnabled(source: SignatureSource!, enabled: Boolean!): Boolean!
+	setSignatureRuleEnabled(source: SignatureSource!, ruleId: String!, enabled: Boolean!, account: String!): Boolean!
 	"""
 	Inserts a new label database, overwriting any existing database with the same name.
 	`dbfile` should be encoded string of `LabelDb` instance that is serialized
@@ -6786,6 +6842,11 @@ enum OperatorValueType {
 	TABLE_LIST
 }
 
+type OsGatedSkipCount {
+	rawEventKind: RawEventKind!
+	count: StringNumber!
+}
+
 type Outlier {
 	size: Int!
 	id: ID!
@@ -7718,6 +7779,10 @@ type Query {
 	the caller's customers.
 	"""
 	modelRuns(model: String!): [ModelRun!]!
+	signatureSources: [SignatureSourceState!]!
+	signatureSourceVersion(id: ID!): SignatureSourceVersion
+	signatureRules(filter: SignatureRuleFilterInput, offset: Int = 0, limit: Int = 100): SignatureRuleList!
+	signatureStatus: SignatureStatusOverview!
 	"""
 	The core-component registry: one entry per `(component, host)`.
 	
@@ -9238,6 +9303,124 @@ type SentaEndpointUnenrollRequest {
 	When the request was received.
 	"""
 	receivedAt: DateTime!
+}
+
+type SigmaSignatureDetail {
+	source: SignatureSource!
+	sourceVersion: String!
+	converterVersion: String!
+	ruleId: String!
+	ruleRevision: String
+	ruleTitle: String!
+	classification: String
+	techniques: [String!]!
+	severity: String!
+	author: String
+	matchedFields: [String!]!
+	homeNetFallback: Boolean!
+	eventChannel: String
+	eventId: StringNumber
+}
+
+type SignatureEngineStatus {
+	nodeId: ID!
+	agentKey: String!
+	receivedAt: DateTime!
+	loaded: [LoadedSignatureSet!]!
+	osGatedSkipped: [OsGatedSkipCount!]!
+	homeNetFallback: Boolean!
+	truncatedOverflow: StringNumber!
+}
+
+type SignatureReconversion {
+	time: DateTime!
+	versionId: ID!
+	previousConverterVersion: String
+	attemptedConverterVersion: String!
+	succeeded: Boolean!
+	previousRuleCount: StringNumber
+	ruleCount: StringNumber
+	failureReason: String
+}
+
+type SignatureRule {
+	source: SignatureSource!
+	detectionModel: DetectionModel!
+	ruleId: String!
+	title: String!
+	classification: String
+	severity: String!
+	disabled: Boolean!
+}
+
+input SignatureRuleFilterInput {
+	sources: [SignatureSource!]
+	models: [DetectionModel!]
+	ruleId: String
+	text: String
+}
+
+type SignatureRuleList {
+	rules: [SignatureRule!]!
+	totalCount: StringNumber!
+}
+
+enum SignatureSource {
+	ET_OPEN
+	SIGMA_HQ
+	SIGMA_HQ_EMERGING
+}
+
+enum SignatureSourceOrigin {
+	FETCH
+	UPLOAD
+}
+
+type SignatureSourceState {
+	source: SignatureSource!
+	enabled: Boolean!
+	applied: SignatureSourceVersion
+	staged: SignatureSourceVersion
+	kept: [SignatureSourceVersion!]!
+	versions: [SignatureSourceVersion!]!
+	lastReconversion: SignatureReconversion
+}
+
+type SignatureSourceVersion {
+	id: ID!
+	source: SignatureSource!
+	sourceVersion: String!
+	fetchLabel: String
+	converterVersion: String
+	origin: SignatureSourceOrigin!
+	fetchedUrl: String
+	archiveSha256: String!
+	contentDigest: String!
+	receivedAt: DateTime!
+	state: SignatureSourceVersionState!
+	failureReason: String
+	summary: String
+}
+
+enum SignatureSourceVersionState {
+	CONVERTING
+	STAGED
+	APPLIED
+	KEPT
+	FAILED
+	DISCARDED
+}
+
+type SignatureStatusOverview {
+	reports: [SignatureEngineStatus!]!
+	truncationDailySums(date: String!): [SignatureTruncationDailySum!]!
+}
+
+type SignatureTruncationDailySum {
+	detectionModel: DetectionModel!
+	source: SignatureSource!
+	ruleId: String!
+	count: StringNumber!
 }
 
 enum SkipReason {

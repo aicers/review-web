@@ -792,6 +792,9 @@ fn detection_models_cross_as_the_detection_model_enum() {
             "LABEL_DB_MATCH",
             "FAR_OUTLIER",
             "WINDOW_OUTLIER",
+            "ET_SIGNATURE",
+            "ET_POLICY_SIGNATURE",
+            "SIGMA_SIGNATURE",
         ],
         "{REGENERATE}"
     );
