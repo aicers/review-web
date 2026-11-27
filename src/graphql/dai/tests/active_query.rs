@@ -1,5 +1,6 @@
 //! Active query settings, display-only results and the packet send boundary.
 
+use std::sync::Arc;
 use std::task::Poll;
 
 use futures::{FutureExt, poll};
@@ -9,6 +10,7 @@ use review_database::{
 };
 use serde_json::{Value, json};
 
+use super::super::active_query::SitesReadPause;
 use super::devices::collecting;
 use super::{
     CUSTOMER, DAY, MINUTE, OTHER, activity, apply_all, code, data, data_at, default_site,
@@ -212,6 +214,73 @@ async fn defaults_default_site_writes_and_revision_refusals() {
     let fresh = TestSchema::new().await;
     refused(&fresh, &site(CUSTOMER, "null", 1, "[]", "[]", 20)).await;
     assert_eq!(fresh.store().dai_sites(CUSTOMER).unwrap().len(), 1);
+}
+
+/// Returns a listed site entry with the values of a site without settings.
+fn unconfigured(token: Option<&str>) -> Value {
+    json!({"token": token, "queryRanges": [], "dnsServers": [], "rate": 20, "revision": "0"})
+}
+
+#[tokio::test]
+async fn sites_list_the_default_site_once_without_concurrent_writes() {
+    let schema = TestSchema::new().await;
+    let listed = data(&schema, &queries(CUSTOMER)[1]).await;
+    assert_eq!(listed["daiActiveQuerySites"], json!([unconfigured(None)]));
+    assert_eq!(schema.store().dai_sites(CUSTOMER).unwrap(), Vec::new());
+
+    let default = schema.store().ensure_default_site(CUSTOMER).unwrap();
+    let listed = data(&schema, &queries(CUSTOMER)[1]).await;
+    assert_eq!(
+        listed["daiActiveQuerySites"],
+        json!([unconfigured(Some(&default))])
+    );
+
+    let other = schema
+        .store()
+        .create_dai_site(CUSTOMER, "other", &[])
+        .unwrap();
+    let mut tokens = [default.as_str(), other.as_str()];
+    tokens.sort_unstable();
+    let listed = data(&schema, &queries(CUSTOMER)[1]).await;
+    assert_eq!(
+        listed["daiActiveQuerySites"],
+        json!(tokens.map(|token| unconfigured(Some(token))))
+    );
+    assert_eq!(schema.store().dai_sites(CUSTOMER).unwrap().len(), 2);
+}
+
+/// The default site is created by `updateDaiActiveQuerySite(token: null)`
+/// after the query has read the store and before it answers, where the
+/// stored list and the default site check used to be two reads.
+#[tokio::test]
+async fn a_default_site_created_while_listing_is_listed_once() {
+    let schema = TestSchema::new().await;
+    let pause = Arc::new(SitesReadPause::default());
+    let list = &queries(CUSTOMER)[1];
+    let query = schema.execute_as_system_admin_with_data(list, Arc::clone(&pause));
+    tokio::pin!(query);
+    tokio::select! {
+        biased;
+        response = &mut query => {
+            panic!("the query answered without pausing: {:?}", response.errors);
+        }
+        () = pause.reached() => {}
+    }
+    let written = data(&schema, &site(CUSTOMER, "null", 0, "[]", "[]", 20)).await;
+    let token = default_site(&schema.store(), CUSTOMER);
+    assert_eq!(written["updateDaiActiveQuerySite"]["token"], json!(token));
+    pause.resume();
+    let response = query.await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert_eq!(
+        response.data.into_json().unwrap()["daiActiveQuerySites"],
+        json!([unconfigured(None)])
+    );
+    let listed = data(&schema, list).await;
+    assert_eq!(
+        listed["daiActiveQuerySites"],
+        json!([{"token": token, "queryRanges": [], "dnsServers": [], "rate": 20, "revision": "1"}])
+    );
 }
 
 #[tokio::test]

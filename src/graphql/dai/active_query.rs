@@ -62,6 +62,34 @@ impl<T> From<&db::DaiActiveQueryResult<T>> for DaiActiveQueryResult {
     }
 }
 
+/// A pause a test places in `daiActiveQuerySites` right after its store
+/// read, to write while the query is between that read and its answer.
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct SitesReadPause {
+    read: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+impl SitesReadPause {
+    /// Waits until the query has read the store and paused.
+    pub(super) async fn reached(&self) {
+        self.read.notified().await;
+    }
+
+    /// Lets the paused query answer.
+    pub(super) fn resume(&self) {
+        self.resume.notify_one();
+    }
+
+    /// Reports the read and waits for [`Self::resume`].
+    async fn wait(&self) {
+        self.read.notify_one();
+        self.resume.notified().await;
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DaiActiveQueryQuery;
 
@@ -106,33 +134,36 @@ impl DaiActiveQueryQuery {
         customer_id: ID,
     ) -> Result<Vec<DaiActiveQuerySite>> {
         let customer = accessible_customer(ctx, &customer_id)?;
-        let store = crate::graphql::get_store(ctx)?;
-        let mut sites: Vec<_> = store
+        // The answer comes from this one store call, which reads every
+        // stored site from one database snapshot, so a concurrent write
+        // cannot land between two reads of it. Whether the default site is
+        // stored is decided from the same list: the store creates the
+        // default site before or together with any other site, refuses to
+        // remove it on its own, and deletes all of a customer's sites at
+        // once, so a customer has stored sites exactly when its default site
+        // is stored.
+        let stored = crate::graphql::get_store(ctx)?
             .dai_active_query_sites(customer)
-            .map_err(dai_refusal)?
+            .map_err(dai_refusal)?;
+        #[cfg(test)]
+        if let Some(pause) = ctx.data_opt::<std::sync::Arc<SitesReadPause>>() {
+            pause.wait().await;
+        }
+        if stored.is_empty() {
+            return Ok(vec![DaiActiveQuerySite {
+                inner: db::DaiActiveQuerySite {
+                    token: String::new(),
+                    query_ranges: Vec::new(),
+                    dns_servers: Vec::new(),
+                    rate: ACTIVE_QUERY_DEFAULT_RATE,
+                    revision: 0,
+                },
+            }]);
+        }
+        Ok(stored
             .into_iter()
             .map(|inner| DaiActiveQuerySite { inner })
-            .collect();
-        if !store
-            .dai_sites(customer)
-            .map_err(dai_refusal)?
-            .iter()
-            .any(|site| site.is_default)
-        {
-            sites.insert(
-                0,
-                DaiActiveQuerySite {
-                    inner: db::DaiActiveQuerySite {
-                        token: String::new(),
-                        query_ranges: Vec::new(),
-                        dns_servers: Vec::new(),
-                        rate: ACTIVE_QUERY_DEFAULT_RATE,
-                        revision: 0,
-                    },
-                },
-            );
-        }
-        Ok(sites)
+            .collect())
     }
 
     /// The IP's whole active answer history, including no-name and
