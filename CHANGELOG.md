@@ -4,6 +4,12 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0](https://github.com/aicers/review-web/compare/0.67.0...0.68.0) - 2026-11-27
+
+### Added
+
+- [**breaking**] add signature source uploads, GraphQL API and detection details ([#1318](https://github.com/aicers/review-web/pull/1318))
+
 ## [0.67.0](https://github.com/aicers/review-web/compare/0.66.0...0.67.0) - 2026-11-26
 
 ### Other
