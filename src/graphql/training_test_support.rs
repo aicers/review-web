@@ -268,3 +268,72 @@ pub(crate) fn server_daily_tls_definition(
         extra,
     )
 }
+
+/// Returns a host recipe definition using the catalog's fixed and default values.
+pub(crate) fn host_definition(
+    os: &str,
+    custom: bool,
+    scope: &str,
+    server_name: &str,
+    address: &str,
+) -> String {
+    let id = format!("process_command_line_{os}");
+    let recipe = review_database::clustering_model_type(&id).unwrap();
+    let mut table = toml::Table::new();
+    for fixed in recipe.fixed {
+        let value = crate::graphql::clustering_model_type::value_text(&fixed.value);
+        let parsed: toml::Table = format!("value = {value}").parse().unwrap();
+        table.insert(fixed.key.to_owned(), parsed.get("value").unwrap().clone());
+    }
+    for operator in recipe.operator_values {
+        if let Some(default) = operator.default.as_ref() {
+            let value = crate::graphql::clustering_model_type::value_text(default);
+            let parsed: toml::Table = format!("value = {value}").parse().unwrap();
+            table.insert(
+                operator.name.to_owned(),
+                parsed.get("value").unwrap().clone(),
+            );
+        }
+    }
+    table.insert("type".into(), if custom { "custom" } else { &id }.into());
+    if !custom {
+        table.insert("type_version".into(), i64::from(recipe.version).into());
+    }
+    let scope: toml::Table = format!("endpoint_scope = {scope}").parse().unwrap();
+    table.insert(
+        "endpoint_scope".into(),
+        scope.get("endpoint_scope").unwrap().clone(),
+    );
+    table.insert("window_start".into(), window_start().into());
+    table.insert("window_end".into(), window_end().into());
+    let store: toml::Table = data_store(server_name, address).parse().unwrap();
+    table.insert(
+        "data_store".into(),
+        store.get("data_store").unwrap().clone(),
+    );
+    toml::to_string(&table).unwrap()
+}
+
+/// Writes a current policy without enrolling any endpoints or verifying its JWS.
+pub(crate) fn write_group_policy(
+    store: &review_database::Store,
+    customer_id: u32,
+    group: &str,
+    jws: &str,
+    version: u64,
+) {
+    store
+        .write_senta_endpoint_current_document(
+            &review_database::SentaEndpointCurrentDocument {
+                customer_id,
+                typ: "senta-policy".into(),
+                target: format!("group:{group}"),
+                recovery_epoch: 0,
+                version,
+                jws: jws.into(),
+                put_at: 0,
+            },
+            &[],
+        )
+        .unwrap();
+}

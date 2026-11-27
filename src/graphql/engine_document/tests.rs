@@ -194,6 +194,7 @@ fn every_key_of_the_schema_parses() {
         EngineDocumentRefs {
             detectors: vec![
                 EngineDetectorRef {
+                    endpoint_scope: None,
                     id: 1,
                     model: "web-http-node2".to_string(),
                     sources: vec![
@@ -203,6 +204,7 @@ fn every_key_of_the_schema_parses() {
                     indicator: Some("indicator-name".to_string()),
                 },
                 EngineDetectorRef {
+                    endpoint_scope: None,
                     id: -2,
                     model: "dns-node2".to_string(),
                     sources: vec!["piglet.node2.example.com".to_string()],
@@ -223,7 +225,6 @@ fn every_required_key_must_be_present() {
         "id",
         "enabled",
         "model",
-        "sources",
         "period",
         "start",
         "batch_size",
@@ -402,8 +403,6 @@ fn values_outside_their_type_are_invalid() {
         ("stats", "stats = \"no\"", "detectors[0].stats"),
         ("timeseries", "timeseries = 1", "detectors[0].timeseries"),
         ("read_lag", "read_lag = 30", "detectors[0].read_lag"),
-        ("sources", "sources = \"piglet.a\"", "detectors[0].sources"),
-        ("sources", "sources = [1]", "detectors[0].sources[0]"),
         ("period", "period = \"five minutes\"", "detectors[0].period"),
         ("period", "period = 300", "detectors[0].period"),
         ("read_lag", "read_lag = \"-1s\"", "detectors[0].read_lag"),
@@ -528,28 +527,6 @@ fn ids_models_and_sources_are_listed_once_each() {
             Value::from(2)
         )
     );
-    assert_eq!(
-        refused(&with(VALID, "sources", "sources = []")),
-        (
-            "INVALID_DOCUMENT".to_string(),
-            "detectors[0].sources".to_string(),
-            String::new(),
-            Value::from(1)
-        )
-    );
-    assert_eq!(
-        refused(&with(
-            VALID,
-            "sources",
-            "sources = [\"piglet.a\", \"piglet.b\", \"piglet.a\"]"
-        )),
-        (
-            "DUPLICATE_ENTRY".to_string(),
-            "detectors[0].sources[2]".to_string(),
-            "piglet.a".to_string(),
-            Value::from(1)
-        )
-    );
 }
 
 #[test]
@@ -564,22 +541,6 @@ fn bounds_are_checked_before_repeats() {
         "batch_size = 5000001",
     );
     assert_eq!(code_and_field(&text).0, "BOUND_VIOLATED");
-}
-
-#[test]
-fn an_empty_source_list_is_refused_before_bounds() {
-    let text = with(
-        &with(VALID, "sources", "sources = []"),
-        "batch_size",
-        "batch_size = 5000001",
-    );
-    assert_eq!(
-        code_and_field(&text),
-        (
-            "INVALID_DOCUMENT".to_string(),
-            "detectors[0].sources".to_string()
-        )
-    );
 }
 
 #[test]
@@ -1866,4 +1827,221 @@ fn detectors_not_written_as_an_array_of_tables_are_refused() {
     }
     // An empty inline array holds no detector, which the completion takes.
     f.check("detectors = []\n").unwrap();
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // Exercise the same contract for typed and custom host detectors.
+fn host_detector_scopes_use_stored_kinds_and_current_customer_policies() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use review_protocol::types::EndpointScope;
+
+    use crate::graphql::training_test_support::{host_definition, write_group_policy};
+    const GROUP: &str = "00000000-0000-0000-0000-000000000001";
+    const FOREIGN: &str = "00000000-0000-0000-0000-000000000002";
+    let f = Detectors::new();
+    for (custom, name) in [(false, "typed-host"), (true, "custom-host")] {
+        TestModel {
+            instance: f.instance.clone(),
+            raw_event_kind: "process_create",
+            trained_definition: host_definition(
+                "windows",
+                custom,
+                "\"all\"",
+                &f.policies.server_name,
+                OWN_ADDRESS,
+            ),
+            clustering_model_type: if custom {
+                ClusteringModelTypeRef::Custom
+            } else {
+                ClusteringModelTypeRef::Catalog {
+                    id: "process_command_line_windows".into(),
+                    version: 1,
+                }
+            },
+            ..TestModel::new(name, POLICY_CUSTOMER)
+        }
+        .replace(&f.policies.store);
+        // Neither readable mode nor endpoint membership is required.
+        let policy_version = if custom { 4 } else { 1 };
+        write_group_policy(
+            &f.policies.store,
+            POLICY_CUSTOMER,
+            GROUP,
+            "unreadable",
+            policy_version,
+        );
+        write_group_policy(
+            &f.policies.store,
+            POLICY_CUSTOMER + 100,
+            FOREIGN,
+            "unreadable",
+            1,
+        );
+        let base = f.document(name, &[], "");
+        let no_sources = without(&base, "sources");
+        for enabled in [true, false] {
+            for scope in [
+                "\"all\"".to_string(),
+                format!("{{ groups = [\"{GROUP}\"] }}"),
+            ] {
+                let text = no_sources
+                    .replace("enabled = true", &format!("enabled = {enabled}"))
+                    .replace("model =", &format!("endpoint_scope = {scope}\nmodel ="));
+                f.check(&text).unwrap();
+                let refs = EngineDocument::parse_and_validate(&text).unwrap().refs();
+                assert_eq!(refs.detectors[0].sources, Vec::<String>::new());
+                assert_eq!(
+                    refs.detectors[0].endpoint_scope,
+                    Some(if scope == "\"all\"" {
+                        EndpointScope::All
+                    } else {
+                        EndpointScope::Groups(vec![GROUP.into()])
+                    })
+                );
+                for source in ["[]", "[\"s\", \"s\"]", "42", "\"sensor\""] {
+                    let with_sources =
+                        text.replace("model =", &format!("sources = {source}\nmodel ="));
+                    let value: toml::Table = format!("v = {source}").parse().unwrap();
+                    assert_eq!(
+                        f.refused(&with_sources).0,
+                        (
+                            "FIELD_NOT_ALLOWED".into(),
+                            "detectors[0].sources".into(),
+                            crate::graphql::host_scope::value_text(value.get("v").unwrap()),
+                            Value::from(7)
+                        )
+                    );
+                }
+                let unknown_os = text.replace("model =", "os_family = \"windows\"\nmodel =");
+                assert_eq!(
+                    f.refused(&unknown_os).0,
+                    (
+                        "UNKNOWN_FIELD".into(),
+                        "detectors[0].os_family".into(),
+                        "os_family".into(),
+                        Value::from(7)
+                    )
+                );
+            }
+        }
+        assert_eq!(
+            f.refused(&no_sources).0,
+            (
+                "FIELD_NOT_ALLOWED".into(),
+                "detectors[0].endpoint_scope".into(),
+                String::new(),
+                Value::from(7)
+            )
+        );
+        for scope in [
+            "\"invalid\"",
+            "{ groups = [] }",
+            "{ groups = [\"a\", \"a\"] }",
+            "{ groups = [1] }",
+            "{ groups = \"a\" }",
+            "42",
+            "{ groups = [\"a\"], other = 1 }",
+        ] {
+            let text = no_sources.replace("model =", &format!("endpoint_scope = {scope}\nmodel ="));
+            let refusal = f.refused(&text).0;
+            assert_eq!(
+                (refusal.0.as_str(), refusal.1.as_str(), refusal.3),
+                (
+                    "INVALID_DOCUMENT",
+                    "detectors[0].endpoint_scope",
+                    Value::from(7)
+                )
+            );
+            let value: toml::Table = format!("v = {scope}").parse().unwrap();
+            assert_eq!(
+                refusal.2,
+                crate::graphql::host_scope::value_text(value.get("v").unwrap())
+            );
+        }
+        for group in [FOREIGN, "00000000-0000-0000-0000-000000000003"] {
+            let text = no_sources.replace(
+                "model =",
+                &format!("endpoint_scope = {{ groups = [\"{group}\"] }}\nmodel ="),
+            );
+            assert_eq!(
+                f.refused(&text).0,
+                (
+                    "SOURCE_NOT_ALLOWED".into(),
+                    "detectors[0].endpoint_scope.groups[0]".into(),
+                    group.into(),
+                    Value::from(7)
+                )
+            );
+        }
+        for (version, mode) in [
+            (policy_version + 1, "extended"),
+            (policy_version + 2, "essential"),
+        ] {
+            let payload = serde_json::json!({"collection_mode": mode});
+            write_group_policy(
+                &f.policies.store,
+                POLICY_CUSTOMER,
+                GROUP,
+                &format!("h.{}.s", URL_SAFE_NO_PAD.encode(payload.to_string())),
+                version,
+            );
+            let text = no_sources.replace(
+                "model =",
+                &format!("endpoint_scope = {{ groups = [\"{GROUP}\"] }}\nmodel ="),
+            );
+            f.check(&text).unwrap();
+        }
+    }
+    let network = f.document(MULTIDIMENSION_MODEL, &[], "");
+    assert_eq!(
+        f.refused(&without(&network, "sources")).0,
+        (
+            "FIELD_NOT_ALLOWED".into(),
+            "detectors[0].sources".into(),
+            String::new(),
+            Value::from(7)
+        )
+    );
+    assert_eq!(
+        f.refused(&network).0,
+        (
+            "INVALID_DOCUMENT".into(),
+            "detectors[0].sources".into(),
+            String::new(),
+            Value::from(7)
+        )
+    );
+    assert_eq!(
+        f.refused(&network.replace("model =", "endpoint_scope = \"all\"\nmodel ="))
+            .0,
+        (
+            "FIELD_NOT_ALLOWED".into(),
+            "detectors[0].endpoint_scope".into(),
+            "all".into(),
+            Value::from(7)
+        )
+    );
+}
+
+#[test]
+fn network_source_shapes_and_repeats_keep_their_refusals_after_model_lookup() {
+    let f = Detectors::new();
+    let document = f.document(MULTIDIMENSION_MODEL, &[], "");
+    for (input, code, key, value) in [
+        ("42", "INVALID_DOCUMENT", "sources", "42"),
+        ("\"sensor\"", "INVALID_DOCUMENT", "sources", "sensor"),
+        ("[1]", "INVALID_DOCUMENT", "sources[0]", "1"),
+        ("[\"a\", \"a\"]", "DUPLICATE_ENTRY", "sources[1]", "a"),
+    ] {
+        let text = document.replace("sources = []", &format!("sources = {input}"));
+        assert_eq!(
+            f.refused(&text).0,
+            (
+                code.into(),
+                format!("detectors[0].{key}"),
+                value.into(),
+                Value::from(7)
+            )
+        );
+    }
 }

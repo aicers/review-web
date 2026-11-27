@@ -1732,6 +1732,7 @@ mod tests {
                 detectors: detectors
                     .iter()
                     .map(|(id, model)| EngineDetectorRef {
+                        endpoint_scope: None,
                         id: *id,
                         model: model.clone(),
                         sources: vec![],

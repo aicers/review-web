@@ -44,6 +44,8 @@ pub(crate) enum RefusalCode {
     /// An indicator update or removal while a document or definition names
     /// it.
     IndicatorInUse,
+    /// Cloning an accessible host model is unsupported.
+    HostModelCloneUnsupported,
     /// An indicator update that would move it to another model.
     IndicatorModelChange,
     /// `suspicious_tokens` naming no indicator, or an indicator of another
@@ -113,6 +115,7 @@ impl RefusalCode {
             Self::EventKindNotAllowed => "EVENT_KIND_NOT_ALLOWED",
             Self::FieldFixed => "FIELD_FIXED",
             Self::FieldNotAllowed => "FIELD_NOT_ALLOWED",
+            Self::HostModelCloneUnsupported => "HOST_MODEL_CLONE_UNSUPPORTED",
             Self::IndicatorInUse => "INDICATOR_IN_USE",
             Self::IndicatorModelChange => "INDICATOR_MODEL_CHANGE",
             Self::IndicatorNotAllowed => "INDICATOR_NOT_ALLOWED",

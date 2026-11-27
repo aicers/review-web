@@ -2670,6 +2670,7 @@ mod tests {
             let update = NodeUpdate::from(node);
             let refs = |id| EngineDocumentRefs {
                 detectors: vec![EngineDetectorRef {
+                    endpoint_scope: None,
                     id,
                     model: "trained".to_string(),
                     sources: vec![setup.policy_a.to_string()],

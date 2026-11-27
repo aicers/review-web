@@ -255,6 +255,7 @@ fn every_value_type_and_key_status_maps() {
         (Type::Integer, "INTEGER"),
         (Type::Float, "FLOAT"),
         (Type::StringList, "STRING_LIST"),
+        (Type::EndpointScope, "ENDPOINT_SCOPE"),
         (Type::IntegerList, "INTEGER_LIST"),
         (Type::Table, "TABLE"),
         (Type::TableList, "TABLE_LIST"),
@@ -266,6 +267,8 @@ fn every_value_type_and_key_status_maps() {
 
     let cases = [
         (Status::Required, "REQUIRED"),
+        (Status::RequiredForHostKind, "REQUIRED_FOR_HOST_KIND"),
+        (Status::RequiredForNonHostKind, "REQUIRED_FOR_NON_HOST_KIND"),
         (Status::AbsentMeans, "ABSENT_MEANS"),
         (Status::Rejected, "REJECTED"),
         (Status::RequiredForCatalogType, "CATALOG_TYPE_ONLY"),
@@ -453,4 +456,50 @@ fn training_read_times_keep_their_nanoseconds() {
     assert_eq!(at.to_string(), "2026-03-15T15:00:04.123456789Z");
     let at = timestamp(i64::MIN).unwrap();
     assert_eq!(at.to_string(), "1677-09-21T00:12:43.145224192Z");
+}
+
+#[tokio::test]
+async fn host_catalog_metadata_and_csv_defaults_come_from_recipes() {
+    let result = query("{ clusteringModelTypes { id sourceColumn { kind name } osFamily operatorValues { name valueType } } customTrainingDefaults(method: MULTIDIMENSION, rawEventKind: PROCESS_CREATE) { key value } trainingDefinitionKeys(method: MULTIDIMENSION) { key status } }").await;
+    let types = result["clusteringModelTypes"].as_array().unwrap();
+    let http = types
+        .iter()
+        .find(|entry| entry["id"] == "http_url")
+        .unwrap();
+    assert_eq!(
+        http["sourceColumn"],
+        json!({"kind":"IP", "name":"orig_addr"})
+    );
+    assert!(http["osFamily"].is_null());
+    let csv = result["customTrainingDefaults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == "csv")
+        .unwrap();
+    for os in ["windows", "linux"] {
+        let id = format!("process_command_line_{os}");
+        let entry = types.iter().find(|entry| entry["id"] == id).unwrap();
+        assert_eq!(
+            entry["sourceColumn"],
+            json!({"kind":"ENDPOINT", "name":"endpoint_id"})
+        );
+        assert_eq!(entry["osFamily"], os);
+        assert!(
+            entry["operatorValues"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({"name":"endpoint_scope", "valueType":"ENDPOINT_SCOPE"}))
+        );
+        let recipe = database::clustering_model_type(&id).unwrap();
+        assert_eq!(
+            parse(csv["value"].as_str().unwrap()),
+            toml_value(recipe.fixed_value("csv").unwrap())
+        );
+    }
+    let keys = result["trainingDefinitionKeys"].as_array().unwrap();
+    for key in ["endpoint_scope", "os_family"] {
+        assert!(keys.contains(&json!({"key":key, "status":"REQUIRED_FOR_HOST_KIND"})));
+    }
+    assert!(keys.contains(&json!({"key":"sources", "status":"REQUIRED_FOR_NON_HOST_KIND"})));
 }

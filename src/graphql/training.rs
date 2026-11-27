@@ -93,6 +93,25 @@ impl TrainingQuery {
         Ok(Some(definition.into()))
     }
 
+    /// The customer's groups with current endpoint policies, even without endpoints.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn training_endpoint_groups(
+        &self,
+        ctx: &Context<'_>,
+        customer_id: ID,
+    ) -> Result<Vec<super::host_scope::TrainingEndpointGroup>> {
+        let customer_id = super::customer_network::parse_customer_id(&customer_id)?;
+        let scope = users_customers(ctx)?;
+        if !is_member(scope.as_deref(), customer_id) {
+            return Err("Forbidden".into());
+        }
+        let store = super::get_store(ctx)?;
+        super::host_scope::customer_groups(&store, customer_id)
+    }
+
     /// The runs that create or replace the model `model`, and the clone runs
     /// from it, ascending by id.
     ///
@@ -542,6 +561,9 @@ impl TrainingMutation {
     /// customer is refused with `CROSS_CUSTOMER_FORBIDDEN` to anyone but a
     /// System Administrator.
     ///
+    /// An accessible host-kind source is refused before target validation
+    /// with `HOST_MODEL_CLONE_UNSUPPORTED`, field `source` and the original
+    /// model name as its value. This creates no target or run.
     /// Refusals carry `extensions.code`: the codes of the definition, as
     /// `insertTrainingDefinition` lists them; `NOT_FOUND`, `NAME_TAKEN`,
     /// `NAME_INVALID`, `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`,
@@ -572,19 +594,21 @@ impl TrainingMutation {
         sources: Vec<String>,
         suspicious_tokens: MaybeUndefined<String>,
     ) -> Result<ID> {
-        let node_id = parse_node_id(&node_id)?;
         // Access and the deletion lock answer before the instance's
         // eligibility and the Data Store are validated; both are checked
         // again under the engine configuration lock.
-        {
+        let node_id = {
             let model = load_accessible_model_by_name(ctx, "source", &source)?;
+            refuse_host_clone(&model)?;
+            let node_id = parse_node_id(&node_id)?;
             let users_customers = users_customers(ctx)?;
             let store = super::get_store(ctx)?;
             check_customers(&store, [model.customer_id])?;
             let customer_id =
                 instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
             check_customers(&store, [customer_id])?;
-        }
+            node_id
+        };
         let address = data_store.address.parse::<SocketAddr>().map_err(|e| {
             refusal(
                 RefusalCode::InvalidDocument,
@@ -602,6 +626,7 @@ impl TrainingMutation {
         let (agent_lookup_key, run) = {
             let _lock = lock_engine_config(ctx).await?;
             let model = load_accessible_model_by_name(ctx, "source", &source)?;
+            refuse_host_clone(&model)?;
             let users_customers = users_customers(ctx)?;
             let system_admin = is_system_admin(ctx);
             let store = super::get_store(ctx)?;
@@ -1627,6 +1652,19 @@ impl From<database::ModelUse> for ModelDetectorUse {
             pending: user.pending,
         }
     }
+}
+
+/// Refuses accessible host originals before checking any clone target.
+fn refuse_host_clone(model: &database::ModelDigest) -> Result<()> {
+    if super::host_scope::is_host_kind(&model.raw_event_kind) {
+        return Err(refusal(
+            RefusalCode::HostModelCloneUnsupported,
+            "host model cloning is unsupported",
+            "source",
+            model.name.as_str(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -642,6 +642,23 @@ impl ModelDigest {
         ID(self.inner.trained_run_id.to_string())
     }
 
+    /// The filter report of the run that produced this current result.
+    async fn training_filter_report(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Option<super::filter_report::TrainingFilterReport>> {
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(store
+            .training_filter_report(self.inner.trained_run_id)
+            .map_err(|e| {
+                format!(
+                    "cannot read training filter report for run {}: {e:#}",
+                    self.inner.trained_run_id
+                )
+            })?
+            .map(Into::into))
+    }
+
     /// The sources of `trainedDefinition`; empty if it does not parse.
     async fn training_sources(&self) -> Vec<String> {
         training::sources_of(&self.inner.trained_definition)

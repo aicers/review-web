@@ -33,6 +33,7 @@ pub(crate) struct TestModel<'a> {
     pub(crate) instance: ModelInstance,
     /// The record `kind`: `Multifield`, `Prefix` or `Timeseries`.
     pub(crate) kind: &'a str,
+    pub(crate) raw_event_kind: &'a str,
     pub(crate) version: i32,
     /// The batch timestamps of the rounds the replace makes current.
     pub(crate) rounds: &'a [i64],
@@ -56,6 +57,7 @@ impl<'a> TestModel<'a> {
             customer_id,
             instance: test_instance(customer_id),
             kind: "Multifield",
+            raw_event_kind: TEST_EVENT_KIND,
             version: 1,
             rounds: &[],
             trained_at: jiff::Timestamp::now(),
@@ -76,7 +78,7 @@ impl<'a> TestModel<'a> {
             kind: self.kind.to_string(),
             serialized_classifier: vec![1, 2, 3],
             max_event_id_num: 50,
-            raw_event_kind: TEST_EVENT_KIND.to_string(),
+            raw_event_kind: self.raw_event_kind.to_string(),
             classification_id: 0,
             batch_info: self
                 .rounds
@@ -200,6 +202,7 @@ pub(crate) fn name_in_applied_document(
         agent_key: instance.agent_key.clone(),
         applied: Some(EngineDocumentRefs {
             detectors: vec![EngineDetectorRef {
+                endpoint_scope: None,
                 id: detector_id,
                 model: model.to_string(),
                 sources: vec![],

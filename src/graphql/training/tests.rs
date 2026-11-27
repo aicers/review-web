@@ -364,6 +364,7 @@ fn name_in_documents(
 ) {
     let detector = |id| EngineDocumentRefs {
         detectors: vec![EngineDetectorRef {
+            endpoint_scope: None,
             id,
             model: model.to_string(),
             sources: vec![],
@@ -3652,4 +3653,358 @@ async fn a_model_shows_its_cluster_count_at_training() {
             "{name}"
         );
     }
+}
+
+#[tokio::test]
+async fn policy_groups_are_customer_bound_and_do_not_require_readable_modes_or_endpoints() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    use crate::graphql::training_test_support::{host_definition, write_group_policy};
+    let f = fixture().await;
+    let payloads = [
+        Some(json!({"collection_mode": "extended"})),
+        Some(json!({"collection_mode": "essential"})),
+        None,
+        Some(json!({})),
+        Some(json!({"collection_mode": 42})),
+        Some(json!({"collection_mode": "unknown"})),
+    ];
+    let groups: Vec<_> = (1..=payloads.len())
+        .map(|i| uuid::Uuid::from_u128(u128::try_from(i).unwrap()).to_string())
+        .collect();
+    for (group, payload) in groups.iter().zip(payloads) {
+        let jws = payload.map_or_else(
+            || "broken".into(),
+            |payload| format!("h.{}.s", URL_SAFE_NO_PAD.encode(payload.to_string())),
+        );
+        write_group_policy(&f.store(), A, group, &jws, 1);
+        let definition = host_definition(
+            "linux",
+            true,
+            &format!("{{ groups = [{}] }}", gql(group)),
+            &f.server_name,
+            OWN_ADDRESS,
+        );
+        f.define(&f.engine_a, &format!("host-{group}"), &definition)
+            .await;
+    }
+    let query =
+        format!("{{ trainingEndpointGroups(customerId: \"{A}\") {{ groupId collectionMode }} }}");
+    let expected: Vec<_> = groups.iter().enumerate().map(|(i, id)| json!({"groupId": id, "collectionMode": match i {0 => Some("extended"), 1 => Some("essential"), _ => None}})).collect();
+    for role in [
+        Role::SecurityAdministrator,
+        Role::SecurityManager,
+        Role::SecurityMonitor,
+    ] {
+        let result = f
+            .schema
+            .execute_as_scoped_user(&query, role, Some(vec![A]))
+            .await;
+        assert_eq!(data(result)["trainingEndpointGroups"], json!(expected));
+    }
+    forbidden(&f.sec(&query, &[B]).await);
+    assert_ne!(f.schema.schema.execute(&query).await.errors, []);
+    write_group_policy(
+        &f.store(),
+        A,
+        &groups[0],
+        &format!(
+            "h.{}.s",
+            URL_SAFE_NO_PAD.encode(r#"{"collection_mode":"essential"}"#)
+        ),
+        2,
+    );
+    assert_eq!(
+        data(f.sys(&query).await)["trainingEndpointGroups"][0]["collectionMode"],
+        "essential"
+    );
+    let owned = host_definition("windows", false, "\"all\"", &f.server_name, OWN_ADDRESS);
+    f.define(&f.engine_a, "updatable-host", &owned).await;
+    for group in ["00000000-0000-0000-0000-000000000099", &groups[0]] {
+        let bad = host_definition(
+            "windows",
+            false,
+            &format!("{{ groups = [{}] }}", gql(group)),
+            &f.server_name,
+            OWN_ADDRESS,
+        );
+        let instance = if group == groups[0] {
+            &f.engine_b
+        } else {
+            &f.engine_a
+        };
+        let res = f.sys(&insert(instance, "refused-host", &bad)).await;
+        assert_eq!(
+            refused(&res),
+            (
+                "SOURCE_NOT_ALLOWED".into(),
+                "endpoint_scope.groups[0]".into(),
+                group.into()
+            )
+        );
+        assert!(stored(&f.store(), "refused-host").is_none());
+        if group != groups[0] {
+            let before = stored(&f.store(), "updatable-host").unwrap();
+            assert_eq!(
+                code(&f.sys(&update("updatable-host", &bad)).await),
+                "SOURCE_NOT_ALLOWED"
+            );
+            assert_eq!(
+                stored(&f.store(), "updatable-host").unwrap().definition,
+                before.definition
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn group_selection_requires_the_current_customer_policy_and_a_uuid_group_target() {
+    use review_database::SentaEndpointCurrentDocument;
+
+    use crate::graphql::training_test_support::{host_definition, write_group_policy};
+
+    const GROUP: &str = "00000000-0000-0000-0000-000000000011";
+    let f = fixture().await;
+    for (customer_id, typ, target) in [
+        (A, "senta-address", format!("group:{GROUP}")),
+        (A, "senta-policy", format!("endpoint:{GROUP}")),
+        (A, "senta-policy", "group:not-a-uuid".into()),
+        (B, "senta-policy", format!("group:{GROUP}")),
+    ] {
+        f.store()
+            .write_senta_endpoint_current_document(
+                &SentaEndpointCurrentDocument {
+                    customer_id,
+                    typ: typ.into(),
+                    target,
+                    recovery_epoch: 0,
+                    version: 1,
+                    jws: "unreadable".into(),
+                    put_at: 0,
+                },
+                &[],
+            )
+            .unwrap();
+    }
+    let query =
+        format!("{{ trainingEndpointGroups(customerId: \"{A}\") {{ groupId collectionMode }} }}");
+    assert_eq!(
+        data(f.sys(&query).await)["trainingEndpointGroups"],
+        json!([])
+    );
+    let definition = host_definition(
+        "windows",
+        true,
+        &format!("{{ groups = [\"{GROUP}\"] }}"),
+        &f.server_name,
+        OWN_ADDRESS,
+    );
+    let insert = insert(&f.engine_a, "policy-required", &definition);
+    let expected_refusal = (
+        "SOURCE_NOT_ALLOWED".into(),
+        "endpoint_scope.groups[0]".into(),
+        GROUP.into(),
+    );
+    assert_eq!(refused(&f.sys(&insert).await), expected_refusal);
+    assert!(stored(&f.store(), "policy-required").is_none());
+    write_group_policy(&f.store(), A, GROUP, "unreadable", 1);
+    assert_eq!(
+        data(f.sys(&query).await)["trainingEndpointGroups"],
+        json!([{"groupId": GROUP, "collectionMode": null}])
+    );
+    f.define(&f.engine_a, "policy-required", &definition).await;
+    f.store()
+        .senta_endpoint_current_document_map()
+        .delete(A, "senta-policy", &format!("group:{GROUP}"))
+        .unwrap();
+    assert_eq!(
+        data(f.sys(&query).await)["trainingEndpointGroups"],
+        json!([])
+    );
+    assert_eq!(
+        refused(&f.sys(&train("policy-required")).await),
+        expected_refusal
+    );
+    assert_eq!(f.store().model_runs("policy-required").unwrap(), []);
+    assert_eq!(f.relay.calls(), []);
+}
+
+#[tokio::test]
+async fn accessible_host_clones_are_refused_before_all_target_checks_without_side_effects() {
+    let f = fixture().await;
+    for (name, customer, instance) in [("host-a", A, &f.engine_a), ("host-b", B, &f.engine_b)] {
+        TestModel {
+            instance: instance.clone(),
+            raw_event_kind: "process_create",
+            ..TestModel::new(name, customer)
+        }
+        .replace(&f.store());
+    }
+    let before = f.store().training_definitions().unwrap();
+    let valid_target = clone(
+        "host-a",
+        "target",
+        &f.engine_a2,
+        (&f.server_name, OWN_ADDRESS),
+        &[&f.sensor_a],
+        "",
+    );
+    let invalid_target = "mutation { cloneModel(source: \"host-a\", targetName: \"!\", nodeId: \"bad-node\", agentKey: \"invalid\", dataStore: {address: \"bad-address\", serverName: \"invalid\"}, sources: []) }";
+    for query in [&valid_target, invalid_target] {
+        assert_eq!(
+            refused(&f.sec(query, &[A]).await),
+            (
+                "HOST_MODEL_CLONE_UNSUPPORTED".into(),
+                "source".into(),
+                "host-a".into()
+            )
+        );
+    }
+    let inaccessible = clone(
+        "host-b",
+        "target",
+        &f.engine_a,
+        (&f.server_name, OWN_ADDRESS),
+        &[],
+        "",
+    );
+    forbidden(&f.sec(&inaccessible, &[A]).await);
+    assert_eq!(
+        f.store().training_definitions().unwrap().len(),
+        before.len()
+    );
+    assert_eq!(f.store().model_runs("target").unwrap(), []);
+    assert!(f.store().active_run("host-a").unwrap().is_none());
+    assert!(model_by_name(&f.store(), "target").unwrap().is_none());
+    assert_eq!(f.relay.calls(), []);
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Follow current, previous and active runs across customers.
+async fn current_training_reports_follow_trained_run_not_previous_or_active_runs() {
+    use review_protocol::types::{DayFilterCounts, RecordFilterCounts, TrainingFilterReport};
+
+    use crate::graphql::training_test_support::host_definition;
+    let f = fixture().await;
+    let definition = host_definition("linux", true, "\"all\"", &f.server_name, OWN_ADDRESS);
+    f.define(&f.engine_a, "reported", &definition).await;
+    let report = |n| TrainingFilterReport {
+        endpoint_sources: n,
+        days: vec![
+            DayFilterCounts {
+                start: -1_234_567_890_123_456_789,
+                counts: RecordFilterCounts {
+                    not_extended: u64::MAX,
+                    other_os: 9_007_199_254_740_993,
+                },
+            },
+            DayFilterCounts {
+                start: 1_234_567_890_123_456_789,
+                counts: RecordFilterCounts {
+                    not_extended: 0,
+                    other_os: 0,
+                },
+            },
+        ],
+    };
+    let previous = f.train("reported").await;
+    f.store()
+        .set_training_filter_report(previous, &f.engine_a, &report(1))
+        .unwrap();
+    complete_as(
+        &f.store(),
+        previous,
+        &f.engine_a,
+        "reported",
+        ("Multifield", "process_create"),
+    );
+    let current = f.train("reported").await;
+    complete_as(
+        &f.store(),
+        current,
+        &f.engine_a,
+        "reported",
+        ("Multifield", "process_create"),
+    );
+    let query = "{ models { edges { node { name trainedRunId trainingFilterReport { endpointSources days { start notExtended otherOs } } previousTrainingResult { trainedRunId } } } } }";
+    assert!(
+        data(f.sys(query).await)["models"]["edges"][0]["node"]["trainingFilterReport"].is_null()
+    );
+    // The table accepts reports only while the run is active, so create a new current run.
+    let current = f.train("reported").await;
+    let zero = TrainingFilterReport {
+        endpoint_sources: 0,
+        days: vec![],
+    };
+    f.store()
+        .set_training_filter_report(current, &f.engine_a, &zero)
+        .unwrap();
+    complete_as(
+        &f.store(),
+        current,
+        &f.engine_a,
+        "reported",
+        ("Multifield", "process_create"),
+    );
+    assert_eq!(
+        data(f.sys(query).await)["models"]["edges"][0]["node"]["trainingFilterReport"],
+        json!({"endpointSources":"0", "days":[]})
+    );
+    let current = f.train("reported").await;
+    f.store()
+        .set_training_filter_report(current, &f.engine_a, &report(u32::MAX))
+        .unwrap();
+    complete_as(
+        &f.store(),
+        current,
+        &f.engine_a,
+        "reported",
+        ("Multifield", "process_create"),
+    );
+    let active = f.train("reported").await;
+    f.store()
+        .set_training_filter_report(active, &f.engine_a, &report(7))
+        .unwrap();
+    let result = data(f.sec(query, &[A]).await);
+    let node = &result["models"]["edges"][0]["node"];
+    assert_eq!(node["trainedRunId"], current.to_string());
+    assert_eq!(
+        node["trainingFilterReport"],
+        json!({"endpointSources": u32::MAX.to_string(), "days": [
+            {"start":"-1234567890123456789", "notExtended":u64::MAX.to_string(), "otherOs":"9007199254740993"},
+            {"start":"1234567890123456789", "notExtended":"0", "otherOs":"0"}
+        ]})
+    );
+    assert_ne!(
+        node["previousTrainingResult"]["trainedRunId"],
+        node["trainedRunId"]
+    );
+    assert_eq!(data(f.sec(query, &[B]).await)["models"]["edges"], json!([]));
+    assert_ne!(f.schema.schema.execute(query).await.errors, []);
+    let definition_b =
+        host_definition("windows", false, "\"all\"", &f.server_name_b, OWN_ADDRESS_B);
+    f.define(&f.engine_b, "reported-b", &definition_b).await;
+    let run_b = f.train("reported-b").await;
+    f.store()
+        .set_training_filter_report(run_b, &f.engine_b, &report(2))
+        .unwrap();
+    complete_as(
+        &f.store(),
+        run_b,
+        &f.engine_b,
+        "reported-b",
+        ("Multifield", "process_create"),
+    );
+    let b = data(f.sec(query, &[B]).await);
+    assert_eq!(b["models"]["edges"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        b["models"]["edges"][0]["node"]["trainingFilterReport"]["endpointSources"],
+        "2"
+    );
+    let a = data(f.sec(query, &[A]).await);
+    assert_eq!(a["models"]["edges"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        a["models"]["edges"][0]["node"]["trainingFilterReport"]["endpointSources"],
+        u32::MAX.to_string()
+    );
 }

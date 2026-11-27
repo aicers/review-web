@@ -139,6 +139,7 @@ fn write_refs(
         detectors: detectors
             .iter()
             .map(|&(id, model)| EngineDetectorRef {
+                endpoint_scope: None,
                 id,
                 model: model.to_string(),
                 sources: vec![],
@@ -932,6 +933,7 @@ async fn the_read_shows_the_delivery_of_each_applied_source() {
         }
         .replace(&store);
         let detector = |id, model: &str, sources: Vec<String>| EngineDetectorRef {
+            endpoint_scope: None,
             id,
             model: model.to_string(),
             sources,
@@ -991,5 +993,133 @@ async fn the_read_shows_the_delivery_of_each_applied_source() {
             },
             { "detectorId": "8", "sourceDelivery": [] },
         ])
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Follow one detector through report and applied-document changes.
+async fn round_reports_require_same_applied_model_and_current_status_time() {
+    use review_protocol::types::{EndpointScope, RecordFilterCounts, RoundFilterReport};
+    let f = fixture().await;
+    let put_refs = |model: &str, applied_scope: Option<EndpointScope>| {
+        let detector = |scope| EngineDetectorRef {
+            id: 1,
+            model: model.into(),
+            sources: vec![],
+            endpoint_scope: scope,
+            indicator: None,
+        };
+        let node = NodeUpdate::from(f.node(f.engine_a.node_id));
+        f.store()
+            .node_map()
+            .update_with_engine_documents(
+                f.engine_a.node_id,
+                &node,
+                &node,
+                &[EngineDocumentWrite {
+                    agent_key: ENGINE_KEY.into(),
+                    applied: Some(EngineDocumentRefs {
+                        detectors: vec![detector(applied_scope)],
+                    }),
+                    pending: Some(EngineDocumentRefs {
+                        detectors: vec![detector(Some(EndpointScope::All))],
+                    }),
+                }],
+            )
+            .unwrap();
+    };
+    put_refs("model-a1", Some(EndpointScope::All));
+    let query = format!(
+        "{{ engineInstance(nodeId: \"{}\", agentKey: \"{ENGINE_KEY}\") {{ detectors {{ detectorId roundFilterReport {{ finishedAt servedSources notExtended otherOs }} }} }} }}",
+        f.engine_a.node_id
+    );
+    let mut status = finished_status();
+    status.finished_at = Some(jiff::Timestamp::from_nanosecond(1_234_567_890_123_456_789).unwrap());
+    f.store()
+        .set_detector_status(&f.engine_a, 1, &status)
+        .unwrap();
+    let no_report = json!([{ "detectorId":"1", "roundFilterReport": null }]);
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"],
+        no_report
+    );
+    let report = RoundFilterReport {
+        finished_at: 1_234_567_890_123_456_789,
+        served_sources: u32::MAX,
+        counts: RecordFilterCounts {
+            not_extended: u64::MAX,
+            other_os: 9_007_199_254_740_993,
+        },
+    };
+    f.store()
+        .set_round_filter_report(&f.engine_a, 1, "model-a1", &report)
+        .unwrap();
+    let expected = json!([{ "detectorId":"1", "roundFilterReport": {
+        "finishedAt":"1234567890123456789", "servedSources":u32::MAX.to_string(), "notExtended":u64::MAX.to_string(), "otherOs":"9007199254740993"
+    }}]);
+    for role in [
+        Role::SystemAdministrator,
+        Role::SecurityAdministrator,
+        Role::SecurityMonitor,
+    ] {
+        assert_eq!(
+            data(f.as_role(&query, role, &[A]).await)["engineInstance"]["detectors"],
+            expected
+        );
+    }
+    forbidden(&f.sec(&query, &[B]).await);
+    forbidden(&f.as_role(&query, Role::SecurityManager, &[A]).await);
+    // A newer status without its own report hides the old one.
+    status.finished_at =
+        Some(jiff::Timestamp::from_nanosecond(i128::from(report.finished_at) + 1).unwrap());
+    f.store()
+        .set_detector_status(&f.engine_a, 1, &status)
+        .unwrap();
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"],
+        no_report
+    );
+    assert!(
+        f.store()
+            .set_round_filter_report(&f.engine_a, 1, "model-a1", &report)
+            .is_err()
+    );
+    let zero = RoundFilterReport {
+        finished_at: report.finished_at + 1,
+        served_sources: 0,
+        counts: RecordFilterCounts {
+            not_extended: 0,
+            other_os: 0,
+        },
+    };
+    f.store()
+        .set_round_filter_report(&f.engine_a, 1, "model-a1", &zero)
+        .unwrap();
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"][0]["roundFilterReport"],
+        json!({"finishedAt":"1234567890123456790", "servedSources":"0", "notExtended":"0", "otherOs":"0"})
+    );
+    status.finished_at = None;
+    f.store()
+        .set_detector_status(&f.engine_a, 1, &status)
+        .unwrap();
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"],
+        no_report
+    );
+    status.finished_at =
+        Some(jiff::Timestamp::from_nanosecond(i128::from(zero.finished_at)).unwrap());
+    f.store()
+        .set_detector_status(&f.engine_a, 1, &status)
+        .unwrap();
+    put_refs("model-a1", None);
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"],
+        no_report
+    );
+    put_refs("model-a2", Some(EndpointScope::All));
+    assert_eq!(
+        data(f.sys(&query).await)["engineInstance"]["detectors"],
+        no_report
     );
 }

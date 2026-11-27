@@ -853,6 +853,14 @@ type ClusteringModelType {
 	"""
 	approach: ClusteringApproach!
 	"""
+	The source identifier's kind and raw-event column name.
+	"""
+	sourceColumn: SourceColumn!
+	"""
+	The recipe's fixed OS family, or null for a recipe without one.
+	"""
+	osFamily: String
+	"""
 	The top-level definition keys the type fixes, with their values, in
 	catalog order. `csv` is one entry, its value an inline table.
 	"""
@@ -2775,6 +2783,24 @@ input DataStoreInput {
 
 scalar DateTime @specifiedBy(url: "https://datatracker.ietf.org/doc/html/rfc3339")
 
+"""
+Exclusions for one training day, with its start in Unix nanoseconds.
+"""
+type DayFilterCounts {
+	"""
+	The start of the day in Unix nanoseconds.
+	"""
+	start: StringNumber!
+	"""
+	Essential, missing-header and other records whose mode is not extended.
+	"""
+	notExtended: StringNumber!
+	"""
+	Records excluded for an OS mismatch.
+	"""
+	otherOs: StringNumber!
+}
+
 type DceRpcBody {
 	origAddr: String!
 	origPort: Int!
@@ -3178,6 +3204,10 @@ enum DetectorState {
 The status a detector of an engine instance last reported.
 """
 type DetectorStatus {
+	"""
+	The report for this same applied model and current round, or null.
+	"""
+	roundFilterReport: RoundFilterReport
 	"""
 	The detector's id in the engine document.
 	"""
@@ -4750,6 +4780,10 @@ type ModelDigest {
 	"""
 	trainedRunId: ID!
 	"""
+	The filter report of the run that produced this current result.
+	"""
+	trainingFilterReport: TrainingFilterReport
+	"""
 	The sources of `trainedDefinition`; empty if it does not parse.
 	"""
 	trainingSources: [String!]!
@@ -5866,6 +5900,9 @@ type Mutation {
 	customer is refused with `CROSS_CUSTOMER_FORBIDDEN` to anyone but a
 	System Administrator.
 	
+	An accessible host-kind source is refused before target validation
+	with `HOST_MODEL_CLONE_UNSUPPORTED`, field `source` and the original
+	model name as its value. This creates no target or run.
 	Refusals carry `extensions.code`: the codes of the definition, as
 	`insertTrainingDefinition` lists them; `NOT_FOUND`, `NAME_TAKEN`,
 	`NAME_INVALID`, `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`,
@@ -7939,6 +7976,10 @@ type Query {
 	"""
 	trainingDefinition(name: String!): TrainingDefinition
 	"""
+	The customer's groups with current endpoint policies, even without endpoints.
+	"""
+	trainingEndpointGroups(customerId: ID!): [TrainingEndpointGroup!]!
+	"""
 	The runs that create or replace the model `model`, and the clone runs
 	from it, ascending by id.
 	
@@ -8655,6 +8696,28 @@ type RoundEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+"""
+Exclusions from the detector's matching current applied round.
+"""
+type RoundFilterReport {
+	"""
+	When this round finished, in Unix nanoseconds.
+	"""
+	finishedAt: StringNumber!
+	"""
+	The number of endpoint sources served in this round.
+	"""
+	servedSources: StringNumber!
+	"""
+	Essential, missing-header and other records whose mode is not extended.
+	"""
+	notExtended: StringNumber!
+	"""
+	Records excluded for an OS mismatch.
+	"""
+	otherOs: StringNumber!
 }
 
 """
@@ -9707,6 +9770,22 @@ type SmtpBody {
 	subject: String!
 	agent: String!
 	state: String!
+}
+
+"""
+The source identifier retained by a catalog recipe.
+"""
+type SourceColumn {
+	kind: SourceColumnKind!
+	name: String!
+}
+
+"""
+The kind of source identifier a recipe retains.
+"""
+enum SourceColumnKind {
+	IP
+	ENDPOINT
 }
 
 """
@@ -10788,6 +10867,34 @@ enum TrainingDefinitionState {
 }
 
 """
+A policy-backed endpoint group selectable for a customer's host training.
+"""
+type TrainingEndpointGroup {
+	"""
+	The UUID after `group:` in the current policy's target.
+	"""
+	groupId: ID!
+	"""
+	The current policy's extended or essential mode; null when unreadable or unknown.
+	"""
+	collectionMode: String
+}
+
+"""
+The endpoint sources and ordered daily exclusions of a trained run.
+"""
+type TrainingFilterReport {
+	"""
+	The number of endpoint sources resolved for this training run.
+	"""
+	endpointSources: StringNumber!
+	"""
+	Daily exclusions in the report's stored order.
+	"""
+	days: [DayFilterCounts!]!
+}
+
+"""
 Whether a training definition of a method holds a key.
 """
 enum TrainingKeyStatus {
@@ -10795,6 +10902,14 @@ enum TrainingKeyStatus {
 	The key must be present.
 	"""
 	REQUIRED
+	"""
+	Required only for a host-kind multidimension definition.
+	"""
+	REQUIRED_FOR_HOST_KIND
+	"""
+	Required only for a non-host multidimension definition.
+	"""
+	REQUIRED_FOR_NON_HOST_KIND
 	"""
 	The key may be absent, with the meaning the row's description states.
 	"""
@@ -10910,6 +11025,10 @@ enum TrainingValueType {
 	A float; an integer of the same value is also taken.
 	"""
 	FLOAT
+	"""
+	An all-endpoint scope or a nonempty list of group ids.
+	"""
+	ENDPOINT_SCOPE
 	"""
 	A list of strings.
 	"""

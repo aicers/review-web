@@ -76,7 +76,8 @@ pub(crate) struct Detector {
     pub(crate) id: i32,
     pub(crate) enabled: bool,
     pub(crate) model: String,
-    pub(crate) sources: Vec<String>,
+    pub(crate) sources: Option<DetectorSources>,
+    pub(crate) endpoint_scope: Option<toml::Value>,
     pub(crate) period: TextDuration,
     /// RFC 3339 with an offset, kept as text.
     #[serde(deserialize_with = "rfc3339")]
@@ -100,6 +101,24 @@ pub(crate) struct Detector {
     /// of one of the detector's sources, as [`EngineDocument::check_stored`]
     /// checks it; a source with no entry gets one from the completion.
     pub(crate) source_sensors: Option<BTreeMap<String, Vec<String>>>,
+}
+
+/// A source list retained untyped on error until the stored model decides
+/// whether the key is allowed at all.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum DetectorSources {
+    Names(Vec<String>),
+    Invalid(toml::Value),
+}
+
+impl Detector {
+    fn source_names(&self) -> &[String] {
+        match &self.sources {
+            Some(DetectorSources::Names(names)) => names,
+            Some(DetectorSources::Invalid(_)) | None => &[],
+        }
+    }
 }
 
 /// A duration written as `humantime` text, such as `5m`, with its text.
@@ -149,8 +168,8 @@ pub(crate) struct DocumentTarget<'a> {
 impl EngineDocument {
     /// Parses `text` and checks every rule that needs nothing stored, in this
     /// order: the schema, `detectors` written as the database write takes
-    /// them, a non-empty source list included, the bounds, and repeated ids,
-    /// models and sources.
+    /// them, the bounds, and repeated ids and models. Source shape and
+    /// repetition are checked after the stored model decides which key is allowed.
     ///
     /// # Errors
     ///
@@ -159,7 +178,6 @@ impl EngineDocument {
     pub(crate) fn parse_and_validate(text: &str) -> Result<Self> {
         let document = Self::parse(text)?;
         check_detectors_shape(text)?;
-        document.check_sources_present()?;
         document.check_bounds()?;
         document.check_repeats()?;
         Ok(document)
@@ -192,7 +210,11 @@ impl EngineDocument {
                 .map(|detector| EngineDetectorRef {
                     id: detector.id,
                     model: detector.model.clone(),
-                    sources: detector.sources.clone(),
+                    sources: detector.source_names().to_vec(),
+                    endpoint_scope: detector
+                        .endpoint_scope
+                        .as_ref()
+                        .and_then(|value| super::host_scope::parse_scope(value).ok()),
                     indicator: detector.suspicious_tokens.clone(),
                 })
                 .collect(),
@@ -206,24 +228,6 @@ impl EngineDocument {
             .iter()
             .map(|detector| detector.data_store.server_name.as_str())
             .collect()
-    }
-
-    /// Refuses a detector with no source, which the schema's types alone do
-    /// not: it cannot be run, so it is as invalid as a missing source list.
-    fn check_sources_present(&self) -> Result<()> {
-        for (i, detector) in self.detectors.iter().enumerate() {
-            if detector.sources.is_empty() {
-                return Err(detector_refusal(
-                    RefusalCode::InvalidDocument,
-                    "sources must not be empty".to_string(),
-                    i,
-                    "sources",
-                    String::new(),
-                    detector,
-                ));
-            }
-        }
-        Ok(())
     }
 
     fn check_bounds(&self) -> Result<()> {
@@ -276,19 +280,6 @@ impl EngineDocument {
             if !models.insert(detector.model.as_str()) {
                 return Err(duplicate_model(i, detector));
             }
-            let mut sources = HashSet::new();
-            for (j, source) in detector.sources.iter().enumerate() {
-                if !sources.insert(source) {
-                    return Err(detector_refusal(
-                        RefusalCode::DuplicateEntry,
-                        format!("source {source:?} is listed twice"),
-                        i,
-                        &format!("sources[{j}]"),
-                        source.clone(),
-                        detector,
-                    ));
-                }
-            }
         }
         Ok(())
     }
@@ -331,6 +322,7 @@ impl EngineDocument {
     /// `BOUND_VIOLATED`, `NOT_FOUND`, `SOURCES_INCOMPATIBLE`,
     /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` or
     /// `INDICATOR_NOT_ALLOWED`, or an error if the store cannot be read.
+    #[allow(clippy::too_many_lines)] // Keep the per-detector validation order visible in one place.
     pub(crate) fn check_stored(
         &self,
         text: &str,
@@ -341,7 +333,7 @@ impl EngineDocument {
         let mut completion = None;
         for (i, detector) in self.detectors.iter().enumerate() {
             let Some(customer_id) = target.customer_id else {
-                let source = detector.sources.first().cloned().unwrap_or_default();
+                let source = detector.source_names().first().cloned().unwrap_or_default();
                 return Err(detector_refusal(
                     RefusalCode::SourceNotAllowed,
                     "the node has no applied profile, so its engine document can have no detector"
@@ -371,6 +363,7 @@ impl EngineDocument {
                 return Err(refusal(code, refused.to_string(), &field, value)
                     .extend_with(|_, extensions| extensions.set("detectorId", id)));
             }
+            check_source_scope(store, customer_id, i, detector, &model)?;
             check_label_columns(store, i, detector, &model)?;
 
             if model.kind == TIMESERIES_KIND {
@@ -384,7 +377,7 @@ impl EngineDocument {
                 let refused = check_policy_sources(
                     store,
                     customer_id,
-                    &detector.sources,
+                    detector.source_names(),
                     shape,
                     &model.clustering_model_type,
                     None,
@@ -397,12 +390,12 @@ impl EngineDocument {
                         .into_error(&format!("detectors[{i}]."))
                         .extend_with(|_, extensions| extensions.set("detectorId", id)));
                 }
-            } else {
+            } else if !super::host_scope::is_host_kind(&model.raw_event_kind) {
                 let names = match customer_sources.take() {
                     Some(names) => names,
                     None => customer_source_names(store, customer_id)?,
                 };
-                for (j, source) in detector.sources.iter().enumerate() {
+                for (j, source) in detector.source_names().iter().enumerate() {
                     if !names.contains(source) {
                         return Err(detector_refusal(
                             RefusalCode::SourceNotAllowed,
@@ -481,6 +474,119 @@ impl EngineDocument {
         .err()
         .filter(|refused| matches!(refused, DetectionModelsSectionError::Detector(_))))
     }
+}
+
+/// Checks source/scope exclusivity against stored kinds, including custom models.
+fn check_source_scope(
+    store: &Store,
+    customer_id: u32,
+    i: usize,
+    detector: &Detector,
+    model: &ModelDigest,
+) -> Result<()> {
+    let host = super::host_scope::is_host_kind(&model.raw_event_kind);
+    let (required, forbidden) = if host {
+        ("endpoint_scope", "sources")
+    } else {
+        ("sources", "endpoint_scope")
+    };
+    let source_value = || match detector.sources.as_ref() {
+        Some(DetectorSources::Names(names)) => Some(toml::Value::Array(
+            names.iter().cloned().map(toml::Value::String).collect(),
+        )),
+        Some(DetectorSources::Invalid(value)) => Some(value.clone()),
+        None => None,
+    };
+    let forbidden_value = if host {
+        source_value()
+    } else {
+        detector.endpoint_scope.clone()
+    };
+    if let Some(value) = forbidden_value {
+        return Err(detector_refusal(
+            RefusalCode::FieldNotAllowed,
+            format!("this model does not take {forbidden}"),
+            i,
+            forbidden,
+            super::host_scope::value_text(&value),
+            detector,
+        ));
+    }
+    if (host && detector.endpoint_scope.is_none()) || (!host && detector.sources.is_none()) {
+        return Err(detector_refusal(
+            RefusalCode::FieldNotAllowed,
+            format!("this model requires {required}"),
+            i,
+            required,
+            String::new(),
+            detector,
+        ));
+    }
+    if let Some(value) = detector.endpoint_scope.as_ref() {
+        let scope = super::host_scope::parse_scope(value)
+            .map_err(|error| with_detector_path(error, i, detector.id))?;
+        super::host_scope::check_groups(store, customer_id, &scope)
+            .map_err(|error| with_detector_path(error, i, detector.id))?;
+    } else if let Some(DetectorSources::Invalid(value)) = detector.sources.as_ref() {
+        let invalid_entry = value.as_array().and_then(|entries| {
+            entries
+                .iter()
+                .enumerate()
+                .find(|(_, value)| !value.is_str())
+        });
+        let (key, value) = invalid_entry.map_or_else(
+            || ("sources".to_owned(), value),
+            |(index, value)| (format!("sources[{index}]"), value),
+        );
+        return Err(detector_refusal(
+            RefusalCode::InvalidDocument,
+            "sources must be a list of strings".into(),
+            i,
+            &key,
+            super::host_scope::value_text(value),
+            detector,
+        ));
+    } else if detector.source_names().is_empty() {
+        return Err(detector_refusal(
+            RefusalCode::InvalidDocument,
+            "sources must not be empty".into(),
+            i,
+            "sources",
+            String::new(),
+            detector,
+        ));
+    }
+    let mut sources = HashSet::new();
+    for (j, source) in detector.source_names().iter().enumerate() {
+        if !sources.insert(source) {
+            return Err(detector_refusal(
+                RefusalCode::DuplicateEntry,
+                format!("source {source:?} is listed twice"),
+                i,
+                &format!("sources[{j}]"),
+                source.clone(),
+                detector,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Locates a shared scope refusal inside its detector and retains its id.
+fn with_detector_path(error: async_graphql::Error, index: usize, id: i32) -> async_graphql::Error {
+    let field = error
+        .extensions
+        .as_ref()
+        .and_then(|e| e.get("field"))
+        .and_then(|value| match value {
+            async_graphql::Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    error.extend_with(|_, extensions| {
+        extensions.set("field", format!("detectors[{index}].{field}"));
+        extensions.set("detectorId", id);
+    })
 }
 
 /// Refuses `text` if the database write's completion refuses it as a whole
@@ -693,7 +799,7 @@ fn check_source_sensors(
     }
     let map = store.time_series_generation_policy_map();
     for (key, sensors) in source_sensors {
-        let stored = if detector.sources.contains(key) {
+        let stored = if detector.source_names().contains(key) {
             match policy_id(key) {
                 Some(id) => map
                     .get_by_id(id)
