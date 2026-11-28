@@ -11,6 +11,10 @@ updates:
     ignore:
       - dependency-name: "review-database"
       - dependency-name: "review-protocol"
+    cooldown:
+      default-days: 3
+      exclude:
+        - "vinum"
 
   - package-ecosystem: "github-actions"
     directory: "/"
