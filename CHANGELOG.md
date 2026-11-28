@@ -4,6 +4,16 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.70.0](https://github.com/aicers/review-web/compare/0.69.1...0.70.0) - 2026-11-28
+
+### Added
+
+- [**breaking**] remove eventListWithTriage and its dedicated inputs ([#1328](https://github.com/aicers/review-web/pull/1328))
+
+### Other
+
+- *(dependabot)* exclude git-tag dependencies from the cooldown ([#1331](https://github.com/aicers/review-web/pull/1331))
+
 ## [0.69.1](https://github.com/aicers/review-web/compare/0.69.0...0.69.1) - 2026-11-27
 
 ### Added
