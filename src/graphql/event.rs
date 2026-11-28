@@ -248,52 +248,6 @@ impl EventQuery {
         .await
     }
 
-    /// A list of detection events that pass the standard filter, with
-    /// optional inline triage scoring.
-    ///
-    /// Unlike `eventList`, this resolver returns every event passing the
-    /// standard filter regardless of whether any triage policy matched.
-    /// When `triage.policies` is supplied, matching policies attach their
-    /// scores via `triageScores`; events that score nothing keep
-    /// `triageScores: null` and remain in the connection. The cursor
-    /// pagination contract matches `eventList`.
-    // Eight parameters mirror the cursor-pagination shape used by other event
-    // resolvers; the additional `triage` argument is what brings the count to
-    // eight. Splitting it would obscure the GraphQL signature.
-    #[allow(clippy::too_many_arguments)]
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))
-        .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_list_with_triage(
-        &self,
-        ctx: &Context<'_>,
-        filter: EventStandardFilterInput,
-        triage: Option<EventTriageInput>,
-        after: Option<String>,
-        before: Option<String>,
-        first: Option<i32>,
-        last: Option<i32>,
-    ) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
-        let policies = triage
-            .as_ref()
-            .and_then(|t| t.policies.as_deref())
-            .map(convert_event_triage_policies)
-            .transpose()?
-            .unwrap_or_default();
-        let filter = EventListFilterInput::from(filter);
-        query(
-            after,
-            before,
-            first,
-            last,
-            |after, before, first, last| async move {
-                load_with_triage(ctx, &filter, &policies, after, before, first, last).await
-            },
-        )
-        .await
-    }
-
     /// Reads the detection events of the sensors of `customerId`, in the
     /// order they arrived, from after the cursor `after`.
     ///
@@ -322,7 +276,7 @@ impl EventQuery {
         #[graphql(desc = "The most events to return, from 1 to 100. Absent means 100.")]
         first: Option<i32>,
         #[graphql(
-            desc = "Triage policies to score each returned event against, as in `eventListWithTriage`."
+            desc = "Triage policies to score each event returned by `detectionEventsByArrival` against."
         )]
         policies: Option<Vec<EventTriagePolicyInput>>,
     ) -> Result<DetectionEventArrivalPage> {
@@ -488,63 +442,7 @@ struct EventListFilterInput {
     score_max: Option<f64>,
 }
 
-/// Standard event filter for `eventListWithTriage`. It has the same fields as
-/// `EventListFilterInput`; triage policies are passed exclusively via the
-/// separate `triage` argument as inline data.
-#[derive(Clone, InputObject)]
-struct EventStandardFilterInput {
-    start: Option<Timestamp>,
-    end: Option<Timestamp>,
-    /// Selects an event when some listed endpoint's network contains one of
-    /// its originator-side addresses (`FROM`), responder-side addresses
-    /// (`TO`), or either. The originator side is a raw event body's
-    /// originator address, or a subject's related IPs observed as the
-    /// source; the responder side is the body's responder address, or the
-    /// related IPs observed as the destination. A host subject's IP is on
-    /// both sides, and a body without both addresses has none.
-    endpoints: Option<Vec<EndpointInput>>,
-    directions: Option<Vec<FlowKind>>,
-    source: Option<String>,
-    destination: Option<String>,
-    keywords: Option<Vec<String>>,
-    /// Selects only an event whose sensor is set and belongs to one of the
-    /// listed nodes.
-    sensors: Option<Vec<ID>>,
-    os: Option<Vec<ID>>,
-    devices: Option<Vec<ID>>,
-    hostnames: Option<Vec<String>>,
-    user_ids: Option<Vec<String>>,
-    user_names: Option<Vec<String>>,
-    user_departments: Option<Vec<String>>,
-    /// Filters by the two-letter country codes recorded on events. `"ZZ"`
-    /// selects events whose country could not be determined, and `"XX"`
-    /// selects events recorded without country information.
-    countries: Option<Vec<String>>,
-    /// Selects an event whose category is listed; a null entry selects an
-    /// event with no category.
-    categories: Option<Vec<Option<u8>>>,
-    /// Selects an event exactly when its detection model is listed, so an
-    /// empty list selects nothing.
-    detection_models: Option<Vec<DetectionModel>>,
-    /// Selects an event exactly when its raw event kind is listed, so an
-    /// empty list selects nothing.
-    raw_event_kinds: Option<Vec<RawEventKind>>,
-    /// Selects an event whose detection model has one of the listed learning
-    /// methods.
-    learning_methods: Option<Vec<LearningMethod>>,
-    /// The inclusive lower bound on an event's score.
-    score_min: Option<f64>,
-    /// The inclusive upper bound on an event's score.
-    score_max: Option<f64>,
-}
-
-#[derive(InputObject)]
-struct EventTriageInput {
-    policies: Option<Vec<EventTriagePolicyInput>>,
-}
-
-/// Inline triage policy input for `eventListWithTriage` and
-/// `detectionEventsByArrival`.
+/// Inline triage policy input for `detectionEventsByArrival`.
 ///
 /// `id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
 /// back unchanged as `TriageScore.policyId`.
@@ -895,17 +793,6 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<DetectionEvent>
     Ok(Some(DetectionEvent::new(found_key, event)))
 }
 
-async fn load(
-    ctx: &Context<'_>,
-    filter: &EventListFilterInput,
-    after: Option<String>,
-    before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
-) -> Result<Connection<String, DetectionEvent, EventTotalCount, EmptyFields>> {
-    load_with_triage(ctx, filter, &[], after, before, first, last).await
-}
-
 fn earliest(start: Option<jiff::Timestamp>) -> Result<i128> {
     start
         .map(event_key_prefix)
@@ -1004,34 +891,6 @@ fn readable_event(
     }
 }
 
-impl From<EventStandardFilterInput> for EventListFilterInput {
-    fn from(input: EventStandardFilterInput) -> Self {
-        Self {
-            start: input.start,
-            end: input.end,
-            endpoints: input.endpoints,
-            directions: input.directions,
-            source: input.source,
-            destination: input.destination,
-            keywords: input.keywords,
-            sensors: input.sensors,
-            os: input.os,
-            devices: input.devices,
-            hostnames: input.hostnames,
-            user_ids: input.user_ids,
-            user_names: input.user_names,
-            user_departments: input.user_departments,
-            countries: input.countries,
-            categories: input.categories,
-            detection_models: input.detection_models,
-            raw_event_kinds: input.raw_event_kinds,
-            learning_methods: input.learning_methods,
-            score_min: input.score_min,
-            score_max: input.score_max,
-        }
-    }
-}
-
 fn convert_event_triage_policies(
     policies: &[EventTriagePolicyInput],
 ) -> anyhow::Result<Vec<DbTriagePolicyInput>> {
@@ -1054,13 +913,10 @@ fn convert_event_triage_policies(
     Ok(result)
 }
 
-/// Loads a page of the events `filter` selects, scoring each against
-/// `policies` when there are any. An event no policy qualifies for stays in
-/// the page with no triage scores.
-async fn load_with_triage(
+/// Loads a page of the events `filter` selects.
+async fn load(
     ctx: &Context<'_>,
     filter: &EventListFilterInput,
-    policies: &[DbTriagePolicyInput],
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
@@ -1087,7 +943,6 @@ async fn load_with_triage(
                 cmp::Ordering::is_ge,
                 last,
                 &event_filter,
-                policies,
             )
             .map_err(|e| format!("{e}"))?;
             (events.into_iter().rev().collect(), has_more, false)
@@ -1101,7 +956,6 @@ async fn load_with_triage(
                 cmp::Ordering::is_le,
                 first,
                 &event_filter,
-                policies,
             )
             .map_err(|e| format!("{e}"))?;
             (events, false, has_more)
@@ -1134,7 +988,6 @@ fn iter_to_events(
     cond: fn(cmp::Ordering) -> bool,
     len: usize,
     filter: &EventFilter,
-    policies: &[DbTriagePolicyInput],
 ) -> anyhow::Result<(Vec<(i128, DetectionEvent)>, bool)> {
     let mut events = Vec::new();
     let mut exceeded = false;
@@ -1148,12 +1001,7 @@ fn iter_to_events(
         if !event.matches(filter)?.0 {
             continue;
         }
-        let scores = if policies.is_empty() {
-            None
-        } else {
-            Some(event.score_against_policies(policies)).filter(|scores| !scores.is_empty())
-        };
-        events.push((key, DetectionEvent::with_triage_scores(key, event, scores)));
+        events.push((key, DetectionEvent::new(key, event)));
         exceeded = events.len() > len;
         if exceeded {
             break;

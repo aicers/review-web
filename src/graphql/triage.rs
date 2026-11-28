@@ -153,7 +153,10 @@ mod tests {
 
     use crate::graphql::{
         TestSchema,
-        event_test_support::{PutEvent, conn_body, dns_event, raw_event, subject_event},
+        event_test_support::{
+            INLINE_POLICY_SENSOR, PutEvent, conn_body, dns_event, inline_policy_schema, raw_event,
+            subject_event,
+        },
     };
 
     /// A DCE/RPC packet attribute shared by the inline-policy tests, so that
@@ -167,30 +170,28 @@ mod tests {
         weight: 1.0
     }]"#;
 
-    /// Runs `eventListWithTriage` with a single inline policy built from the
+    /// Runs `detectionEventsByArrival` with a single inline policy built from the
     /// given `packetAttr` and `score` lists.
-    async fn event_list_with_inline_policy(
+    async fn arrival_with_inline_policy(
         schema: &TestSchema,
         packet_attr: &str,
         score: &str,
     ) -> async_graphql::Response {
         let query = format!(
-            r"{{
-                eventListWithTriage(
-                    filter: {{}}
-                    triage: {{
-                        policies: [{{
-                            id: 0
-                            packetAttr: {packet_attr}
-                            score: {score}
-                            response: []
-                        }}]
-                    }}
+            r#"{{
+                detectionEventsByArrival(
+                    customerId: "1"
+                    policies: [{{
+                        id: 0
+                        packetAttr: {packet_attr}
+                        score: {score}
+                        response: []
+                    }}]
                     first: 1
                 ) {{
-                    totalCount
+                    events {{ id }}
                 }}
-            }}"
+            }}"#
         );
         schema.execute_as_system_admin(&query).await
     }
@@ -200,7 +201,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Exercises the remote enum conversions used by PacketAttrInput.
-        let res = event_list_with_inline_policy(&schema, DCE_RPC_PACKET_ATTR, "[]").await;
+        let res = arrival_with_inline_policy(&schema, DCE_RPC_PACKET_ATTR, "[]").await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     }
 
@@ -208,7 +209,7 @@ mod tests {
     async fn inline_policy_accepts_null_threat_category() {
         let schema = TestSchema::new().await;
 
-        let res = event_list_with_inline_policy(
+        let res = arrival_with_inline_policy(
             &schema,
             DCE_RPC_PACKET_ATTR,
             "[{ threatCategory: null, detectionModel: PORT_SCAN, score: 0.25 }]",
@@ -222,7 +223,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // detectionModel is required even when threatCategory is null.
-        let res = event_list_with_inline_policy(
+        let res = arrival_with_inline_policy(
             &schema,
             DCE_RPC_PACKET_ATTR,
             "[{ threatCategory: null, score: 0.25 }]",
@@ -334,7 +335,7 @@ mod tests {
         jiff::Timestamp::from_second(1_700_000_000 + second).expect("a test time")
     }
 
-    /// Stores `events` and returns, in key order, the `triageScores` the
+    /// Stores `events` and returns, in arrival order, the `triageScores` the
     /// inline policy with `packet_attr`, `score` and a minimum score of
     /// `minimum` gives each of them, as JSON.
     async fn scores_of(
@@ -343,7 +344,7 @@ mod tests {
         score: &str,
         minimum: f64,
     ) -> Vec<serde_json::Value> {
-        let schema = TestSchema::new().await;
+        let schema = inline_policy_schema().await;
         {
             let guard = schema.store();
             for event in events {
@@ -351,30 +352,28 @@ mod tests {
             }
         }
         let query = format!(
-            r"{{
-                eventListWithTriage(
-                    filter: {{}}
-                    triage: {{
-                        policies: [{{
-                            id: 3
-                            packetAttr: {packet_attr}
-                            score: {score}
-                            response: [{{ minimumScore: {minimum:?}, kind: MANUAL }}]
-                        }}]
-                    }}
+            r#"{{
+                detectionEventsByArrival(
+                    customerId: "1"
+                    policies: [{{
+                        id: 3
+                        packetAttr: {packet_attr}
+                        score: {score}
+                        response: [{{ minimumScore: {minimum:?}, kind: MANUAL }}]
+                    }}]
                 ) {{
-                    edges {{ node {{ triageScores {{ policyId score }} }} }}
+                    events {{ triageScores {{ policyId score }} }}
                 }}
-            }}"
+            }}"#
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let data = res.data.into_json().unwrap();
-        data["eventListWithTriage"]["edges"]
+        data["detectionEventsByArrival"]["events"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|edge| edge["node"]["triageScores"].clone())
+            .map(|event| event["triageScores"].clone())
             .collect()
     }
 
@@ -384,7 +383,7 @@ mod tests {
             addr("192.0.2.1"),
             addr("192.0.2.2"),
             category,
-            "sensor1",
+            INLINE_POLICY_SENSOR,
         );
         event.detection_model = review_protocol::types::DetectionModel::PortScan;
         event.score = score;
@@ -403,7 +402,7 @@ mod tests {
                 addr("192.0.2.1"),
                 addr("192.0.2.2"),
                 Some(EventCategory::Reconnaissance),
-                "sensor1",
+                INLINE_POLICY_SENSOR,
             ),
         ];
         let scores = scores_of(
@@ -478,7 +477,7 @@ mod tests {
         let events = [42, 43].map(|process_id| {
             raw_event(
                 at(i64::from(process_id)),
-                "sensor1",
+                INLINE_POLICY_SENSOR,
                 RawEventKind::ProcessCreate,
                 RawEventBody::ProcessCreate(body(process_id)),
                 Detail::NonBrowser,
@@ -511,7 +510,7 @@ mod tests {
     async fn packet_attr_never_matches_a_subject_target() {
         let raw = raw_event(
             at(0),
-            "sensor1",
+            INLINE_POLICY_SENSOR,
             RawEventKind::Conn,
             RawEventBody::Conn(conn_body(addr("192.0.2.1"), addr("192.0.2.2"))),
             Detail::TorExitNode,
@@ -520,7 +519,7 @@ mod tests {
         // read the attribute from.
         let subject = subject_event(
             at(1),
-            Some("sensor1"),
+            Some(INLINE_POLICY_SENSOR),
             PrimarySubject::Host {
                 ip: addr("192.0.2.1"),
                 role: ThreatRole::Actor,
