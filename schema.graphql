@@ -3544,81 +3544,7 @@ input EventListFilterInput {
 }
 
 """
-Standard event filter for `eventListWithTriage`. It has the same fields as
-`EventListFilterInput`; triage policies are passed exclusively via the
-separate `triage` argument as inline data.
-"""
-input EventStandardFilterInput {
-	start: DateTime
-	end: DateTime
-	"""
-	Selects an event when some listed endpoint's network contains one of
-	its originator-side addresses (`FROM`), responder-side addresses
-	(`TO`), or either. The originator side is a raw event body's
-	originator address, or a subject's related IPs observed as the
-	source; the responder side is the body's responder address, or the
-	related IPs observed as the destination. A host subject's IP is on
-	both sides, and a body without both addresses has none.
-	"""
-	endpoints: [EndpointInput!]
-	directions: [FlowKind!]
-	source: String
-	destination: String
-	keywords: [String!]
-	"""
-	Selects only an event whose sensor is set and belongs to one of the
-	listed nodes.
-	"""
-	sensors: [ID!]
-	os: [ID!]
-	devices: [ID!]
-	hostnames: [String!]
-	userIds: [String!]
-	userNames: [String!]
-	userDepartments: [String!]
-	"""
-	Filters by the two-letter country codes recorded on events. `"ZZ"`
-	selects events whose country could not be determined, and `"XX"`
-	selects events recorded without country information.
-	"""
-	countries: [String!]
-	"""
-	Selects an event whose category is listed; a null entry selects an
-	event with no category.
-	"""
-	categories: [Int]
-	"""
-	Selects an event exactly when its detection model is listed, so an
-	empty list selects nothing.
-	"""
-	detectionModels: [DetectionModel!]
-	"""
-	Selects an event exactly when its raw event kind is listed, so an
-	empty list selects nothing.
-	"""
-	rawEventKinds: [RawEventKind!]
-	"""
-	Selects an event whose detection model has one of the listed learning
-	methods.
-	"""
-	learningMethods: [LearningMethod!]
-	"""
-	The inclusive lower bound on an event's score.
-	"""
-	scoreMin: Float
-	"""
-	The inclusive upper bound on an event's score.
-	"""
-	scoreMax: Float
-}
-
-input EventTriageInput {
-	policies: [EventTriagePolicyInput!]
-}
-
-"""
-Inline triage policy input for `eventListWithTriage` and
-`detectionEventsByArrival`.
+Inline triage policy input for `detectionEventsByArrival`.
 
 `id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
 back unchanged as `TriageScore.policyId`.
@@ -7519,18 +7445,6 @@ type Query {
 	"""
 	eventList(filter: EventListFilterInput!, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
 	"""
-	A list of detection events that pass the standard filter, with
-	optional inline triage scoring.
-	
-	Unlike `eventList`, this resolver returns every event passing the
-	standard filter regardless of whether any triage policy matched.
-	When `triage.policies` is supplied, matching policies attach their
-	scores via `triageScores`; events that score nothing keep
-	`triageScores: null` and remain in the connection. The cursor
-	pagination contract matches `eventList`.
-	"""
-	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
-	"""
 	Reads the detection events of the sensors of `customerId`, in the
 	order they arrived, from after the cursor `after`.
 	
@@ -7561,7 +7475,7 @@ type Query {
 		"""
 		first: Int,
 		"""
-		Triage policies to score each returned event against, as in `eventListWithTriage`.
+		Triage policies to score each event returned by `detectionEventsByArrival` against.
 		"""
 		policies: [EventTriagePolicyInput!]
 	): DetectionEventArrivalPage!

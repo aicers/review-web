@@ -6,7 +6,7 @@ use review_protocol::types::{Detail, DetectionEvent, EventCategory};
 
 use crate::graphql::{
     Role, RoleGuard, TestSchema,
-    event_test_support::{PutEvent, dns_event},
+    event_test_support::{INLINE_POLICY_SENSOR, PutEvent, dns_event, inline_policy_schema},
 };
 
 #[test]
@@ -99,9 +99,7 @@ async fn corrupted_event_store_returns_field_errors() {
     let after_bad = keys.iter().copied().find(|key| *key > first_bad).unwrap();
     let cases = [
         ("eventList(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventList": null}), vec!["eventList", "totalCount"]),
-        ("eventListWithTriage(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventListWithTriage": null}), vec!["eventListWithTriage", "totalCount"]),
         (format!("eventList(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
-        (format!("eventListWithTriage(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventListWithTriage"]),
         (format!("eventList(filter: {{}}, before: \"{after_bad}\", last: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
         (format!("event(id: \"{first_bad}\") {{ __typename }}"), serde_json::Value::Null, vec!["event"]),
         ("eventCountsByDetectionModel(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByDetectionModel"]),
@@ -440,16 +438,6 @@ async fn empty_time_range_does_not_skip_filter_validation() {
             ) { edges { cursor } }
         }"#,
         r#"{
-            eventListWithTriage(
-                filter: {
-                    start: "2026-01-01T00:00:00Z"
-                    end: "2026-01-01T00:00:00Z"
-                    source: "invalid"
-                }
-                first: 1
-            ) { edges { cursor } }
-        }"#,
-        r#"{
             eventCountsByCategory(
                 filter: {
                     start: "2026-01-01T00:00:00Z"
@@ -604,79 +592,6 @@ async fn unbounded_event_list_paginates_across_the_unix_epoch() {
     backward.reverse();
     assert_eq!(backward, expected);
 
-    let triage = r"triage: {
-        policies: [{
-            id: 7
-            packetAttr: []
-            score: [{
-                threatCategory: COMMAND_AND_CONTROL
-                detectionModel: DNS_COVERT_CHANNEL
-                score: 0.0
-                weight: 1.0
-            }]
-            response: [{ minimumScore: 0.0, kind: MANUAL }]
-        }]
-    }";
-    let expected_with_triage = expected.clone();
-    let mut after = None;
-    let mut with_triage = Vec::new();
-    for (index, expected_cursor) in expected_with_triage.iter().enumerate() {
-        let cursor_argument = after
-            .as_ref()
-            .map_or_else(String::new, |cursor| format!(r#", after: "{cursor}""#));
-        let page = connection_page(
-            &schema,
-            "eventListWithTriage",
-            &format!("filter: {{}}, {triage}, first: 1{cursor_argument}"),
-        )
-        .await;
-        assert_eq!(page["totalCount"], "6");
-        assert_eq!(
-            page["pageInfo"]["hasNextPage"],
-            index < expected_with_triage.len() - 1
-        );
-        assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
-        assert_eq!(page["edges"][0]["node"]["triageScores"][0]["policyId"], "7");
-        let cursor = page["edges"][0]["cursor"]
-            .as_str()
-            .expect("page must contain a cursor")
-            .to_string();
-        assert_eq!(&cursor, expected_cursor);
-        with_triage.push(cursor.clone());
-        after = Some(cursor);
-    }
-    assert_eq!(with_triage, expected_with_triage);
-
-    let mut before = None;
-    let mut with_triage_backward = Vec::new();
-    for (index, expected_cursor) in expected_with_triage.iter().rev().enumerate() {
-        let cursor_argument = before
-            .as_ref()
-            .map_or_else(String::new, |cursor| format!(r#", before: "{cursor}""#));
-        let page = connection_page(
-            &schema,
-            "eventListWithTriage",
-            &format!("filter: {{}}, {triage}, last: 1{cursor_argument}"),
-        )
-        .await;
-        assert_eq!(page["totalCount"], "6");
-        assert_eq!(page["pageInfo"]["hasNextPage"], false);
-        assert_eq!(
-            page["pageInfo"]["hasPreviousPage"],
-            index < expected_with_triage.len() - 1
-        );
-        assert_eq!(page["edges"][0]["node"]["triageScores"][0]["policyId"], "7");
-        let cursor = page["edges"][0]["cursor"]
-            .as_str()
-            .expect("page must contain a cursor")
-            .to_string();
-        assert_eq!(&cursor, expected_cursor);
-        with_triage_backward.push(cursor.clone());
-        before = Some(cursor);
-    }
-    with_triage_backward.reverse();
-    assert_eq!(with_triage_backward, expected_with_triage);
-
     for (arguments, field, total_count) in [
         (
             format!(r#"filter: {{}}, after: "{}", first: 1"#, i128::MAX),
@@ -688,22 +603,6 @@ async fn unbounded_event_list_paginates_across_the_unix_epoch() {
             "eventList",
             "6",
         ),
-        (
-            format!(
-                r#"filter: {{}}, {triage}, after: "{}", first: 1"#,
-                i128::MAX
-            ),
-            "eventListWithTriage",
-            "6",
-        ),
-        (
-            format!(
-                r#"filter: {{}}, {triage}, before: "{}", last: 1"#,
-                i128::MIN
-            ),
-            "eventListWithTriage",
-            "6",
-        ),
     ] {
         let page = connection_page(&schema, field, &arguments).await;
         assert_eq!(page["edges"], serde_json::json!([]));
@@ -712,18 +611,9 @@ async fn unbounded_event_list_paginates_across_the_unix_epoch() {
         assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
     }
 
-    for (field, triage_argument, total_count) in
-        [("eventList", "", "6"), ("eventListWithTriage", triage, "6")]
-    {
-        let page = connection_page(
-            &schema,
-            field,
-            &format!(r#"filter: {{}}, {triage_argument} before: "0", last: 1"#),
-        )
-        .await;
-        assert_eq!(page["edges"][0]["cursor"], expected[1]);
-        assert_eq!(page["totalCount"], total_count);
-    }
+    let page = connection_page(&schema, "eventList", r#"filter: {}, before: "0", last: 1"#).await;
+    assert_eq!(page["edges"][0]["cursor"], expected[1]);
+    assert_eq!(page["totalCount"], "6");
 
     let range = format!(r#"{{ start: "{epoch}", end: "{after_epoch}" }}"#);
     for (cursor, argument, expected_cursors) in [
@@ -819,7 +709,7 @@ async fn minimum_end_is_an_empty_event_range() {
 
 #[tokio::test]
 async fn negative_end_is_exclusive_across_event_queries() {
-    let schema = TestSchema::new().await;
+    let schema = inline_policy_schema().await;
     let start = Timestamp::from_nanosecond(-2).expect("valid timestamp");
     let end = Timestamp::from_nanosecond(-1).expect("valid timestamp");
     let store = schema.store();
@@ -830,7 +720,7 @@ async fn negative_end_is_exclusive_across_event_queries() {
             1,
             2,
             Some(EventCategory::CommandAndControl),
-            "sensor1",
+            INLINE_POLICY_SENSOR,
         ))
         .expect("event at start must be stored");
     events
@@ -839,7 +729,7 @@ async fn negative_end_is_exclusive_across_event_queries() {
             1,
             2,
             Some(EventCategory::CommandAndControl),
-            "sensor1",
+            INLINE_POLICY_SENSOR,
         ))
         .expect("event at end must be stored");
     drop(store);
@@ -860,26 +750,25 @@ async fn negative_end_is_exclusive_across_event_queries() {
     let output = schema
         .execute_as_system_admin(&format!(
             r#"{{
-                eventListWithTriage(
-                    filter: {{ start: "{start}", end: "{end}" }}
-                    triage: {{
-                        policies: [{{
-                            id: 0
-                            packetAttr: []
-                            score: [{{
-                                threatCategory: COMMAND_AND_CONTROL
-                                detectionModel: DNS_COVERT_CHANNEL
-                                score: 0.0
-                                weight: 1.0
-                            }}]
-                            response: [{{ minimumScore: 0.5, kind: MANUAL }}]
+                eventList(filter: {{ start: "{start}", end: "{end}" }}) {{
+                    edges {{ node {{ time }} }}
+                }}
+                detectionEventsByArrival(
+                    customerId: "1"
+                    policies: [{{
+                        id: 0
+                        packetAttr: []
+                        score: [{{
+                            threatCategory: COMMAND_AND_CONTROL
+                            detectionModel: DNS_COVERT_CHANNEL
+                            score: 0.0
+                            weight: 1.0
                         }}]
-                    }}
-                    first: 10
+                        response: [{{ minimumScore: 0.5, kind: MANUAL }}]
+                    }}]
+                    first: 1
                 ) {{
-                    edges {{
-                        node {{ ... on DetectionEvent {{ time triageScores {{ policyId }} }} }}
-                    }}
+                    events {{ time triageScores {{ policyId }} }}
                 }}
                 eventCountsByCategory(
                     filter: {{ start: "{start}", end: "{end}" }}
@@ -899,14 +788,14 @@ async fn negative_end_is_exclusive_across_event_queries() {
     assert!(output.errors.is_empty(), "{:?}", output.errors);
     assert_eq!(
         output.data.to_string(),
-        r#"{eventListWithTriage: {edges: [{node: {time: "1969-12-31T23:59:59.999999998Z", triageScores: [{policyId: "0"}]}}]}, eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
+        r#"{eventList: {edges: [{node: {time: "1969-12-31T23:59:59.999999998Z"}}]}, detectionEventsByArrival: {events: [{time: "1969-12-31T23:59:59.999999998Z", triageScores: [{policyId: "0"}]}]}, eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
     );
 }
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn grouped_event_queries_cross_the_unix_epoch() {
-    let schema = TestSchema::new().await;
+    let schema = inline_policy_schema().await;
     let start = Timestamp::from_nanosecond(-2_000_000_000).unwrap();
     let epoch = Timestamp::UNIX_EPOCH;
     let positive = Timestamp::from_nanosecond(2_000_000_000).unwrap();
@@ -939,7 +828,8 @@ async fn grouped_event_queries_cross_the_unix_epoch() {
             7,
         ),
     ] {
-        let mut message = event_message_at_timestamp(time, source, 2, Some(category), "sensor1");
+        let mut message =
+            event_message_at_timestamp(time, source, 2, Some(category), INLINE_POLICY_SENSOR);
         message.detection_model = detail.detection_model();
         message.detail = detail;
         events.put_event(&message).expect("event must be stored");
@@ -962,42 +852,36 @@ async fn grouped_event_queries_cross_the_unix_epoch() {
     let output = schema
         .execute_as_system_admin(&format!(
             r#"{{
-                eventListWithTriage(
-                    filter: {{ start: "{start}", end: "{end}" }}
-                    triage: {{
-                        policies: [{{
-                            id: 0
-                            packetAttr: []
-                            score: [
-                                {{
-                                    threatCategory: COMMAND_AND_CONTROL
-                                    detectionModel: DNS_COVERT_CHANNEL
-                                    score: 0.0
-                                    weight: 0.9
-                                }}
-                                {{
-                                    threatCategory: COMMAND_AND_CONTROL
-                                    detectionModel: LOCKY_RANSOMWARE
-                                    score: 0.0
-                                    weight: 0.9
-                                }}
-                                {{
-                                    threatCategory: INITIAL_ACCESS
-                                    detectionModel: DNS_COVERT_CHANNEL
-                                    score: 0.0
-                                    weight: 0.5
-                                }}
-                            ]
-                            response: [{{ minimumScore: 0.3, kind: MANUAL }}]
-                        }}]
-                    }}
-                    first: 10
+                detectionEventsByArrival(
+                    customerId: "1"
+                    policies: [{{
+                        id: 0
+                        packetAttr: []
+                        score: [
+                            {{
+                                threatCategory: COMMAND_AND_CONTROL
+                                detectionModel: DNS_COVERT_CHANNEL
+                                score: 0.0
+                                weight: 0.9
+                            }}
+                            {{
+                                threatCategory: COMMAND_AND_CONTROL
+                                detectionModel: LOCKY_RANSOMWARE
+                                score: 0.0
+                                weight: 0.9
+                            }}
+                            {{
+                                threatCategory: INITIAL_ACCESS
+                                detectionModel: DNS_COVERT_CHANNEL
+                                score: 0.0
+                                weight: 0.5
+                            }}
+                        ]
+                        response: [{{ minimumScore: 0.3, kind: MANUAL }}]
+                    }}]
+                    first: 3
                 ) {{
-                    edges {{
-                        node {{
-                            detectionModel time triageScores {{ score }}
-                        }}
-                    }}
+                    events {{ detectionModel time triageScores {{ score }} }}
                 }}
                 eventCountsByCategory(
                     filter: {{ start: "{start}", end: "{end}" }}
@@ -1016,12 +900,9 @@ async fn grouped_event_queries_cross_the_unix_epoch() {
         .await;
     assert!(output.errors.is_empty(), "{:?}", output.errors);
     let data = output.data.into_json().expect("valid GraphQL JSON");
-    let triage = data["eventListWithTriage"]["edges"]
+    let triage = data["detectionEventsByArrival"]["events"]
         .as_array()
-        .expect("triage edges must be an array")
-        .iter()
-        .map(|edge| &edge["node"])
-        .collect::<Vec<_>>();
+        .expect("arrival events must be an array");
     assert_eq!(triage.len(), 3);
     assert!(triage.iter().all(|node| !node["triageScores"].is_null()));
     assert_eq!(triage[0]["detectionModel"], "DNS_COVERT_CHANNEL");
@@ -1388,32 +1269,6 @@ async fn country_aggregation_placeholder_buckets_round_trip_to_filters() {
             Some(expected_count.as_str())
         );
     }
-}
-
-#[tokio::test]
-async fn event_list_with_triage_country_filter_uses_stored_codes_without_locator() {
-    let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-    let (_locator_dir, schema) =
-        schema_with_country_filter_events(ts, ts + SignedDuration::from_secs(1)).await;
-
-    // Omitting inline triage still exercises the dedicated
-    // eventListWithTriage matching and pagination path.
-    let res = schema
-        .execute_as_system_admin(
-            r#"{
-                eventListWithTriage(filter: { countries: ["US"] }, first: 10) {
-                    edges { node { target { ... on RawEventTarget { body { ... on DnsBody { origAddr } } } } } }
-                    totalCount
-                }
-            }"#,
-        )
-        .await;
-
-    assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-    assert_eq!(
-        res.data.to_string(),
-        r#"{eventListWithTriage: {edges: [{node: {target: {body: {origAddr: "1.0.0.1"}}}}], totalCount: "1"}}"#
-    );
 }
 
 #[tokio::test]
@@ -1919,117 +1774,19 @@ async fn event_stream() {
 }
 
 #[tokio::test]
-async fn event_list_with_triage_matches_event_list_cursor_semantics() {
-    let schema = TestSchema::new().await;
-    let store = schema.store();
-    let db = store.events();
-    let timestamps: Vec<_> = (0i8..5)
-        .map(|i| utc_micro(2026, 1, 1, 0, 0, i, 0))
-        .collect();
-    for (i, ts) in timestamps.iter().enumerate() {
-        let src = u32::try_from(i + 1).unwrap();
-        db.put_event(&event_message_at(*ts, src, src + 100))
-            .unwrap();
-    }
-    let start_ts = timestamps[0];
-
-    let event_list_query = format!(
-        "{{ eventList(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
-            edges {{ cursor node {{... on DetectionEvent {{ time }} }} }} \
-            pageInfo {{ hasNextPage hasPreviousPage }} \
-        }} }}",
-    );
-    let event_list_res = schema.execute_as_system_admin(&event_list_query).await;
-    let event_list_data = event_list_res.data.to_string();
-
-    let with_triage_query = format!(
-        "{{ eventListWithTriage(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
-            edges {{ cursor node {{... on DetectionEvent {{ time }} }} }} \
-            pageInfo {{ hasNextPage hasPreviousPage }} \
-        }} }}",
-    );
-    let with_triage_res = schema.execute_as_system_admin(&with_triage_query).await;
-    let with_triage_data = with_triage_res.data.to_string();
-
-    let normalized_event_list = event_list_data.replacen("eventList", "eventListWithTriage", 1);
-    assert_eq!(normalized_event_list, with_triage_data);
-}
-
-#[tokio::test]
-async fn event_list_with_triage_rejects_negative_policy_id() {
-    let schema = TestSchema::new().await;
-    let store = schema.store();
-    let db = store.events();
-    let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-    db.put_event(&event_message_at(ts, 1, 2)).unwrap();
-
-    let query = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ \
-                policies: [{{ \
-                    id: -1, \
-                    packetAttr: [], \
-                    score: [], \
-                    response: [] \
-                }}] \
-            }} \
-        ) {{ totalCount }} }}",
-    );
-    let res = schema.execute_as_system_admin(&query).await;
-    assert!(
-        !res.errors.is_empty(),
-        "expected error for negative policy id"
-    );
-    assert!(
-        res.errors
-            .iter()
-            .any(|e| e.message.contains("non-negative")),
-        "expected non-negative error, got {:?}",
-        res.errors,
-    );
-}
-
-#[tokio::test]
-async fn event_list_with_triage_policy_non_match_preserves_event() {
-    let schema = TestSchema::new().await;
-    let store = schema.store();
-    let db = store.events();
-    let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-    db.put_event(&event_message_at(ts, 1, 2)).unwrap();
-
-    // Policy with very high minimum_score so the event scores nothing.
-    let query = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ \
-                policies: [{{ \
-                    id: 7, \
-                    packetAttr: [], \
-                    score: [], \
-                    response: [{{ minimumScore: 999.0, kind: MANUAL }}] \
-                }}] \
-            }} \
-        ) {{ \
-            edges {{ node {{... on DetectionEvent {{ triageScores {{ policyId }} }} }} }} \
-            totalCount \
-        }} }}",
-    );
-    let res = schema.execute_as_system_admin(&query).await;
-    assert_eq!(
-        res.data.to_string(),
-        r#"{eventListWithTriage: {edges: [{node: {triageScores: null}}], totalCount: "1"}}"#
-    );
-}
-
-#[tokio::test]
-async fn event_list_with_triage_scores_watchlist_and_exclusion_list_responses_like_manual() {
-    let schema = TestSchema::new().await;
+async fn arrival_scores_watchlist_and_exclusion_list_responses_like_manual() {
+    let schema = inline_policy_schema().await;
     let store = schema.store();
     let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
     store
         .events()
-        .put_event(&event_message_at(ts, 1, 2))
+        .put_event(&event_message_at_timestamp(
+            ts,
+            1,
+            2,
+            Some(EventCategory::CommandAndControl),
+            INLINE_POLICY_SENSOR,
+        ))
         .unwrap();
     drop(store);
 
@@ -2058,17 +1815,14 @@ async fn event_list_with_triage_scores_watchlist_and_exclusion_list_responses_li
     ]
     .join(", ");
     let query = format!(
-        "{{ eventListWithTriage( \
-            filter: {{ start:\"{ts}\" }}, \
-            triage: {{ policies: [{policies}] }} \
-        ) {{ \
-            edges {{ node {{... on DetectionEvent {{ triageScores {{ policyId score }} }} }} }} \
-        }} }}",
+        r#"{{ detectionEventsByArrival(customerId: "1", policies: [{policies}]) {{
+            events {{ triageScores {{ policyId score }} }}
+        }} }}"#,
     );
     let res = schema.execute_as_system_admin(&query).await;
     assert!(res.errors.is_empty(), "{:?}", res.errors);
     let data = res.data.into_json().unwrap();
-    let scores = data["eventListWithTriage"]["edges"][0]["node"]["triageScores"]
+    let scores = data["detectionEventsByArrival"]["events"][0]["triageScores"]
         .as_array()
         .expect("the event is scored")
         .iter()
@@ -2087,40 +1841,19 @@ async fn event_list_with_triage_scores_watchlist_and_exclusion_list_responses_li
 }
 
 #[tokio::test]
-async fn event_list_with_triage_refuses_exclusions() {
+async fn arrival_inline_policies_reject_old_response_kinds() {
     let schema = TestSchema::new().await;
-    for triage in [
-        r#"triage: { exclusions: [{ domain: ["domain"] }] }"#,
-        "triage: { exclusions: [] }",
-        "triage: { policies: [], exclusions: null }",
-    ] {
-        let query = format!("{{ eventListWithTriage(filter: {{}}, {triage}) {{ totalCount }} }}");
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(res.data, async_graphql::Value::Null, "{triage}");
-        let error = res.errors.first().expect("expected a validation error");
-        assert!(error.message.contains("exclusions"), "{triage}: {error:?}");
-    }
     for old in ["BLACKLIST", "WHITELIST"] {
         let query = format!(
-            "{{ eventListWithTriage(filter: {{}}, triage: {{ policies: [{{ \
-                id: 1, packetAttr: [], score: [], \
-                response: [{{ minimumScore: 0.0, kind: {old} }}] }}] }}) {{ totalCount }} }}"
+            r#"{{ detectionEventsByArrival(customerId: "1", policies: [{{
+                id: 1, packetAttr: [], score: [],
+                response: [{{ minimumScore: 0.0, kind: {old} }}]
+            }}]) {{ events {{ id }} }} }}"#
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(res.data, async_graphql::Value::Null, "{old}");
         assert!(!res.errors.is_empty(), "{old}");
     }
-}
-
-#[tokio::test]
-async fn event_list_with_triage_schema_rejects_filter_triage_policies() {
-    let schema = TestSchema::new().await;
-    let res = schema
-        .execute_as_system_admin(
-            r#"{ eventListWithTriage(filter: { triagePolicies: ["1"] }) { totalCount } }"#,
-        )
-        .await;
-    assert!(!res.errors.is_empty(), "expected schema validation error");
 }
 
 #[tokio::test]
@@ -4874,7 +4607,7 @@ mod detection_event {
     }
 }
 
-/// The conditions of `EventListFilterInput` and `EventStandardFilterInput`.
+/// The conditions of `EventListFilterInput`.
 mod filter_conditions {
     use std::collections::BTreeSet;
 
@@ -4943,35 +4676,27 @@ mod filter_conditions {
     }
 
     /// Returns the sensors of the events `filter` selects through
-    /// `eventList` and `eventListWithTriage`, checking both agree and their
-    /// `totalCount` matches.
+    /// `eventList`, checking its `totalCount` matches.
     async fn selected(schema: &TestSchema, filter: &str) -> BTreeSet<String> {
-        let mut results = Vec::new();
-        for field in ["eventList", "eventListWithTriage"] {
-            let res = schema
-                .execute_as_system_admin(&format!(
-                    "{{ {field}(filter: {{ {filter} }}) {{ edges {{ node {{ sensor }} }} totalCount }} }}"
-                ))
-                .await;
-            assert!(res.errors.is_empty(), "{filter}: {:?}", res.errors);
-            let data = res.data.into_json().unwrap();
-            let sensors: BTreeSet<String> = data[field]["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
-                .collect();
-            assert_eq!(
-                data[field]["totalCount"],
-                sensors.len().to_string(),
-                "{field} {filter}"
-            );
-            results.push(sensors);
-        }
-        let with_triage = results.pop().unwrap();
-        let list = results.pop().unwrap();
-        assert_eq!(list, with_triage, "{filter}");
-        list
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ eventList(filter: {{ {filter} }}) {{ edges {{ node {{ sensor }} }} totalCount }} }}"
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{filter}: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let sensors: BTreeSet<String> = data["eventList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            data["eventList"]["totalCount"],
+            sensors.len().to_string(),
+            "{filter}"
+        );
+        sensors
     }
 
     fn set(sensors: &[&str]) -> BTreeSet<String> {
@@ -5196,14 +4921,12 @@ mod filter_conditions {
             "confidenceMin: 0.1",
             "confidenceMax: 0.9",
         ] {
-            for query in ["eventList", "eventListWithTriage"] {
-                let res = schema
-                    .execute_as_system_admin(&format!(
-                        "{{ {query}(filter: {{ {field} }}) {{ totalCount }} }}"
-                    ))
-                    .await;
-                assert!(!res.errors.is_empty(), "{query} {field}");
-            }
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventList(filter: {{ {field} }}) {{ totalCount }} }}"
+                ))
+                .await;
+            assert!(!res.errors.is_empty(), "{field}");
         }
     }
 }
@@ -6232,6 +5955,20 @@ mod arrival {
         let res = schema
             .execute_as_system_admin(&query(
                 CUSTOMER_A,
+                &format!(", policies: [{}]", policy(7, 999.0)),
+            ))
+            .await;
+        assert_eq!(
+            scores(res),
+            [
+                (json!(matched.to_string()), Value::Null),
+                (json!(unmatched.to_string()), Value::Null),
+            ]
+        );
+
+        let res = schema
+            .execute_as_system_admin(&query(
+                CUSTOMER_A,
                 &format!(", policies: [{}]", policy(-1, 0.5)),
             ))
             .await;
@@ -6652,14 +6389,14 @@ mod endpoint_customer_scope {
     }
 
     /// Returns the sensors of the events `caller` sees through each of
-    /// `event(id)`, `eventList`, `eventListWithTriage` and
+    /// `event(id)`, `eventList` and
     /// `detectionEventsByRawEventKeys`, and the number of events
     /// `eventCountsByDetectionModel` counts.
     async fn visible(
         schema: &TestSchema,
         fixture: &Fixture,
         caller: Caller,
-    ) -> [(BTreeSet<String>, u64); 4] {
+    ) -> [(BTreeSet<String>, u64); 3] {
         let mut by_id = BTreeSet::new();
         for (&(sensor, _, _), key) in EVENTS.iter().zip(&fixture.keys) {
             let data = run(
@@ -6678,13 +6415,11 @@ mod endpoint_customer_scope {
             schema,
             caller,
             "{ eventList(filter: {}) { edges { node { sensor } } }
-               eventListWithTriage(filter: {}) { edges { node { sensor } } }
                eventCountsByDetectionModel(filter: {}, first: 10) { counts } }",
         )
         .await;
         let count = total(&data["eventCountsByDetectionModel"]);
         let list = edge_sensors(&data["eventList"]);
-        let with_triage = edge_sensors(&data["eventListWithTriage"]);
 
         let keys: Vec<String> = EVENTS
             .iter()
@@ -6712,12 +6447,7 @@ mod endpoint_customer_scope {
             .map(|event| event["sensor"].as_str().unwrap().to_string())
             .collect();
 
-        [
-            (by_id, count),
-            (list, count),
-            (with_triage, count),
-            (by_keys, count),
-        ]
+        [(by_id, count), (list, count), (by_keys, count)]
     }
 
     fn set(sensors: &[&str]) -> BTreeSet<String> {
@@ -6969,4 +6699,40 @@ mod endpoint_customer_scope {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn retired_inline_triage_connection_is_absent() {
+    let schema = TestSchema::new().await;
+    let res = schema
+        .execute_as_system_admin("{ eventListWithTriage(filter: {}) { totalCount } }")
+        .await;
+    assert_eq!(res.data, async_graphql::Value::Null);
+    assert_eq!(res.errors.len(), 1);
+    assert!(
+        res.errors[0]
+            .message
+            .starts_with("Unknown field \"eventListWithTriage\""),
+        "{:?}",
+        res.errors
+    );
+
+    let res = schema
+        .execute_as_system_admin(
+            r#"{
+                standard: __type(name: "EventStandardFilterInput") { name }
+                triage: __type(name: "EventTriageInput") { name }
+                policy: __type(name: "EventTriagePolicyInput") { name }
+            }"#,
+        )
+        .await;
+    assert!(res.errors.is_empty(), "{:?}", res.errors);
+    assert_eq!(
+        res.data.into_json().unwrap(),
+        serde_json::json!({
+            "standard": null,
+            "triage": null,
+            "policy": { "name": "EventTriagePolicyInput" },
+        })
+    );
 }

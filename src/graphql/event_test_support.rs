@@ -12,6 +12,20 @@ use review_protocol::types::{
 /// The score a synthetic event gets unless a test sets another.
 pub(crate) const DEFAULT_SCORE: f64 = 0.8;
 
+/// The sensor used by customer-scoped inline-policy tests.
+pub(crate) const INLINE_POLICY_SENSOR: &str = "piglet.inline-policy.example.com";
+
+/// Returns a schema with a sensor node belonging to customer 1.
+pub(super) async fn inline_policy_schema() -> super::TestSchema {
+    let schema = super::TestSchema::new().await;
+    super::time_series_generation_test_support::insert_generator_node(
+        &schema.store(),
+        "inline-policy.example.com",
+        1,
+    );
+    schema
+}
+
 /// Stores a detection event with [`stamp`].
 pub(crate) trait PutEvent {
     /// Stores `event` with the default stamp and returns its key.

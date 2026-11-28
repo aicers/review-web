@@ -66,14 +66,10 @@ fn schema_has_no_customer_allow_block_or_network_tag_api() {
         assert!(!sdl.contains(removed), "{removed}: {REGENERATE}");
     }
 
-    for header in [
-        "input EventListFilterInput {",
-        "input EventStandardFilterInput {",
-    ] {
-        let filter = definition(&sdl, header);
-        assert!(!filter.contains("customers"), "{header}: {REGENERATE}");
-        assert!(!filter.contains("networkTags"), "{header}: {REGENERATE}");
-    }
+    let header = "input EventListFilterInput {";
+    let filter = definition(&sdl, header);
+    assert!(!filter.contains("customers"), "{header}: {REGENERATE}");
+    assert!(!filter.contains("networkTags"), "{header}: {REGENERATE}");
 
     for header in ["type Network {", "input NetworkUpdateInput {"] {
         assert!(
@@ -745,22 +741,18 @@ fn customer_data_deletion_result_contract() {
 fn detection_models_cross_as_the_detection_model_enum() {
     let sdl = rendered_sdl();
 
-    for header in [
-        "input EventListFilterInput {",
-        "input EventStandardFilterInput {",
+    let header = "input EventListFilterInput {";
+    let input = definition(&sdl, header);
+    for field in [
+        "\n\tdetectionModels: [DetectionModel!]\n",
+        "\n\trawEventKinds: [RawEventKind!]\n",
+        "\n\tscoreMin: Float\n",
+        "\n\tscoreMax: Float\n",
     ] {
-        let input = definition(&sdl, header);
-        for field in [
-            "\n\tdetectionModels: [DetectionModel!]\n",
-            "\n\trawEventKinds: [RawEventKind!]\n",
-            "\n\tscoreMin: Float\n",
-            "\n\tscoreMax: Float\n",
-        ] {
-            assert!(input.contains(field), "{header} {field}: {REGENERATE}");
-        }
-        for removed in ["\n\tkinds:", "\n\tlevels:"] {
-            assert!(!input.contains(removed), "{header} {removed}: {REGENERATE}");
-        }
+        assert!(input.contains(field), "{header} {field}: {REGENERATE}");
+    }
+    for removed in ["\n\tkinds:", "\n\tlevels:"] {
+        assert!(!input.contains(removed), "{header} {removed}: {REGENERATE}");
     }
 
     let values: Vec<_> = definition(&sdl, "enum DetectionModel {")
@@ -988,4 +980,21 @@ fn endpoint_members_and_values_come_last() {
 
     let values = enum_values(&sdl, "DetectionModelSubjectKind");
     assert_eq!(values.last().map(String::as_str), Some("ENDPOINT"));
+}
+
+/// The retired inline-triage connection and its dedicated inputs are absent.
+#[test]
+fn schema_has_no_inline_triage_connection() {
+    let sdl = rendered_sdl();
+    for removed in [
+        "eventListWithTriage",
+        "input EventStandardFilterInput {",
+        "input EventTriageInput {",
+    ] {
+        assert!(!sdl.contains(removed), "{removed}: {REGENERATE}");
+    }
+    assert!(
+        sdl.contains("input EventTriagePolicyInput {"),
+        "{REGENERATE}"
+    );
 }
